@@ -47,6 +47,8 @@ Slop Grenade consists of three coordinated components:
      - `event_bus.rs`: Broadcast channel for real-time desktop overlay animations and squeegee wipes.
      - `scanner_daemon.rs`: Background M365 polling and deduplication loop.
      - `server.rs` & `static_files.rs`: REST API, SSE stream, and static asset server.
+   - Real-account mode is the default: startup never seeds synthetic ledger history unless `SLOP_DEMO_DATA=1` (or `true` / `yes`) is explicitly set. For an offline dashboard demo, also set `SLOP_AUTO_POLL=0` so sample and live messages are not mixed.
+   - WorkIQ fetch accepts both MCP `structuredContent` and legacy JSON text content. Protocol errors, tool errors, and failed per-entity HTTP statuses are reported as scan failures without including raw response content; they are not treated as empty successful scans.
 
 3. **Habit Monitoring Web Dashboard (`web/`)**:
    - Built with Svelte 5 runes (`$state`, `$derived`), SvelteKit (`@sveltejs/adapter-static`), strict TypeScript, and Vite. Theme in `web/src/app.css` (brass, ink and parchment).
@@ -63,7 +65,7 @@ Slop Grenade consists of three coordinated components:
 | :--- | :--- | :--- |
 | `GET` | `/api/v1/health` | Health and version check |
 | `GET` | `/api/v1/auth/status` | WorkIQ MCP and GitHub Copilot LLM authentication status |
-| `POST` | `/api/v1/auth/workiq-login` | Launches interactive `workiq auth login` |
+| `POST` | `/api/v1/auth/workiq-login` | Invokes legacy `workiq auth login`; current CLI versions should sign in through `workiq ask` |
 | `POST` | `/api/v1/auth/github-token` | Sets or clears an in-memory GitHub token override |
 | `GET` | `/api/v1/ledger` | Returns directional stats, daily gauges, Top 5 Sloppers, Top 5 P-Doomers, and recent reports |
 | `POST` | `/api/v1/analyze` | Evaluates a communication sample and broadcasts the resulting animation |

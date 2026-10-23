@@ -106,7 +106,7 @@ impl WorkIqClient {
                 mcp_tool_count: 0,
                 account: self.account(),
                 message: format!(
-                    "WorkIQ binary found, but MCP probe failed ({err}). Run `workiq auth login` to authenticate."
+                    "WorkIQ binary found, but MCP probe failed ({err}). Run `workiq ask` to authenticate."
                 ),
             },
         }
@@ -150,10 +150,7 @@ impl WorkIqClient {
             "/me/chats?$select=id,topic,chatType&$top=5".to_string(),
         ];
 
-        let payload = self
-            .call_mcp_fetch(bin, &entity_urls)
-            .await
-            .map_err(|_| "WorkIQ MCP fetch failed".to_string())?;
+        let payload = self.call_mcp_fetch(bin, &entity_urls).await?;
 
         let mut samples = parse_workiq_fetch_bundle(&payload, self.account().as_deref());
 
@@ -165,13 +162,12 @@ impl WorkIqClient {
                 .take(5)
                 .map(|id| format!("/me/chats/{id}/messages?$top=10"))
                 .collect();
-            if let Ok(chat_payload) = self.call_mcp_fetch(bin, &chat_urls).await {
-                let my_email = extract_me_email(&payload).or_else(|| self.account());
-                samples.extend(parse_teams_chat_messages(
-                    &chat_payload,
-                    my_email.as_deref(),
-                ));
-            }
+            let chat_payload = self.call_mcp_fetch(bin, &chat_urls).await?;
+            let my_email = extract_me_email(&payload).or_else(|| self.account());
+            samples.extend(parse_teams_chat_messages(
+                &chat_payload,
+                my_email.as_deref(),
+            ));
         }
 
         Ok(samples)
@@ -207,10 +203,7 @@ impl WorkIqClient {
     async fn call_mcp_fetch(&self, bin: &Path, entity_urls: &[String]) -> Result<Value, String> {
         let req = build_mcp_fetch_call_request(entity_urls);
         let response = self.run_mcp_jsonrpc(bin, req).await?;
-        if let Some(err) = response.get("error") {
-            return Err(format!("MCP error: {err}"));
-        }
-        Ok(response)
+        decode_mcp_fetch_response(response)
     }
 
     async fn run_mcp_jsonrpc(&self, bin: &Path, second_request: Value) -> Result<Value, String> {
@@ -564,13 +557,61 @@ pub fn parse_teams_chat_messages(
     samples
 }
 
-fn extract_inner_tool_json(mcp_response: &Value) -> Value {
-    if let Some(text) = mcp_response
-        .pointer("/result/content/0/text")
-        .and_then(Value::as_str)
+fn extract_tool_json(result: &Value) -> Result<Value, String> {
+    if let Some(payload) = result
+        .get("structuredContent")
+        .filter(|value| !value.is_null())
     {
-        if let Ok(parsed) = serde_json::from_str::<Value>(text) {
-            return parsed;
+        if payload.is_object() || payload.is_array() {
+            return Ok(payload.clone());
+        }
+        return Err("WorkIQ fetch returned invalid structured entity data.".to_string());
+    }
+
+    let text = result
+        .pointer("/content/0/text")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "WorkIQ fetch returned no entity data.".to_string())?;
+    let payload: Value = serde_json::from_str(text)
+        .map_err(|_| "WorkIQ fetch returned invalid JSON entity data.".to_string())?;
+    if !payload.is_object() && !payload.is_array() {
+        return Err("WorkIQ fetch returned invalid entity data.".to_string());
+    }
+    Ok(payload)
+}
+
+fn decode_mcp_fetch_response(response: Value) -> Result<Value, String> {
+    if response.get("error").is_some_and(|error| !error.is_null()) {
+        return Err("WorkIQ MCP fetch request failed.".to_string());
+    }
+    let result = response
+        .get("result")
+        .ok_or_else(|| "WorkIQ MCP fetch response is missing its result.".to_string())?;
+    if result.get("isError").and_then(Value::as_bool) == Some(true) {
+        return Err(
+            "WorkIQ fetch tool failed. Check your WorkIQ sign-in and M365 access.".to_string(),
+        );
+    }
+    let payload = extract_tool_json(result)?;
+    for entry in collect_entity_objects(&payload) {
+        if let Some(status) = entry.get("statusCode") {
+            let status = status
+                .as_u64()
+                .ok_or_else(|| "WorkIQ fetch returned an invalid HTTP status.".to_string())?;
+            if !(200..300).contains(&status) {
+                return Err(format!(
+                    "WorkIQ M365 fetch returned HTTP {status}. Check your account and M365 permissions."
+                ));
+            }
+        }
+    }
+    Ok(payload)
+}
+
+fn extract_inner_tool_json(mcp_response: &Value) -> Value {
+    if let Some(result) = mcp_response.get("result") {
+        if let Ok(payload) = extract_tool_json(result) {
+            return payload;
         }
     }
     mcp_response.clone()
@@ -711,5 +752,154 @@ mod tests {
         assert_eq!(messages[0].direction, MessageDirection::Sent);
         assert_eq!(messages[1].direction, MessageDirection::Received);
         assert!(messages[1].body.contains("- **Synergy:**"));
+    }
+
+    #[test]
+    fn parses_structured_workiq_mail_identity_and_chat_results() {
+        let bundle = json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "result": {
+                "structuredContent": {
+                    "results": [
+                        {
+                            "statusCode": 200,
+                            "data": { "mail": "alex@contoso.com" }
+                        },
+                        {
+                            "statusCode": 200,
+                            "data": {
+                                "value": [{
+                                    "id": "received-1",
+                                    "subject": "Review",
+                                    "from": { "emailAddress": { "address": "colleague@contoso.com" } },
+                                    "bodyPreview": "Ready for review.",
+                                    "receivedDateTime": "2026-10-23T12:00:00Z"
+                                }]
+                            }
+                        },
+                        {
+                            "statusCode": 200,
+                            "data": {
+                                "value": [{
+                                    "id": "sent-1",
+                                    "subject": "Re: Review",
+                                    "from": { "emailAddress": { "address": "alex@contoso.com" } },
+                                    "bodyPreview": "Looks good.",
+                                    "receivedDateTime": "2026-10-23T12:01:00Z",
+                                    "sentDateTime": "2026-10-23T12:01:00Z"
+                                }]
+                            }
+                        },
+                        {
+                            "statusCode": 200,
+                            "data": { "value": [{ "id": "chat-1", "chatType": "oneOnOne" }] }
+                        }
+                    ]
+                }
+            }
+        });
+
+        let messages = parse_workiq_fetch_bundle(&bundle, None);
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].direction, MessageDirection::Received);
+        assert_eq!(messages[1].direction, MessageDirection::Sent);
+        assert_eq!(
+            extract_me_email(&bundle).as_deref(),
+            Some("alex@contoso.com")
+        );
+        assert_eq!(extract_chat_ids(&bundle), vec!["chat-1"]);
+    }
+
+    #[test]
+    fn parses_structured_teams_results_before_text_summary() {
+        let bundle = json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "result": {
+                "content": [{ "type": "text", "text": "Messages fetched successfully." }],
+                "structuredContent": {
+                    "results": [{
+                        "statusCode": 200,
+                        "data": {
+                            "value": [{
+                                "id": "teams-1",
+                                "createdDateTime": "2026-10-23T13:10:00Z",
+                                "from": { "user": { "displayName": "Alex Taylor" } },
+                                "body": { "content": "<p>Ready to ship.</p>" }
+                            }]
+                        }
+                    }]
+                }
+            }
+        });
+
+        let messages = parse_teams_chat_messages(&bundle, Some("Alex Taylor"));
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].direction, MessageDirection::Sent);
+        assert_eq!(messages[0].body, "Ready to ship.");
+    }
+
+    #[test]
+    fn decodes_structured_and_legacy_fetch_results_including_empty_collections() {
+        let payload = json!({
+            "results": [{ "statusCode": 200, "data": { "value": [] } }]
+        });
+        for result in [
+            json!({
+                "structuredContent": payload,
+                "content": [{ "type": "text", "text": "Fetched successfully." }]
+            }),
+            json!({
+                "content": [{ "type": "text", "text": payload.to_string() }]
+            }),
+        ] {
+            let response = json!({ "jsonrpc": "2.0", "id": 2, "result": result });
+            assert_eq!(decode_mcp_fetch_response(response).unwrap(), payload);
+        }
+    }
+
+    #[test]
+    fn rejects_fetch_failures_and_invalid_data_without_exposing_response_content() {
+        for response in [
+            json!({ "error": { "code": -32603, "message": "private-response-content" } }),
+            json!({
+                "result": {
+                    "isError": true,
+                    "content": [{ "type": "text", "text": "private-response-content" }]
+                }
+            }),
+            json!({
+                "result": {
+                    "structuredContent": {
+                        "results": [{
+                            "statusCode": 401,
+                            "data": { "error": "private-response-content" }
+                        }]
+                    }
+                }
+            }),
+            json!({
+                "result": {
+                    "structuredContent": {
+                        "results": [{ "statusCode": "invalid", "data": {} }]
+                    }
+                }
+            }),
+            json!({}),
+            json!({ "result": {} }),
+            json!({ "result": { "structuredContent": "private-response-content" } }),
+            json!({
+                "result": {
+                    "content": [{ "type": "text", "text": "private-response-content" }]
+                }
+            }),
+            json!({
+                "result": { "content": [{ "type": "text", "text": "42" }] }
+            }),
+        ] {
+            let error = decode_mcp_fetch_response(response).unwrap_err();
+            assert!(!error.contains("private-response-content"));
+        }
     }
 }

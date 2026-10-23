@@ -348,7 +348,7 @@ async fn handle_scan_now(
             Json(json!({
                 "ok": false,
                 "error": err,
-                "hint": "Ensure `workiq auth login` has been completed for your M365 account."
+                "hint": "Run `workiq ask` to sign in with your M365 work account, then retry."
             })),
         )
             .into_response(),

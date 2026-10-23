@@ -41,7 +41,9 @@ async fn main() {
 
     // 4. Create the in-memory Self-Awareness Ledger and SSE Animation Event Bus.
     let ledger = Arc::new(AwarenessLedger::new());
-    ledger.seed_baseline_history();
+    if config.demo_data_enabled {
+        ledger.seed_baseline_history();
+    }
     let bus = Arc::new(AnimationEventBus::new());
 
     // 5. Construct the M365 Scanner Daemon and start background WorkIQ polling if enabled.

@@ -1,8 +1,10 @@
 //! End-to-end integration tests for the Slop Grenade Axum HTTP/SSE API.
 
 use std::path::PathBuf;
+use std::process::Stdio;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use slop_grenade::event_bus::AnimationEventBus;
@@ -49,6 +51,74 @@ async fn spawn_test_server() -> String {
         axum::serve(listener, app).await.unwrap();
     });
     format!("http://{addr}")
+}
+
+async fn startup_ledger(demo_data: Option<&str>) -> Value {
+    let reservation = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = reservation.local_addr().unwrap();
+    drop(reservation);
+
+    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_slop-grenade"));
+    command
+        .env("HTTP_BIND", addr.to_string())
+        .env("SLOP_AUTO_POLL", "false")
+        .env("SLOP_LUNA_ENABLED", "false")
+        .env_remove("SLOP_DEMO_DATA")
+        .stdout(Stdio::null())
+        .kill_on_drop(true);
+    if let Some(value) = demo_data {
+        command.env("SLOP_DEMO_DATA", value);
+    }
+    let mut child = command.spawn().unwrap();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build()
+        .unwrap();
+    let started = Instant::now();
+    let ledger = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            panic!("Daemon exited before becoming ready: {status}");
+        }
+        if let Ok(response) = client
+            .get(format!("http://{addr}/api/v1/ledger"))
+            .send()
+            .await
+        {
+            break response
+                .error_for_status()
+                .unwrap()
+                .json::<Value>()
+                .await
+                .unwrap();
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "Daemon did not become ready"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
+    child.kill().await.unwrap();
+    ledger
+}
+
+#[tokio::test]
+async fn startup_ledger_is_empty_without_demo_opt_in() {
+    for demo_data in [None, Some("0"), Some("false")] {
+        let ledger = startup_ledger(demo_data).await;
+        assert!(ledger["recentReports"].as_array().unwrap().is_empty());
+        assert_eq!(ledger["receivedByMe"]["totalMessages"], 0);
+        assert_eq!(ledger["sentByMe"]["totalMessages"], 0);
+        assert!(ledger["topSloppers"].as_array().unwrap().is_empty());
+        assert!(ledger["topPDoomers"].as_array().unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn startup_demo_history_requires_explicit_opt_in() {
+    for demo_data in ["1", "true", "yes"] {
+        let ledger = startup_ledger(Some(demo_data)).await;
+        assert!(!ledger["recentReports"].as_array().unwrap().is_empty());
+    }
 }
 
 #[tokio::test]

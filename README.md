@@ -47,11 +47,13 @@ Open PowerShell and run:
 # Accept the WorkIQ license agreement (first time only)
 workiq accept-eula
 
-# Sign in with your Microsoft 365 work account
-workiq auth login
+# Confirm access with a harmless request using your Microsoft 365 work account
+workiq ask --question "Reply only with OK."
 ```
 
-A standard Microsoft sign-in prompt will appear. Once signed in, WorkIQ can securely read your recent Teams and Outlook messages on your machine.
+WorkIQ reuses your cached Microsoft 365 sign-in or opens the normal Microsoft sign-in flow when needed. Choose your own work account. Current WorkIQ versions do not have an `auth login` subcommand; the request above uses WorkIQ's first-party authentication broker.
+
+Once signed in, Slop Grenade reads recent Teams and Outlook messages through your local WorkIQ MCP server. A successful MCP tools handshake only confirms that WorkIQ is installed; a successful live scan confirms access to your M365 data.
 
 ---
 
@@ -80,6 +82,8 @@ What this does automatically:
 2. Adds **Slop Grenade** shortcuts to your **Desktop** and **Start Menu**.
 3. Configures Slop Grenade to **start automatically when you sign in to Windows** (you can toggle this on or off anytime from the System Tray icon).
 4. Starts the background scanner and the desktop screen overlay immediately.
+
+Normal startup does not seed example messages or leaderboard entries. The dashboard starts empty and fills from your signed-in account as scans complete (normally every minute). Its history is held in memory and resets when the daemon restarts.
 
 ---
 

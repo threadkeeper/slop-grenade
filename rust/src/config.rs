@@ -18,6 +18,8 @@ pub struct AppConfig {
     pub poll_interval_secs: u64,
     /// Whether automatic background polling of WorkIQ MCP is enabled on startup.
     pub auto_poll_enabled: bool,
+    /// Whether to seed synthetic dashboard history; disabled for normal real-account use.
+    pub demo_data_enabled: bool,
     /// Whether live GitHub GPT Luna (`gpt-5.6-luna`) semantic scoring is enabled.
     pub luna_enabled: bool,
     /// Target model identifier for GitHub Copilot Responses API (`gpt-5.6-luna`).
@@ -37,6 +39,7 @@ impl Default for AppConfig {
             web_asset_dir: PathBuf::from("../web/build"),
             poll_interval_secs: 60,
             auto_poll_enabled: true,
+            demo_data_enabled: false,
             luna_enabled: true,
             luna_model: "gpt-5.6-luna".to_string(),
             luna_endpoint: "https://api.githubcopilot.com/responses".to_string(),
@@ -79,6 +82,11 @@ impl AppConfig {
             .map(|v| !matches!(v.trim().to_ascii_lowercase().as_str(), "0" | "false" | "no"))
             .unwrap_or(defaults.auto_poll_enabled);
 
+        let demo_data_enabled = env::var("SLOP_DEMO_DATA")
+            .ok()
+            .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
+            .unwrap_or(defaults.demo_data_enabled);
+
         let luna_enabled = env::var("SLOP_LUNA_ENABLED")
             .ok()
             .map(|v| !matches!(v.trim().to_ascii_lowercase().as_str(), "0" | "false" | "no"))
@@ -108,6 +116,7 @@ impl AppConfig {
             web_asset_dir,
             poll_interval_secs,
             auto_poll_enabled,
+            demo_data_enabled,
             luna_enabled,
             luna_model,
             luna_endpoint,
@@ -128,5 +137,6 @@ mod tests {
         assert_eq!(cfg.luna_model, "gpt-5.6-luna");
         assert_eq!(cfg.luna_endpoint, "https://api.githubcopilot.com/responses");
         assert!(cfg.luna_enabled);
+        assert!(!cfg.demo_data_enabled);
     }
 }
