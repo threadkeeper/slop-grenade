@@ -1,0 +1,26 @@
+# Rust build artifacts
+/rust/target/
+**/target/
+
+# Node / SvelteKit build artifacts
+/web/node_modules/
+/web/.svelte-kit/
+/web/build/
+/web/dist/
+**/node_modules/
+
+# Local runtime state, tokens, and agent ledgers (never commit secrets or user data)
+/.local/
+/.agent-work/
+.env
+.env.*
+!.env.example
+*.log
+
+# OS & editor files
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/extensions.json
