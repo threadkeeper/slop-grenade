@@ -32,7 +32,9 @@ use crate::event_bus::{AnimationEvent, AnimationEventBus};
 use crate::ledger::AwarenessLedger;
 use crate::llm_luna::LunaClient;
 use crate::scanner_daemon::{build_preset_sample, ScannerDaemon};
-use crate::slop_detector::{M365App, MessageDirection, MessageSample, SlopReport};
+use crate::slop_detector::{
+    M365App, MessageDirection, MessageSample, MonitorSide, SlopDetector, SlopReport,
+};
 use crate::static_files::serve_static_or_spa;
 use crate::workiq_mcp::WorkIqClient;
 
@@ -149,6 +151,14 @@ pub struct ScanNowRequest {
     pub use_luna: bool,
 }
 
+/// Request payload for `POST /api/v1/squeegee`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SqueegeeRequest {
+    /// Side of the monitor to wipe (`"left"` or `"right"`).
+    pub side: MonitorSide,
+}
+
 /// Build the complete Axum [`Router`] for the Slop Grenade daemon.
 pub fn build_router(state: AppState) -> Router {
     Router::new()
@@ -165,6 +175,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v1/events/stream", get(handle_sse_stream))
         .route("/api/v1/analyze", post(handle_analyze))
         .route("/api/v1/simulate", post(handle_simulate))
+        .route("/api/v1/squeegee", post(handle_squeegee))
         .route("/api/v1/scan/now", post(handle_scan_now))
         .fallback(handle_static_fallback)
         .layer(axum::middleware::from_fn(cors_middleware))
@@ -310,6 +321,19 @@ async fn handle_simulate(
         .analyze_and_dispatch(&sample, req.use_luna, true, true)
         .await;
     Json(AnalyzeResponse { report, event })
+}
+
+async fn handle_squeegee(
+    State(state): State<AppState>,
+    Json(req): Json<SqueegeeRequest>,
+) -> Json<Value> {
+    let placeholder = SlopDetector::new().analyze(&build_preset_sample("human_sparkle", 0));
+    let event = state.bus.publish_squeegee(req.side, placeholder);
+    Json(json!({
+        "ok": true,
+        "side": req.side,
+        "sequence": event.sequence
+    }))
 }
 
 async fn handle_scan_now(

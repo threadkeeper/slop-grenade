@@ -56,6 +56,7 @@ export interface SlopReport {
 export interface AnimationEvent {
   sequence: number;
   report: SlopReport;
+  squeegeeSide?: MonitorSide | null;
 }
 
 export interface DirectionalStats {
@@ -69,9 +70,21 @@ export interface DirectionalStats {
   cleanHumanStreak: number;
 }
 
+export interface PersonLeaderboardEntry {
+  name: string;
+  messageCount: number;
+  averageSlopScore: number;
+  slopGrenades: number;
+  humanMessages: number;
+}
+
 export interface AwarenessScorecard {
   sentByMe: DirectionalStats;
   receivedByMe: DirectionalStats;
+  dailySent: DirectionalStats;
+  dailyReceived: DirectionalStats;
+  topSloppers: PersonLeaderboardEntry[];
+  topPDoomers: PersonLeaderboardEntry[];
   selfAwarenessVerdict: string;
   recentReports: SlopReport[];
 }

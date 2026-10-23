@@ -1,6 +1,8 @@
-# Rust build artifacts
+# Rust & Native Windows Desktop build artifacts
 /rust/target/
 **/target/
+/desktop/*.exe
+/desktop/*.pdb
 
 # Node / SvelteKit build artifacts
 /web/node_modules/

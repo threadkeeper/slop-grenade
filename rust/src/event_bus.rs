@@ -12,7 +12,7 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 
-use crate::slop_detector::SlopReport;
+use crate::slop_detector::{MonitorSide, SlopReport};
 
 /// Maximum number of recent animation events buffered for late-joining overlay windows.
 const RECENT_EVENT_CAPACITY: usize = 32;
@@ -25,6 +25,9 @@ pub struct AnimationEvent {
     pub sequence: u64,
     /// Slop analysis report that triggered this animation.
     pub report: SlopReport,
+    /// Optional squeegee wipe trigger (`Some(MonitorSide)` when wiping a monitor edge).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub squeegee_side: Option<MonitorSide>,
 }
 
 /// Broadcast bus for real-time monitor animations.
@@ -54,13 +57,33 @@ impl AnimationEventBus {
     /// Publish a [`SlopReport`] as an [`AnimationEvent`] to all live subscribers.
     pub fn publish(&self, report: SlopReport) -> AnimationEvent {
         let sequence = self.next_seq.fetch_add(1, Ordering::SeqCst);
-        let event = AnimationEvent { sequence, report };
+        let event = AnimationEvent {
+            sequence,
+            report,
+            squeegee_side: None,
+        };
         if let Ok(mut guard) = self.recent.lock() {
             if guard.len() >= RECENT_EVENT_CAPACITY {
                 guard.pop_front();
             }
             guard.push_back(event.clone());
         }
+        let _ = self.sender.send(event.clone());
+        event
+    }
+
+    /// Broadcast a squeegee wipe command for `side` (`Left` or `Right`) to all connected desktop & web overlays.
+    pub fn publish_squeegee(
+        &self,
+        side: MonitorSide,
+        placeholder_report: SlopReport,
+    ) -> AnimationEvent {
+        let sequence = self.next_seq.fetch_add(1, Ordering::SeqCst);
+        let event = AnimationEvent {
+            sequence,
+            report: placeholder_report,
+            squeegee_side: Some(side),
+        };
         let _ = self.sender.send(event.clone());
         event
     }
