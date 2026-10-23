@@ -16,7 +16,10 @@ $OverlayExe = "$RepoRoot\desktop\slop-grenade-overlay.exe"
 & $CscPath /nologo /target:winexe /optimize+ `
     /r:System.dll,System.Drawing.dll,System.Windows.Forms.dll `
     /out:$OverlayExe `
-    "$RepoRoot\desktop\SlopGrenadeOverlay.cs"
+    "/recurse:$RepoRoot\desktop\*.cs"
+if ($LASTEXITCODE -ne 0) {
+    throw "Desktop overlay failed to compile (see csc errors above)"
+}
 
 $env:HTTP_BIND = $Bind
 $env:WEB_ASSET_DIR = "$RepoRoot\web\build"

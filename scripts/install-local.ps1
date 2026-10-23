@@ -27,7 +27,10 @@ $OverlayExe = Join-Path $BinDir "slop-grenade-overlay.exe"
 & $CscPath /nologo /target:winexe /optimize+ `
     /r:System.dll,System.Drawing.dll,System.Windows.Forms.dll `
     /out:$OverlayExe `
-    "$RepoRoot\desktop\SlopGrenadeOverlay.cs"
+    "/recurse:$RepoRoot\desktop\*.cs"
+if ($LASTEXITCODE -ne 0) {
+    throw "Desktop overlay failed to compile (see csc errors above)"
+}
 
 Copy-Item -Force "$RepoRoot\rust\target\release\slop-grenade.exe" (Join-Path $BinDir "slop-grenade.exe")
 Copy-Item -Force -Recurse "$RepoRoot\web\build\*" $WebDir

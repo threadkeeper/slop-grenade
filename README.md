@@ -19,16 +19,18 @@ Good workplace communication is short, human, and considerate of other people's 
 
 ## What Happens on Your Screen
 
-Slop Grenade overlays your main Windows desktop monitor without interrupting your work (you can click and type right through the animations in any app):
+Slop Grenade overlays your main Windows desktop monitor without interrupting your work (you can click and type right through the effects in any app). Everything is drawn in a comic, cel-shaded style with thick ink outlines:
 
-- **`human` (0–19)**: Barely visible, delicate plumes of warm sparkles shine, twinkle, and fade smoothly into nothing.
-- **`polish` (20–39)**: A small, calm cloud drifts softly from the edge of your monitor and fades into nothing.
-- **`sprinkled` (40–59)**: One of **20 realistic, hand-illustrated fruits** (such as a Honeycrisp Apple, Bartlett Pear, Ruby Strawberry, Emerald Kiwi, or Alphonso Mango) bounces in and sticks to the edge buildup until squeegeed.
-- **`ai-cannon` (60–79)**: A compact lump of glossy vinyl slop splats onto the edge of your screen and stays until squeegeed.
-- **`slop-grenade` (80–100)**: A **dull metallic blue hand grenade** arcs across your desktop, impacts the side of your monitor, and drips glossy vinyl slop down the bezel:
-  - **Slop You Receive (Left Side of Monitor)**: Drips and builds up in **Plastic Pink**.
-  - **Slop You Send (Right Side of Monitor)**: Drips and builds up in **Plastic Blue**.
-  - **Daily Buildup & Squeegee**: Fruit (`sprinkled`) and grenades/slop (`slop-grenade` and `ai-cannon`) stay stuck along the sides of your monitor as the day progresses—sized compactly so even 500 emails and 500 Teams messages fit along the bezel—until you click **Squeegee Left** or **Squeegee Right** in the System Tray icon to wipe that side clean.
+- **`human` (0-19)**: A single, barely noticeable twinkle, like light catching a cut crystal.
+- **`polish` (20-39)**: Smoke plumes roll in from the edge of your monitor. The smoke swirls when anything flies through it, builds up if more arrives, and fades away after about 30 seconds.
+- **`sprinkled` (40-59)**: One of **20 cel-shaded 3D fruits** is lobbed across the screen in slow motion, tumbling on a random axis. It sticks only if it hits slop on the edge; otherwise it sails off the screen.
+- **`ai-cannon` (60-79)**: A goo cannonball splats onto the edge of your screen and stays until squeegeed.
+- **`slop-grenade` (80-100)**: A cute, cheeky grenade pulls its own pin and is hurled across the desktop in bullet-time, then explodes with a hit-stop, screen shake, shockwave and comic sound word, splattering slop over the edge of your monitor:
+  - **Slop You Receive (Left Side of Monitor)**: Builds up in **Pink**.
+  - **Slop You Send (Right Side of Monitor)**: Builds up in **Blue**.
+  - **Flies**: Leave slop on the screen for a while (45 seconds by default) and flies start to gather and buzz around it.
+  - **Daily Buildup & Squeegee**: Fruit and slop stay stuck along the sides of your monitor until you squeegee that side clean from the tray icon. The squeegee also chases the flies away.
+- **Sound (optional)**: Switch on **Sound FX** in the tray panel for whooshes, a ticking fuse, splats, buzzing flies and a big grenade explosion. Sound is off by default.
 
 ---
 
@@ -85,16 +87,19 @@ What this does automatically:
 ### 1. The System Tray Icon (Bright Pink Hand Grenade)
 Look for the **Bright Pink Hand Grenade** icon in your Windows System Tray (bottom-right taskbar near the clock):
 - Slop Grenade pings your **WorkIQ MCP** server every **1 minute** and triggers a desktop animation for each and every new message that comes through (automated and machine-generated system replies are always classified as the gentle `human` sparkle type).
-- **Left-click the Tray Icon** to open the compact tray popup where you can:
-  - View today's **Received (In)** and **Sent (Out)** slop gauges (which reset automatically at `00:00` midnight daily and progress from **White at 0% to Fully Purple at 100%**).
-  - Click **Squeegee Left** or **Squeegee Right** to wipe your monitor edges clean.
-  - Toggle **Run at Windows startup**, **Teams / Outlook monitoring**, and **Slop / Non-Slop animations**.
-  - Click **Open Dashboard**.
+- **Left-click the Tray Icon** to open the brass control panel where you can:
+  - Read today's **Incoming** and **Outgoing** slop pressure gauges (they reset automatically at `00:00`).
+  - Click **Squeegee** (left or right) to wipe your monitor edges clean.
+  - Toggle **Launch at Windows sign-in**, **Teams / Outlook monitoring**, **Slop FX** and **Calm FX**.
+  - Switch **Sound FX** on or off and pick a volume (**Soft**, **Med**, **Loud**).
+  - Click **Test Fire!** to see every effect, or **Dashboard** to open the habit dashboard.
+- **Right-click the Tray Icon** for quick test shots (a grenade at either edge, some fruit) and the squeegees.
 
 ### 2. The Habit Dashboard (`http://127.0.0.1:8090/`)
-Clicking **Open Dashboard** in the tray opens a clean, distraction-free habit tracker in your browser featuring:
-- **Daily In / Out Slop Gauges** with a **0–100% Marker** that transitions from **White (0%) to Fully Purple (100%)**.
-- **Per-Day Stacked Bar Chart** broken down by type (`slop-grenade` in bright blue, `ai-cannon` in brown, `sprinkled` in bright yellow, `polish` in bright green, and `human` in white).
+Clicking **Dashboard** in the tray opens the habit tracker in your browser, styled to match (brass, ink and parchment), featuring:
+- **Incoming / Outgoing Slop Pressure Gauges** (0-100%) that vent steam when you are in the red.
+- **Proving Grounds**: a small monitor where live messages replay and you can test fire every effect (test shots are not recorded in your stats), with an optional **Sound** switch and volume slider in the header.
+- **Per-Day Stacked Bar Chart** broken down by type (`slop-grenade` in pink, `ai-cannon` in orange, `sprinkled` in yellow, `polish` in smoke grey, and `human` in cream).
 - **Filters** for time span (`Today`, `7d`, `30d`, `All`), source (`Teams` vs. `Outlook`), and message type (`All`, `slop-grenade`, `ai-cannon`, `sprinkled`, `polish`, `human`).
 - **Top 5 Sloppers** and **Top 5 P-Doomers** (the colleagues who refuse to touch AI).
 - **Interactive Drill-Down Grid** at the bottom ranked by highest slop score, showing the score, type, source, core metrics, sender, recipient, subject, and a short preview of each message.

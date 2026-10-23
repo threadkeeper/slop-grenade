@@ -1,0 +1,155 @@
+/* Slop Grenade dashboard theme: brass, ink and parchment with comic-book
+   outlines (Borderlands meets Saturday-morning cartoon). */
+:root {
+  --ink: #1b1420;
+  --parchment: #f1e3bf;
+  --parchment-dark: #e2cc98;
+  --brass: #d9a441;
+  --brass-hi: #ffe08a;
+  --brass-lo: #7a4b16;
+  --walnut: #2a1a12;
+  --hot: #e8336d;
+  --cool: #2f8fe0;
+  --comic: 'Bangers', 'Impact', 'Haettenschweiler', 'Arial Narrow Bold', 'Arial Black', sans-serif;
+  --body: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --rivet: radial-gradient(circle, #fff1c2 0 2px, var(--ink) 2.5px 3.6px, transparent 4px);
+}
+
+html {
+  background: var(--walnut);
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  color: var(--ink);
+  font: 13px/1.45 var(--body);
+  -webkit-font-smoothing: antialiased;
+  background:
+    radial-gradient(rgba(0, 0, 0, 0.3) 1px, transparent 1.6px) 0 0 / 7px 7px,
+    radial-gradient(ellipse at 50% -10%, rgba(255, 180, 80, 0.28), transparent 60%),
+    repeating-linear-gradient(
+      93deg,
+      rgba(0, 0, 0, 0.16) 0 2px,
+      transparent 2px 9px,
+      rgba(255, 255, 255, 0.03) 9px 11px,
+      transparent 11px 23px
+    ),
+    linear-gradient(180deg, #3d2517, #22140c);
+}
+
+html.overlay-mode,
+html.overlay-mode body {
+  background: transparent !important;
+  overflow: hidden;
+}
+
+.comic {
+  font-family: var(--comic);
+  letter-spacing: 0.04em;
+}
+
+/* Parchment card in a riveted brass frame */
+.panel {
+  position: relative;
+  padding: 16px 18px 18px;
+  border: 3px solid var(--ink);
+  border-radius: 10px;
+  background:
+    var(--rivet) 4px 4px / 12px 12px no-repeat,
+    var(--rivet) calc(100% - 4px) 4px / 12px 12px no-repeat,
+    var(--rivet) 4px calc(100% - 4px) / 12px 12px no-repeat,
+    var(--rivet) calc(100% - 4px) calc(100% - 4px) / 12px 12px no-repeat,
+    radial-gradient(rgba(122, 75, 22, 0.1) 1px, transparent 1.5px) 0 0 / 5px 5px,
+    linear-gradient(180deg, rgba(255, 255, 255, 0.35), rgba(255, 255, 255, 0) 45%),
+    var(--parchment);
+  box-shadow:
+    inset 0 0 0 4px var(--brass),
+    inset 0 0 0 6px var(--ink),
+    inset 0 0 46px rgba(122, 75, 22, 0.3),
+    6px 7px 0 rgba(0, 0, 0, 0.55);
+}
+
+.panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin: 2px 4px 12px;
+  padding-bottom: 8px;
+  border-bottom: 3px solid var(--ink);
+}
+
+.panel-head h2 {
+  margin: 0;
+  font: 23px/1 var(--comic);
+  letter-spacing: 0.05em;
+  color: #ffcf4a;
+  -webkit-text-stroke: 1.4px var(--ink);
+  paint-order: stroke fill;
+  text-shadow: 2px 2px 0 var(--ink);
+  transform: rotate(-1.2deg);
+}
+
+.meta {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #6b4a22;
+}
+
+.empty {
+  margin: 10px 4px;
+  font-style: italic;
+  color: #6b4a22;
+}
+
+/* Chunky brass push-buttons */
+.brass {
+  font: 15px/1 var(--comic);
+  letter-spacing: 0.06em;
+  color: var(--ink);
+  padding: 8px 14px 7px;
+  border: 3px solid var(--ink);
+  border-radius: 8px;
+  background: linear-gradient(180deg, var(--brass-hi), var(--brass) 55%, #a8701f);
+  box-shadow:
+    inset 0 2px 0 rgba(255, 255, 255, 0.6),
+    inset 0 -3px 0 rgba(0, 0, 0, 0.25),
+    3px 3px 0 var(--ink);
+  cursor: pointer;
+  transition:
+    transform 0.08s,
+    box-shadow 0.08s,
+    filter 0.15s;
+}
+
+.brass:hover {
+  filter: brightness(1.08) saturate(1.15);
+}
+
+.brass:active {
+  transform: translate(2px, 2px);
+  box-shadow:
+    inset 0 2px 0 rgba(255, 255, 255, 0.6),
+    inset 0 -3px 0 rgba(0, 0, 0, 0.25),
+    1px 1px 0 var(--ink);
+}
+
+.brass:focus-visible,
+.lever button:focus-visible {
+  outline: 3px dashed var(--hot);
+  outline-offset: 2px;
+}
+
+.brass.active {
+  color: #fff4d6;
+  background: linear-gradient(180deg, #ffb38a, #e8682d 55%, #9c3a12);
+}
+
+.brass.small {
+  font-size: 13px;
+  padding: 6px 10px 5px;
+}
