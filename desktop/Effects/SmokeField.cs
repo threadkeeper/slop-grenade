@@ -124,9 +124,9 @@ namespace SlopGrenadeDesktop
                     _d[k] *= topK;
                     _c[k] *= topK;
                 }
-            float dk = M.Exp(-0.085f * dt), vk = M.Exp(-0.55f * dt);
+            float dk = M.Exp(-0.14f * dt), vk = M.Exp(-0.55f * dt);
             // exponential fade plus slow evaporation so faint haze clears for good
-            float evap = 0.006f * dt;
+            float evap = 0.012f * dt;
             float mass = 0f;
             int gi0 = N + 1, gj0 = Mr + 1, gi1 = -1, gj1 = -1;
             for (int j = 0; j <= Mr + 1; j++)

@@ -17,7 +17,7 @@ Slop Grenade consists of three coordinated components:
      | `Program.cs` | Entry point, tray icon and menu, daemon start-up, SSE listener, WorkIQ poll, daily gauges, run-at-startup |
      | `Settings.cs` | Preferences in `HKCU\Software\SlopGrenade` (sound on/off, volume, Teams/Outlook, slop/calm effects, fly delay) |
      | `Native.cs` | Win32 P/Invoke (layered window, DIB section, `waveOut`) |
-     | `Engine/` | `World` (director queue, bullet-time, hit-stop, screen shake, render order), `OverlayForm` (presenter), dirty-rect tracking, software toon 3D renderer, ink and palette helpers |
+     | `Engine/` | `World` (director queue, short slow-motion moment, hit-stop, slight shake, render order; each effect is drawn in isolation so one failure cannot affect the rest), `OverlayForm` (presenter), dirty-rect tracking, software toon 3D renderer, ink and palette helpers |
      | `Effects/` | Grenade, explosion, particles, slop goo (metaball field with drips and soft-serve swirls), 20 tumbling 3D fruit models, fluid smoke, flies, crystal twinkle, squeegee |
      | `Audio/` | Procedurally synthesised sound bank and a small `waveOut` mixer (stereo pan, loops, soft limiter) |
      | `UI/` | Steampunk tray control panel and its brass/ink drawing helpers |
@@ -27,11 +27,14 @@ Slop Grenade consists of three coordinated components:
      | :--- | :--- | :--- |
      | `human_sparkle` | 0-19 | A brief crystal twinkle near the edge |
      | `peaceful_cloud` | 20-39 | Smoke plumes rolling in from the edge; they swirl when things fly through and fade after about 30 s |
-     | `innocent_fruit` | 40-59 | A cel-shaded 3D fruit tumbling across in slow motion; it sticks only if it hits slop, otherwise it sails off screen |
+     | `innocent_fruit` | 40-59 | A cel-shaded 3D fruit tossed across the screen, tumbling; it sticks only if it hits slop, otherwise it sails off screen |
      | `slop_splat` | 60-79 | A goo cannonball that splats against the edge |
-     | `slop_grenade` | 80-100 | A cute grenade lobbed in bullet-time that explodes and splatters the edge |
+     | `slop_grenade` | 80-100 | A small grenade thrown at normal speed, with a brief slow-motion moment just before it pops and splatters the edge |
    - Slop left on an edge attracts flies after `FlyDelaySeconds` (default 45). Squeegeeing an edge wipes the slop and the stuck fruit and sends the flies away.
-   - Sound is off by default and can be switched on in the tray panel; all sounds are synthesised at start-up, so no audio files ship with the app.
+   - Items are drawn at `World.ItemScale` (0.42) of the screen scale so the effects stay out of the way on a work screen; twinkles and flies use the screen scale so they stay readable.
+   - Slop drips ooze continuously (creep, neck, release a drop, spring back), so the overlay keeps animating at about 30 fps while slop is on screen.
+   - Sound is off by default and can be switched on in the tray panel; all sounds are synthesised at start-up (soft sine/triangle tones with a 22 kHz grain), so no audio files ship with the app.
+   - Drawing failures are logged to `%LOCALAPPDATA%\SlopGrenade\overlay-errors.log` (each distinct error once per run). The failing effect skips that frame, the next frame is fully repainted, and every frame starts from a clean drawing state.
    - Connects to the local Rust daemon's Server-Sent Events stream (`GET http://127.0.0.1:8090/api/v1/events/stream`).
 
 2. **Rust Background Daemon (`rust/`)**:
@@ -48,7 +51,7 @@ Slop Grenade consists of three coordinated components:
 3. **Habit Monitoring Web Dashboard (`web/`)**:
    - Built with Svelte 5 runes (`$state`, `$derived`), SvelteKit (`@sveltejs/adapter-static`), strict TypeScript, and Vite. Theme in `web/src/app.css` (brass, ink and parchment).
    - Displays the incoming and outgoing daily slop pressure gauges, the stacked daily breakdown by type, time span / channel / type filters, the Top 5 Sloppers and Top 5 P-Doomers, and the drill-down ledger.
-   - **Proving Grounds**: a small monitor running the effects engine (`web/src/lib/engine/`). Live messages replay there, and the buttons fire test effects without calling the API, so test shots do not change your stats.
+   - **Effects test range**: opened from the target icon in the header, a pop-up monitor running the effects engine (`web/src/lib/engine/`). Live messages replay there while it is open, and the buttons fire test effects without calling the API, so test shots do not change your stats.
    - **Sound**: optional WebAudio output of the same synthesised effects (`engine/audio.ts`), switched on from the header and remembered per browser.
    - **Overlay mode**: `/?mode=overlay` renders only a transparent full-window effects layer driven by the SSE stream (for example as an OBS browser source). Add `&sound=1` for sound.
 
@@ -87,7 +90,7 @@ npm --prefix web run test
 npm --prefix web run check
 npm --prefix web run build
 ```
-Unit tests: `web/src/lib/dashboard.test.ts` (filters, gauges, leaderboards) and `web/src/lib/engine.test.ts` (grenade bullet-time and edge splat, cannon side, fruit sticks only on slop, squeegee clears one side, flies arrive and leave, smoke and twinkles fade, 20 fruit models with no labels, sound bank levels).
+Unit tests: `web/src/lib/dashboard.test.ts` (filters, gauges, leaderboards) and `web/src/lib/engine.test.ts` (grenade slow-motion moment and edge splat, cannon side, fruit sticks only on slop, squeegee clears one side, flies arrive and leave, smoke and twinkles fade, 20 fruit models with no labels, sound bank levels).
 
 ### Native Windows Desktop Overlay (`desktop/`)
 ```powershell

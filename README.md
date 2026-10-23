@@ -19,18 +19,19 @@ Good workplace communication is short, human, and considerate of other people's 
 
 ## What Happens on Your Screen
 
-Slop Grenade overlays your main Windows desktop monitor without interrupting your work (you can click and type right through the effects in any app). Everything is drawn in a comic, cel-shaded style with thick ink outlines:
+Slop Grenade overlays your main Windows desktop monitor without interrupting your work (you can click and type right through the effects in any app). Everything is drawn small and kept to the edges of the screen, in a comic, cel-shaded style with ink outlines:
 
-- **`human` (0-19)**: A single, barely noticeable twinkle, like light catching a cut crystal.
-- **`polish` (20-39)**: Smoke plumes roll in from the edge of your monitor. The smoke swirls when anything flies through it, builds up if more arrives, and fades away after about 30 seconds.
-- **`sprinkled` (40-59)**: One of **20 cel-shaded 3D fruits** is lobbed across the screen in slow motion, tumbling on a random axis. It sticks only if it hits slop on the edge; otherwise it sails off the screen.
+- **`human` (0-19)**: A short, bright crystal twinkle near the edge.
+- **`polish` (20-39)**: A small puff of smoke rolls in from the edge of your monitor. It swirls when anything flies through it and fades away within about 15 seconds.
+- **`sprinkled` (40-59)**: One of **20 cel-shaded 3D fruits** is tossed across the screen, tumbling on a random axis. It sticks only if it hits slop on the edge; otherwise it sails off the screen.
 - **`ai-cannon` (60-79)**: A goo cannonball splats onto the edge of your screen and stays until squeegeed.
-- **`slop-grenade` (80-100)**: A cute, cheeky grenade pulls its own pin and is hurled across the desktop in bullet-time, then explodes with a hit-stop, screen shake, shockwave and comic sound word, splattering slop over the edge of your monitor:
+- **`slop-grenade` (80-100)**: A small, cheeky grenade pulls its own pin and is thrown at the edge of your monitor. Time slows for a moment just before it hits, then it pops with a small blast and comic sound word and splatters slop on the edge:
   - **Slop You Receive (Left Side of Monitor)**: Builds up in **Pink**.
   - **Slop You Send (Right Side of Monitor)**: Builds up in **Blue**.
+  - **Ooze**: Slop keeps oozing slowly down the edge: drips stretch, a drop lets go and falls, and the drip starts again.
   - **Flies**: Leave slop on the screen for a while (45 seconds by default) and flies start to gather and buzz around it.
   - **Daily Buildup & Squeegee**: Fruit and slop stay stuck along the sides of your monitor until you squeegee that side clean from the tray icon. The squeegee also chases the flies away.
-- **Sound (optional)**: Switch on **Sound FX** in the tray panel for whooshes, a ticking fuse, splats, buzzing flies and a big grenade explosion. Sound is off by default.
+- **Sound (optional)**: Switch on **Sound FX** in the tray panel for soft, retro sounds in the style of early Macintosh games: a light whee, a ticking fuse, plops, a quiet hum from the flies and a rounded "pomf" for the grenade. Sound is off by default.
 
 ---
 
@@ -98,7 +99,7 @@ Look for the **Bright Pink Hand Grenade** icon in your Windows System Tray (bott
 ### 2. The Habit Dashboard (`http://127.0.0.1:8090/`)
 Clicking **Dashboard** in the tray opens the habit tracker in your browser, styled to match (brass, ink and parchment), featuring:
 - **Incoming / Outgoing Slop Pressure Gauges** (0-100%) that vent steam when you are in the red.
-- **Proving Grounds**: a small monitor where live messages replay and you can test fire every effect (test shots are not recorded in your stats), with an optional **Sound** switch and volume slider in the header.
+- **Effects test range**: click the target icon in the header to open a small monitor where you can test fire every effect (test shots are not recorded in your stats). The **Sound** switch and volume slider sit next to it.
 - **Per-Day Stacked Bar Chart** broken down by type (`slop-grenade` in pink, `ai-cannon` in orange, `sprinkled` in yellow, `polish` in smoke grey, and `human` in cream).
 - **Filters** for time span (`Today`, `7d`, `30d`, `All`), source (`Teams` vs. `Outlook`), and message type (`All`, `slop-grenade`, `ai-cannon`, `sprinkled`, `polish`, `human`).
 - **Top 5 Sloppers** and **Top 5 P-Doomers** (the colleagues who refuse to touch AI).

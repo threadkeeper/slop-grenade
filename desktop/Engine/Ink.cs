@@ -25,6 +25,12 @@ namespace SlopGrenadeDesktop
             return p;
         }
 
+        /// <summary>True for a usable coordinate (not NaN, not infinite, not absurdly far away).</summary>
+        public static bool Ok(float v)
+        {
+            return !float.IsNaN(v) && v > -1e6f && v < 1e6f;
+        }
+
         public static Color C(int rgb, float alpha)
         {
             int a = (int)(M.Clamp01(alpha) * 255f + 0.5f);
@@ -40,8 +46,22 @@ namespace SlopGrenadeDesktop
         public static Pen Pen(int rgb, float width, float alpha)
         {
             SharedPen.Color = C(rgb, alpha);
-            SharedPen.Width = Math.Max(0.1f, width);
+            SharedPen.Width = float.IsNaN(width) || float.IsInfinity(width) ? 1f : Math.Max(0.1f, Math.Min(width, 400f));
             return SharedPen;
+        }
+
+        /// <summary>
+        /// Clip to a shape for cel shading. Returns false (and changes nothing) when the
+        /// shape is degenerate or entirely outside the current clip, so an empty clip
+        /// region is never created; the caller then skips the shading.
+        /// </summary>
+        public static bool ClipTo(Graphics g, GraphicsPath p, CombineMode mode)
+        {
+            RectangleF b = p.GetBounds();
+            if (!Ok(b.X) || !Ok(b.Y) || !Ok(b.Width) || !Ok(b.Height) || b.Width < 0.5f || b.Height < 0.5f) return false;
+            if (!g.IsVisible(b)) return false;
+            g.SetClip(p, mode);
+            return true;
         }
 
         /// <summary>A cleared, reusable path (valid until the next call).</summary>
@@ -53,6 +73,8 @@ namespace SlopGrenadeDesktop
 
         public static RectangleF Rect(float cx, float cy, float rx, float ry)
         {
+            // a bad number here would make GDI+ throw; draw nothing instead
+            if (!Ok(cx) || !Ok(cy) || !Ok(rx) || !Ok(ry)) return new RectangleF(-100f, -100f, 0.02f, 0.02f);
             rx = Math.Max(0.01f, rx);
             ry = Math.Max(0.01f, ry);
             return new RectangleF(cx - rx, cy - ry, rx * 2f, ry * 2f);
@@ -101,7 +123,7 @@ namespace SlopGrenadeDesktop
             {
                 clip.AddEllipse(Rect(cx, cy, rx, ry));
                 g.FillPath(Brush(shadow, alpha), clip);
-                g.SetClip(clip, CombineMode.Intersect);
+                ClipTo(g, clip, CombineMode.Intersect);
                 g.FillEllipse(Brush(baseC, alpha), Rect(cx + lx * rx * 0.22f, cy + ly * ry * 0.22f, rx * 0.98f, ry * 0.98f));
                 g.FillEllipse(Brush(light, alpha), Rect(cx + lx * rx * 0.42f, cy + ly * ry * 0.42f, rx * 0.55f, ry * 0.5f));
                 if (gloss)

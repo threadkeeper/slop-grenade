@@ -43,11 +43,11 @@ export class Fruit {
     this.R = 46 * s;
     const inward = side === 'left' ? 1 : -1;
     const edge = side === 'left' ? 0 : viewW;
-    // lobbed from below the far half of the screen in a lazy arc
+    // lobbed from below the far half of the screen in a brisk arc
     this.x = viewW * 0.5 + inward * viewW * rng.range(0.05, 0.35);
     this.y = viewH + this.R * 1.6;
-    const T = rng.range(4.6, 6.2);
-    this.gravity = 120 * s;
+    const T = rng.range(1.5, 2.1);
+    this.gravity = 1100 * s;
     // aim a little past the edge so it exits cleanly if nothing catches it
     const tx = edge - inward * this.R * 0.2;
     this.vx = (tx - this.x) / T;
@@ -59,7 +59,7 @@ export class Fruit {
     this.ax = r * Math.cos(t);
     this.ay = r * Math.sin(t);
     this.az = z;
-    this.omega = rng.range(0.5, 0.95) * rng.sign();
+    this.omega = rng.range(2.2, 4) * rng.sign();
     // random starting orientation
     axisAngle(0, 1, 0, rng.range(0, Math.PI * 2), this.tmp);
     axisAngle(1, 0, 0, rng.range(-0.7, 0.7), this.base);

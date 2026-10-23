@@ -1,6 +1,8 @@
 // SfxBank.cs
-// Procedural sound effects: no audio files ship with the app. Each effect is
-// synthesised into a mono float buffer at 44.1 kHz. Recipes mirror
+// Procedural sound effects: no audio files ship with the app. Soft and quiet,
+// in the spirit of early Macintosh games: sine and triangle tones with pitch
+// glides, gentle filtered noise, a 22 kHz grain and a low-pass so nothing is
+// harsh. Each effect is a mono float buffer at 44.1 kHz. Recipes mirror
 // web/src/lib/engine/sfxSynth.ts.
 
 using System;
@@ -82,7 +84,18 @@ namespace SlopGrenadeDesktop
             return o;
         }
 
-        private static void Bloop(float[] o, float start, float f0, float f1, float dur, float amp)
+        private enum Wave { Sine, Tri, Square }
+
+        private static double Osc(Wave wave, double ph)
+        {
+            double u = ph / (2 * Math.PI) - Math.Floor(ph / (2 * Math.PI));
+            if (wave == Wave.Sine) return Math.Sin(ph);
+            if (wave == Wave.Tri) return u < 0.5 ? 4 * u - 1 : 3 - 4 * u;
+            return u < 0.5 ? 1 : -1;
+        }
+
+        /// <summary>Tone gliding exponentially from f0 to f1; linear attack then (1 - t/dur)^decay.</summary>
+        private static void Tone(float[] o, double start, double dur, double f0, double f1, Wave wave, double amp, double attack, double decay)
         {
             int s0 = (int)Math.Round(start * SampleRate);
             int n = (int)Math.Round(dur * SampleRate);
@@ -90,11 +103,39 @@ namespace SlopGrenadeDesktop
             for (int i = 0; i < n && s0 + i < o.Length; i++)
             {
                 double t = (double)i / SampleRate;
-                double f = f1 + (f0 - f1) * Math.Exp(-t * 26);
+                double u = t / dur;
+                double f = f0 * Math.Pow(f1 / f0, u);
                 ph += 2 * Math.PI * f / SampleRate;
-                double env = Math.Sin(Math.Min(1.0, t / 0.004) * Math.PI * 0.5) * Math.Exp(-t * (6 / dur));
-                o[s0 + i] += (float)(Math.Sin(ph) * env * amp);
+                double env = Math.Min(1.0, t / attack) * Math.Pow(1 - u, decay);
+                o[s0 + i] += (float)(Osc(wave, ph) * env * amp);
             }
+        }
+
+        /// <summary>Low-passed noise whose cutoff glides from c0 to c1 (Hz).</summary>
+        private static void Hush(float[] o, double start, double dur, double c0, double c1, double amp, double attack, double decay, Noise nz)
+        {
+            int s0 = (int)Math.Round(start * SampleRate);
+            int n = (int)Math.Round(dur * SampleRate);
+            Biquad lp = new Biquad();
+            for (int i = 0; i < n && s0 + i < o.Length; i++)
+            {
+                double t = (double)i / SampleRate;
+                double u = t / dur;
+                if ((i & 31) == 0) lp.Set(FilterType.Lp, (float)(c0 * Math.Pow(c1 / c0, u)), 0.7f);
+                double env = Math.Min(1.0, t / attack) * Math.Pow(1 - u, decay);
+                o[s0 + i] += (float)(lp.Run(nz.White()) * env * amp);
+            }
+        }
+
+        /// <summary>Early-Mac grain: hold every other sample (22 kHz) then soften with a low-pass.</summary>
+        private static float[] Retro(float[] o, float cutoff)
+        {
+            for (int i = 1; i < o.Length; i += 2) o[i] = o[i - 1];
+            Biquad a = new Biquad(), b = new Biquad();
+            a.Set(FilterType.Lp, cutoff, 0.7f);
+            b.Set(FilterType.Lp, cutoff, 0.7f);
+            for (int i = 0; i < o.Length; i++) o[i] = b.Run(a.Run(o[i]));
+            return o;
         }
 
         private static float[] Loopify(float[] x, float seconds)
@@ -110,246 +151,147 @@ namespace SlopGrenadeDesktop
             return o;
         }
 
+        /// <summary>The grenade: a round, soft "pomf" with a little cartoon pop at the end.</summary>
         public static float[] Explosion()
         {
-            float[] o = Buffer(2.8f);
+            float[] o = Buffer(1.3f);
             Noise nz = new Noise(7);
-            Biquad body = new Biquad(), crack = new Biquad(), crackle = new Biquad(), wet = new Biquad(), rumble = new Biquad();
-            crack.Set(FilterType.Hp, 1400, 0.7f);
-            crackle.Set(FilterType.Bp, 2600, 1.4f);
-            wet.Set(FilterType.Bp, 700, 2.2f);
-            rumble.Set(FilterType.Lp, 110, 0.8f);
-            double ph = 0;
-            float brown = 0f;
-            for (int i = 0; i < o.Length; i++)
-            {
-                float t = (float)i / SampleRate;
-                if ((i & 31) == 0) body.Set(FilterType.Lp, 170f + 4600f * M.Exp(-t * 5.2f), 0.9f);
-                float w = nz.White();
-                brown = brown * 0.985f + w * 0.15f;
-                float attack = 1f - M.Exp(-t * 500f);
-                float f = 30f + 62f * M.Exp(-t * 8.5f);
-                ph += 2 * Math.PI * f / SampleRate;
-                float sub = (float)Math.Sin(ph) * M.Exp(-t * 3.1f) * attack * 1.15f;
-                float roar = body.Run(w * 0.7f + brown * 0.8f) * M.Exp(-t * 2.1f) * attack * 1.25f;
-                float cr = crack.Run(w) * M.Exp(-t * 32f) * 0.85f;
-                float p = 0.0045f * M.Exp(-t * 1.6f);
-                float imp = nz.Uni() < p ? nz.White() * 1.6f : 0f;
-                float deb = crackle.Run(imp) * 0.9f;
-                float we = t > 0.03f ? wet.Run(w) * M.Exp(-(t - 0.03f) * 8f) * 0.55f : 0f;
-                float rb = rumble.Run(brown * 3f) * M.Exp(-t * 1.05f) * 0.9f;
-                o[i] = sub + roar + cr + deb + we + rb;
-            }
-            Bloop(o, 0.07f, 420, 90, 0.16f, 0.35f);
-            Bloop(o, 0.19f, 360, 80, 0.18f, 0.3f);
-            Bloop(o, 0.33f, 300, 70, 0.2f, 0.25f);
-            Bloop(o, 0.52f, 260, 65, 0.22f, 0.18f);
-            return Finish(o, 0.98f, 1.7f);
+            Tone(o, 0, 0.9, 150, 42, Wave.Sine, 1.0, 0.003, 1.6);
+            Hush(o, 0, 1.1, 2600, 160, 0.75, 0.004, 2.2, nz);
+            Tone(o, 0.2, 0.12, 330, 220, Wave.Tri, 0.22, 0.004, 1.2);
+            Tone(o, 0.34, 0.14, 262, 175, Wave.Tri, 0.18, 0.004, 1.2);
+            return Finish(Retro(o, 4200f), 0.78f, 0.6f);
         }
 
+        /// <summary>Pin pulled and tossed: a light rising "whee".</summary>
         public static float[] Throw()
         {
-            float[] o = Buffer(0.6f);
-            Noise nz = new Noise(11);
-            Biquad bp = new Biquad();
-            const float T = 0.55f;
-            for (int i = 0; i < o.Length; i++)
-            {
-                float t = (float)i / SampleRate;
-                if ((i & 31) == 0) bp.Set(FilterType.Bp, 500f + 1300f * (t / T), 1.3f);
-                float env = M.Sin(M.PI * Math.Min(1f, t / T)); env *= env;
-                float v = bp.Run(nz.White()) * env * 1.2f;
-                float pe = M.Exp(-t * 9f);
-                v += (M.Sin(M.TAU * 2210f * t) * 0.5f + M.Sin(M.TAU * 3350f * t) * 0.32f + M.Sin(M.TAU * 5120f * t) * 0.18f) * pe * 0.45f;
-                o[i] = v;
-            }
-            return Finish(o, 0.8f, 0f);
+            float[] o = Buffer(0.34f);
+            Tone(o, 0, 0.32, 330, 880, Wave.Tri, 0.8, 0.01, 1.4);
+            Tone(o, 0.02, 0.28, 660, 1320, Wave.Sine, 0.15, 0.01, 2);
+            return Finish(Retro(o, 5000f), 0.45f, 0f);
         }
 
+        /// <summary>Fuse: a gentle clock tick (loops).</summary>
         public static float[] Fuse()
         {
-            float[] o = Buffer(1.0f);
+            float[] o = Buffer(0.54f);
             Noise nz = new Noise(13);
-            Biquad hp = new Biquad(), cr = new Biquad();
-            hp.Set(FilterType.Hp, 2800, 0.7f);
-            cr.Set(FilterType.Bp, 4200, 2f);
-            for (int i = 0; i < o.Length; i++)
-            {
-                float t = (float)i / SampleRate;
-                float flutter = 0.75f + 0.25f * M.Sin(M.TAU * 23f * t) * M.Sin(M.TAU * 3f * t);
-                float imp = nz.Uni() < 0.0016f ? nz.White() * 3f : 0f;
-                o[i] = hp.Run(nz.White()) * 0.35f * flutter + cr.Run(imp);
-            }
-            return Loopify(Finish(o, 0.6f, 0f), 0.05f);
+            for (int k = 0; k < 6; k++) Tone(o, k / 12.0, 0.018, 1800, 1500, Wave.Tri, 0.6, 0.001, 2);
+            Hush(o, 0, 0.54, 2200, 2200, 0.05, 0.001, 0, nz);
+            return Loopify(Finish(Retro(o, 5000f), 0.3f, 0f), 0.04f);
         }
 
+        /// <summary>Bullet-time: a soft two-note "woo" falling a fourth.</summary>
         public static float[] SlowmoIn()
         {
-            float[] o = Buffer(1.3f);
-            Noise nz = new Noise(17);
-            Biquad lp = new Biquad();
-            double p1 = 0, p2 = 0;
-            for (int i = 0; i < o.Length; i++)
-            {
-                float t = (float)i / SampleRate;
-                if ((i & 31) == 0) lp.Set(FilterType.Lp, 300f + 2600f * M.Exp(-t * 3f), 0.8f);
-                float f = 55f + 190f * M.Exp(-t * 3.4f);
-                p1 += 2 * Math.PI * f / SampleRate;
-                p2 += 2 * Math.PI * f * 1.012 / SampleRate;
-                float tone = (float)(Math.Sin(p1) + 0.6 * Math.Sin(p2 * 2) + 0.35 * Math.Sin(p1 * 3));
-                float env = Math.Min(1f, t / 0.05f) * M.Exp(-t * 1.6f);
-                float swell = M.Sin(M.PI * Math.Min(1f, t / 0.9f)) * 0.35f;
-                o[i] = lp.Run(tone * env + nz.White() * swell);
-            }
-            return Finish(o, 0.75f, 1.2f);
+            float[] o = Buffer(0.5f);
+            Tone(o, 0, 0.48, 880, 330, Wave.Sine, 0.7, 0.03, 1.5);
+            Tone(o, 0, 0.48, 660, 247, Wave.Sine, 0.4, 0.03, 1.5);
+            return Finish(Retro(o, 4500f), 0.4f, 0f);
         }
 
+        /// <summary>Goo landing: a round "plop".</summary>
         public static float[] Splat()
         {
-            float[] o = Buffer(0.8f);
+            float[] o = Buffer(0.22f);
             Noise nz = new Noise(19);
-            Biquad bp = new Biquad();
-            double ph = 0;
-            for (int i = 0; i < o.Length; i++)
-            {
-                float t = (float)i / SampleRate;
-                if ((i & 31) == 0) bp.Set(FilterType.Bp, 300f + 900f * M.Exp(-t * 6f), 1.6f);
-                float f = 50f + 70f * M.Exp(-t * 14f);
-                ph += 2 * Math.PI * f / SampleRate;
-                o[i] = bp.Run(nz.White()) * M.Exp(-t * 7.5f) * 1.3f + (float)Math.Sin(ph) * M.Exp(-t * 9f) * 0.8f;
-            }
-            Bloop(o, 0.04f, 380, 85, 0.14f, 0.4f);
-            Bloop(o, 0.16f, 320, 75, 0.16f, 0.3f);
-            return Finish(o, 0.9f, 1.3f);
+            Tone(o, 0, 0.2, 600, 150, Wave.Sine, 1, 0.002, 2);
+            Hush(o, 0, 0.05, 1800, 600, 0.25, 0.001, 2, nz);
+            return Finish(Retro(o, 4000f), 0.55f, 0f);
         }
 
+        /// <summary>AI cannon: a soft "pomp".</summary>
         public static float[] Cannon()
         {
-            float[] o = Buffer(0.5f);
+            float[] o = Buffer(0.32f);
             Noise nz = new Noise(23);
-            Biquad lp = new Biquad();
-            lp.Set(FilterType.Lp, 900, 0.8f);
-            double ph = 0;
-            for (int i = 0; i < o.Length; i++)
-            {
-                float t = (float)i / SampleRate;
-                float f = 58f + 110f * M.Exp(-t * 22f);
-                ph += 2 * Math.PI * f / SampleRate;
-                o[i] = (float)Math.Sin(ph) * M.Exp(-t * 10f) + lp.Run(nz.White()) * M.Exp(-t * 14f) * 0.7f;
-            }
-            return Finish(o, 0.85f, 1.4f);
+            Tone(o, 0, 0.26, 260, 90, Wave.Tri, 0.9, 0.003, 1.8);
+            Hush(o, 0, 0.18, 1400, 300, 0.4, 0.002, 2, nz);
+            return Finish(Retro(o, 3800f), 0.5f, 0f);
         }
 
+        /// <summary>Fruit tossed: a breathy swish.</summary>
         public static float[] Whoosh()
         {
-            float[] o = Buffer(1.4f);
+            float[] o = Buffer(0.4f);
             Noise nz = new Noise(29);
             Biquad bp = new Biquad();
             for (int i = 0; i < o.Length; i++)
             {
-                float t = (float)i / SampleRate;
-                float sw = M.Sin(M.PI * Math.Min(1f, t / 1.4f));
-                if ((i & 31) == 0) bp.Set(FilterType.Bp, 350f + 500f * sw, 0.9f);
-                o[i] = bp.Run(nz.White()) * sw * sw;
+                double u = (double)i / o.Length;
+                if ((i & 31) == 0) bp.Set(FilterType.Bp, (float)(500 * Math.Pow(3.2, u)), 1.2f);
+                o[i] = (float)(bp.Run(nz.White()) * Math.Sin(Math.PI * u));
             }
-            return Finish(o, 0.55f, 0f);
+            return Finish(Retro(o, 4500f), 0.3f, 0f);
         }
 
+        /// <summary>Fruit sticks in the goo: two little bloops.</summary>
         public static float[] Squelch()
         {
-            float[] o = Buffer(0.55f);
-            Noise nz = new Noise(31);
-            Biquad lp = new Biquad();
-            for (int i = 0; i < o.Length; i++)
-            {
-                float t = (float)i / SampleRate;
-                if ((i & 31) == 0) lp.Set(FilterType.Lp, 260f + 1300f * M.Exp(-t * 9f), 6f);
-                o[i] = lp.Run(nz.White()) * M.Exp(-t * 7f) * 0.9f;
-            }
-            Bloop(o, 0.02f, 520, 120, 0.1f, 0.35f);
-            Bloop(o, 0.11f, 420, 100, 0.12f, 0.25f);
-            return Finish(o, 0.8f, 1.1f);
+            float[] o = Buffer(0.3f);
+            Tone(o, 0, 0.13, 420, 160, Wave.Sine, 1, 0.002, 1.6);
+            Tone(o, 0.09, 0.16, 340, 120, Wave.Sine, 0.8, 0.002, 1.6);
+            return Finish(Retro(o, 4000f), 0.5f, 0f);
         }
 
+        /// <summary>Smoke rolling in: a quiet airy "fooo".</summary>
         public static float[] Smoke()
         {
-            float[] o = Buffer(2.2f);
+            float[] o = Buffer(0.85f);
             Noise nz = new Noise(37);
             Biquad lp = new Biquad();
-            lp.Set(FilterType.Lp, 650, 0.7f);
-            float b0 = 0f, b1 = 0f, b2 = 0f;
+            lp.Set(FilterType.Lp, 900f, 0.7f);
             for (int i = 0; i < o.Length; i++)
             {
-                float t = (float)i / SampleRate;
-                float w = nz.White();
-                b0 = 0.99765f * b0 + w * 0.099046f;
-                b1 = 0.963f * b1 + w * 0.2965164f;
-                b2 = 0.57f * b2 + w * 1.0526913f;
-                float pink = b0 + b1 + b2 + w * 0.1848f;
-                float env = Math.Min(1f, t / 0.55f) * M.Exp(-Math.Max(0f, t - 0.55f) * 1.6f);
-                o[i] = lp.Run(pink) * env;
+                double u = (double)i / o.Length;
+                double e = Math.Sin(Math.PI * u);
+                o[i] = (float)(lp.Run(nz.White()) * e * e);
             }
-            return Finish(o, 0.5f, 0f);
+            Tone(o, 0.05, 0.7, 196, 165, Wave.Sine, 0.12, 0.15, 1);
+            return Finish(Retro(o, 3500f), 0.28f, 0f);
         }
 
+        /// <summary>Crystal twinkle: a three-note bell arpeggio (E6, G#6, B6).</summary>
         public static float[] Twinkle()
         {
-            float[] o = Buffer(0.9f);
-            Noise nz = new Noise(41);
-            float[] parts = new float[] { 3520f, 5290f, 7180f, 8870f };
-            float[] decay = new float[] { 5f, 7f, 9f, 12f };
-            float[] ph = new float[parts.Length];
-            for (int k = 0; k < parts.Length; k++) ph[k] = nz.Uni() * M.TAU;
-            for (int i = 0; i < o.Length; i++)
+            float[] o = Buffer(0.85f);
+            double[] notes = new double[] { 1318.5, 1661.2, 1975.5 };
+            for (int k = 0; k < notes.Length; k++)
             {
-                float t = (float)i / SampleRate;
-                float v = 0f;
-                for (int k = 0; k < parts.Length; k++) v += M.Sin(M.TAU * parts[k] * t + ph[k]) * M.Exp(-t * decay[k]) / (k + 1);
-                o[i] = v * Math.Min(1f, t / 0.002f);
+                Tone(o, k * 0.09, 0.6, notes[k], notes[k], Wave.Sine, 0.6, 0.002, 3);
+                Tone(o, k * 0.09, 0.3, notes[k] * 2.76, notes[k] * 2.76, Wave.Sine, 0.12, 0.002, 4);
             }
-            return Finish(o, 0.35f, 0f);
+            return Finish(Retro(o, 7000f), 0.4f, 0f);
         }
 
+        /// <summary>Squeegee: rubbery squeak-squeak-squeak.</summary>
         public static float[] Squeegee()
         {
-            float[] o = Buffer(1.0f);
-            Noise nz = new Noise(43);
-            Biquad bp = new Biquad();
-            bp.Set(FilterType.Bp, 2100, 1.2f);
-            double ph = 0;
-            for (int i = 0; i < o.Length; i++)
-            {
-                float t = (float)i / SampleRate;
-                float f = 880f + 260f * M.Sin(M.TAU * 6.5f * t) + 60f * M.Sin(M.TAU * 41f * t);
-                ph += 2 * Math.PI * f / SampleRate;
-                float flutter = 0.6f + 0.4f * M.Sin(M.TAU * 31f * t);
-                float env = M.Sin(M.PI * Math.Min(1f, t / 0.95f));
-                o[i] = ((float)Math.Sin(ph) * 0.5f + (float)Math.Sin(ph * 2) * 0.18f) * flutter * env * 0.8f + bp.Run(nz.White()) * env * 0.5f;
-            }
-            return Finish(o, 0.7f, 0.8f);
+            float[] o = Buffer(0.62f);
+            Tone(o, 0, 0.12, 1100, 1450, Wave.Tri, 0.7, 0.01, 0.8);
+            Tone(o, 0.17, 0.12, 1150, 1500, Wave.Tri, 0.7, 0.01, 0.8);
+            Tone(o, 0.34, 0.24, 1200, 900, Wave.Tri, 0.6, 0.01, 1.2);
+            return Finish(Retro(o, 3000f), 0.35f, 0f);
         }
 
+        /// <summary>Flies: a soft, low hum with a lazy wobble (loops).</summary>
         public static float[] Buzz()
         {
-            float[] o = Buffer(2.0f);
-            Noise nz = new Noise(47);
-            Biquad bp = new Biquad();
-            bp.Set(FilterType.Bp, 520, 0.6f);
+            float[] o = Buffer(1.04f);
+            Biquad lp = new Biquad();
+            lp.Set(FilterType.Lp, 700f, 0.7f);
             double ph = 0;
             for (int i = 0; i < o.Length; i++)
             {
-                float t = (float)i / SampleRate;
-                float f = 192f + 9f * M.Sin(M.TAU * 0.5f * t) + 5f * M.Sin(M.TAU * 1.5f * t + 1f) + 3f * M.Sin(M.TAU * 7f * t);
+                double t = (double)i / SampleRate;
+                double f = 175 + 6 * Math.Sin(2 * Math.PI * 4 * t) + 3 * Math.Sin(2 * Math.PI * 11 * t);
                 ph += 2 * Math.PI * f / SampleRate;
-                float saw = 0f;
-                for (int k = 1; k <= 7; k++) saw += (float)Math.Sin(ph * k) / k;
-                float am = 0.8f + 0.2f * M.Sin(M.TAU * 14f * t);
-                o[i] = bp.Run(saw * am + nz.White() * 0.05f);
+                o[i] = lp.Run((float)(Osc(Wave.Tri, ph) * (0.85 + 0.15 * Math.Sin(2 * Math.PI * 9 * t))));
             }
-            return Loopify(Finish(o, 0.5f, 0f), 0.04f);
+            return Loopify(Finish(Retro(o, 2500f), 0.25f, 0f), 0.04f);
         }
 
-        /// <summary>Synthesises every effect (takes a few hundred ms; call off the UI thread).</summary>
         public static Dictionary<string, float[]> BuildAll()
         {
             Dictionary<string, float[]> d = new Dictionary<string, float[]>();

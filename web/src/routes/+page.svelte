@@ -35,6 +35,8 @@
   let selectedBucket = $state<string | null>(null);
   let selectedPerson = $state<string | null>(null);
   let cue = $state<StageCue | null>(null);
+  /** The effects test range opens in a pop-up from the header icon. */
+  let rangeOpen = $state(false);
 
   function readPref(key: string, fallback: string): string {
     try {
@@ -243,14 +245,29 @@
         </div>
       </div>
 
-      <div class="sound-box" role="group" aria-label="Sound effects">
-        <button class="brass small" class:active={soundOn} aria-pressed={soundOn} onclick={toggleSound}>
-          {soundOn ? 'Sound: On' : 'Sound: Off'}
+      <div class="header-tools">
+        <button
+          class="brass icon-btn"
+          title="Effects test range"
+          aria-label="Open the effects test range"
+          aria-haspopup="dialog"
+          onclick={() => (rangeOpen = true)}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="2.2" />
+            <circle cx="12" cy="12" r="3" fill="currentColor" />
+            <path d="M12 1.5v5M12 17.5v5M1.5 12h5M17.5 12h5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
+          </svg>
         </button>
-        <label class="volume" class:muted={!soundOn}>
-          <span>Vol</span>
-          <input type="range" min="0" max="100" step="5" bind:value={volume} aria-label="Volume" />
-        </label>
+        <div class="sound-box" role="group" aria-label="Sound effects">
+          <button class="brass small" class:active={soundOn} aria-pressed={soundOn} onclick={toggleSound}>
+            {soundOn ? 'Sound: On' : 'Sound: Off'}
+          </button>
+          <label class="volume" class:muted={!soundOn}>
+            <span>Vol</span>
+            <input type="range" min="0" max="100" step="5" bind:value={volume} aria-label="Volume" />
+          </label>
+        </div>
       </div>
     </header>
 
@@ -313,8 +330,6 @@
             </div>
           </div>
         </section>
-
-        <ProvingGrounds {sfx} {cue} />
 
         <section class="panel chart-panel" aria-label="Messages by type">
           <div class="panel-head">
@@ -488,8 +503,29 @@
         </table>
       </div>
     </section>
+
+    {#if rangeOpen}
+      <div
+        class="range-backdrop"
+        role="presentation"
+        onclick={(e) => {
+          if (e.target === e.currentTarget) rangeOpen = false;
+        }}
+      >
+        <div class="range-dialog" role="dialog" aria-modal="true" aria-label="Effects test range">
+          <button class="brass small close-btn" aria-label="Close the test range" onclick={() => (rangeOpen = false)}>Close</button>
+          <ProvingGrounds {sfx} {cue} />
+        </div>
+      </div>
+    {/if}
   </main>
 {/if}
+
+<svelte:window
+  onkeydown={(e) => {
+    if (e.key === 'Escape') rangeOpen = false;
+  }}
+/>
 
 <style>
   .page {
@@ -554,6 +590,49 @@
     letter-spacing: 0.14em;
     text-transform: uppercase;
     color: #4a2c0c;
+  }
+
+  .header-tools {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .icon-btn {
+    display: inline-grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+  }
+
+  .icon-btn svg {
+    width: 24px;
+    height: 24px;
+  }
+
+  .range-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: grid;
+    place-items: center;
+    padding: 20px;
+    background: rgba(27, 20, 32, 0.6);
+  }
+
+  .range-dialog {
+    position: relative;
+    width: min(960px, 100%);
+    max-height: calc(100vh - 40px);
+    overflow: auto;
+  }
+
+  .close-btn {
+    position: absolute;
+    top: 14px;
+    right: 18px;
+    z-index: 1;
   }
 
   .sound-box {

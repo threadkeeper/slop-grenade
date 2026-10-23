@@ -1,7 +1,10 @@
 /**
- * Procedural sound effects (no audio files ship with the app). Every effect is
- * synthesised into a mono Float32Array at 44.1 kHz from noise, oscillators and
- * filters. The desktop overlay ports these recipes 1:1 in `desktop/Audio/SfxBank.cs`.
+ * Procedural sound effects (no audio files ship with the app). The palette is
+ * soft and quiet, in the spirit of early Macintosh games: simple sine and
+ * triangle tones with pitch glides, gentle filtered noise, a 22 kHz
+ * "sample-and-hold" grain and a low-pass so nothing is harsh. Every effect is a
+ * mono Float32Array at 44.1 kHz. The desktop overlay ports these recipes 1:1
+ * in `desktop/Audio/SfxBank.cs`.
  */
 export const SAMPLE_RATE = 44100;
 
@@ -103,253 +106,182 @@ function finish(out: Float32Array, peak: number, drive: number): Float32Array {
   return out;
 }
 
-/** Add a pitch-dropping "bloop" (wet slop bubble). */
-function bloop(out: Float32Array, start: number, f0: number, f1: number, dur: number, amp: number): void {
+
+type Wave = 'sine' | 'tri' | 'square';
+
+function osc(wave: Wave, ph: number): number {
+  const u = ph / (2 * Math.PI) - Math.floor(ph / (2 * Math.PI));
+  if (wave === 'sine') return Math.sin(ph);
+  if (wave === 'tri') return u < 0.5 ? 4 * u - 1 : 3 - 4 * u;
+  return u < 0.5 ? 1 : -1;
+}
+
+/**
+ * Add a tone gliding exponentially from f0 to f1 over `dur` seconds.
+ * Envelope: linear attack, then (1 - t/dur)^decay.
+ */
+function tone(out: Float32Array, start: number, dur: number, f0: number, f1: number, wave: Wave, amp: number, attack: number, decay: number): void {
   const s0 = Math.round(start * SAMPLE_RATE);
   const n = Math.round(dur * SAMPLE_RATE);
   let ph = 0;
   for (let i = 0; i < n && s0 + i < out.length; i++) {
     const t = i / SAMPLE_RATE;
-    const f = f1 + (f0 - f1) * Math.exp(-t * 26);
+    const u = t / dur;
+    const f = f0 * Math.pow(f1 / f0, u);
     ph += (2 * Math.PI * f) / SAMPLE_RATE;
-    const env = Math.sin(Math.min(1, t / 0.004) * Math.PI * 0.5) * Math.exp(-t * (6 / dur));
-    out[s0 + i] += Math.sin(ph) * env * amp;
+    const env = Math.min(1, t / attack) * Math.pow(1 - u, decay);
+    out[s0 + i] += osc(wave, ph) * env * amp;
   }
 }
 
-/** The big one: sub thump, crack, roaring body, crackle debris, wet gloops, rumble tail. */
+/** Add low-passed noise whose cutoff glides from c0 to c1 (Hz). */
+function hush(out: Float32Array, start: number, dur: number, c0: number, c1: number, amp: number, attack: number, decay: number, nz: Noise): void {
+  const s0 = Math.round(start * SAMPLE_RATE);
+  const n = Math.round(dur * SAMPLE_RATE);
+  const lp = new Biquad();
+  for (let i = 0; i < n && s0 + i < out.length; i++) {
+    const t = i / SAMPLE_RATE;
+    const u = t / dur;
+    if ((i & 31) === 0) lp.set('lp', c0 * Math.pow(c1 / c0, u), 0.7);
+    const env = Math.min(1, t / attack) * Math.pow(1 - u, decay);
+    out[s0 + i] += lp.run(nz.white()) * env * amp;
+  }
+}
+
+/** Early-Mac grain: hold every other sample (22 kHz) then soften with a low-pass. */
+function retro(out: Float32Array, cutoff: number): Float32Array {
+  for (let i = 1; i < out.length; i += 2) out[i] = out[i - 1];
+  const a = new Biquad();
+  const b = new Biquad();
+  a.set('lp', cutoff, 0.7);
+  b.set('lp', cutoff, 0.7);
+  for (let i = 0; i < out.length; i++) out[i] = b.run(a.run(out[i]));
+  return out;
+}
+
+/** The grenade: a round, soft "pomf" with a little cartoon pop at the end. */
 export function synthExplosion(seed = 7): Float32Array {
-  const out = buffer(2.8);
-  const nz = new Noise(seed);
-  const body = new Biquad();
-  const crack = new Biquad();
-  const crackle = new Biquad();
-  const wet = new Biquad();
-  const rumble = new Biquad();
-  crack.set('hp', 1400, 0.7);
-  crackle.set('bp', 2600, 1.4);
-  wet.set('bp', 700, 2.2);
-  rumble.set('lp', 110, 0.8);
-  let ph = 0;
-  let brown = 0;
-  for (let i = 0; i < out.length; i++) {
-    const t = i / SAMPLE_RATE;
-    if ((i & 31) === 0) body.set('lp', 170 + 4600 * Math.exp(-t * 5.2), 0.9);
-    const w = nz.white();
-    brown = brown * 0.985 + w * 0.15;
-    const attack = 1 - Math.exp(-t * 500);
-    const f = 30 + 62 * Math.exp(-t * 8.5);
-    ph += (2 * Math.PI * f) / SAMPLE_RATE;
-    const sub = Math.sin(ph) * Math.exp(-t * 3.1) * attack * 1.15;
-    const roar = body.run(w * 0.7 + brown * 0.8) * Math.exp(-t * 2.1) * attack * 1.25;
-    const cr = crack.run(w) * Math.exp(-t * 32) * 0.85;
-    const p = 0.0045 * Math.exp(-t * 1.6);
-    const imp = nz.uni() < p ? nz.white() * 1.6 : 0;
-    const deb = crackle.run(imp) * 0.9;
-    const we = t > 0.03 ? wet.run(w) * Math.exp(-(t - 0.03) * 8) * 0.55 : 0;
-    const rb = rumble.run(brown * 3) * Math.exp(-t * 1.05) * 0.9;
-    out[i] = sub + roar + cr + deb + we + rb;
-  }
-  bloop(out, 0.07, 420, 90, 0.16, 0.35);
-  bloop(out, 0.19, 360, 80, 0.18, 0.3);
-  bloop(out, 0.33, 300, 70, 0.2, 0.25);
-  bloop(out, 0.52, 260, 65, 0.22, 0.18);
-  return finish(out, 0.98, 1.7);
-}
-
-/** Pin "ping" + throw whoosh. */
-export function synthThrow(seed = 11): Float32Array {
-  const out = buffer(0.6);
-  const nz = new Noise(seed);
-  const bp = new Biquad();
-  const T = 0.55;
-  for (let i = 0; i < out.length; i++) {
-    const t = i / SAMPLE_RATE;
-    if ((i & 31) === 0) bp.set('bp', 500 + 1300 * (t / T), 1.3);
-    const env = Math.pow(Math.sin(Math.PI * Math.min(1, t / T)), 2);
-    let v = bp.run(nz.white()) * env * 1.2;
-    const pe = Math.exp(-t * 9);
-    v += (Math.sin(2 * Math.PI * 2210 * t) * 0.5 + Math.sin(2 * Math.PI * 3350 * t) * 0.32 + Math.sin(2 * Math.PI * 5120 * t) * 0.18) * pe * 0.45;
-    out[i] = v;
-  }
-  return finish(out, 0.8, 0);
-}
-
-/** Crackly fuse hiss (loopable). */
-export function synthFuse(seed = 13): Float32Array {
-  const out = buffer(1.0);
-  const nz = new Noise(seed);
-  const hp = new Biquad();
-  hp.set('hp', 2800, 0.7);
-  const cr = new Biquad();
-  cr.set('bp', 4200, 2);
-  for (let i = 0; i < out.length; i++) {
-    const t = i / SAMPLE_RATE;
-    const flutter = 0.75 + 0.25 * Math.sin(2 * Math.PI * 23 * t) * Math.sin(2 * Math.PI * 3 * t);
-    const imp = nz.uni() < 0.0016 ? nz.white() * 3 : 0;
-    out[i] = hp.run(nz.white()) * 0.35 * flutter + cr.run(imp);
-  }
-  return loopify(finish(out, 0.6, 0), 0.05);
-}
-
-/** Bullet-time "bwoooom". */
-export function synthSlowmoIn(seed = 17): Float32Array {
   const out = buffer(1.3);
   const nz = new Noise(seed);
-  const lp = new Biquad();
-  let p1 = 0;
-  let p2 = 0;
-  for (let i = 0; i < out.length; i++) {
-    const t = i / SAMPLE_RATE;
-    if ((i & 31) === 0) lp.set('lp', 300 + 2600 * Math.exp(-t * 3), 0.8);
-    const f = 55 + 190 * Math.exp(-t * 3.4);
-    p1 += (2 * Math.PI * f) / SAMPLE_RATE;
-    p2 += (2 * Math.PI * f * 1.012) / SAMPLE_RATE;
-    const tone = Math.sin(p1) + 0.6 * Math.sin(p2 * 2) + 0.35 * Math.sin(p1 * 3);
-    const env = Math.min(1, t / 0.05) * Math.exp(-t * 1.6);
-    const swell = Math.sin(Math.PI * Math.min(1, t / 0.9)) * 0.35;
-    out[i] = lp.run(tone * env + nz.white() * swell);
-  }
-  return finish(out, 0.75, 1.2);
+  tone(out, 0, 0.9, 150, 42, 'sine', 1.0, 0.003, 1.6);
+  hush(out, 0, 1.1, 2600, 160, 0.75, 0.004, 2.2, nz);
+  tone(out, 0.2, 0.12, 330, 220, 'tri', 0.22, 0.004, 1.2);
+  tone(out, 0.34, 0.14, 262, 175, 'tri', 0.18, 0.004, 1.2);
+  return finish(retro(out, 4200), 0.78, 0.6);
 }
 
-/** Wet slop splat (ai-cannon impact). */
-export function synthSplat(seed = 19): Float32Array {
-  const out = buffer(0.8);
+/** Pin pulled and tossed: a light rising "whee". */
+export function synthThrow(): Float32Array {
+  const out = buffer(0.34);
+  tone(out, 0, 0.32, 330, 880, 'tri', 0.8, 0.01, 1.4);
+  tone(out, 0.02, 0.28, 660, 1320, 'sine', 0.15, 0.01, 2);
+  return finish(retro(out, 5000), 0.45, 0);
+}
+
+/** Fuse: a gentle clock tick (loops). */
+export function synthFuse(seed = 13): Float32Array {
+  const out = buffer(0.54);
   const nz = new Noise(seed);
-  const bp = new Biquad();
-  let ph = 0;
-  for (let i = 0; i < out.length; i++) {
-    const t = i / SAMPLE_RATE;
-    if ((i & 31) === 0) bp.set('bp', 300 + 900 * Math.exp(-t * 6), 1.6);
-    const f = 50 + 70 * Math.exp(-t * 14);
-    ph += (2 * Math.PI * f) / SAMPLE_RATE;
-    out[i] = bp.run(nz.white()) * Math.exp(-t * 7.5) * 1.3 + Math.sin(ph) * Math.exp(-t * 9) * 0.8;
-  }
-  bloop(out, 0.04, 380, 85, 0.14, 0.4);
-  bloop(out, 0.16, 320, 75, 0.16, 0.3);
-  return finish(out, 0.9, 1.3);
+  for (let k = 0; k < 6; k++) tone(out, k / 12, 0.018, 1800, 1500, 'tri', 0.6, 0.001, 2);
+  hush(out, 0, 0.54, 2200, 2200, 0.05, 0.001, 0, nz);
+  return loopify(finish(retro(out, 5000), 0.3, 0), 0.04);
 }
 
-/** Cannon "thoomp". */
-export function synthCannon(seed = 23): Float32Array {
+/** Bullet-time: a soft two-note "woo" falling a fourth. */
+export function synthSlowmoIn(): Float32Array {
   const out = buffer(0.5);
-  const nz = new Noise(seed);
-  const lp = new Biquad();
-  lp.set('lp', 900, 0.8);
-  let ph = 0;
-  for (let i = 0; i < out.length; i++) {
-    const t = i / SAMPLE_RATE;
-    const f = 58 + 110 * Math.exp(-t * 22);
-    ph += (2 * Math.PI * f) / SAMPLE_RATE;
-    out[i] = Math.sin(ph) * Math.exp(-t * 10) + lp.run(nz.white()) * Math.exp(-t * 14) * 0.7;
-  }
-  return finish(out, 0.85, 1.4);
+  tone(out, 0, 0.48, 880, 330, 'sine', 0.7, 0.03, 1.5);
+  tone(out, 0, 0.48, 660, 247, 'sine', 0.4, 0.03, 1.5);
+  return finish(retro(out, 4500), 0.4, 0);
 }
 
-/** Soft slow whoosh (fruit lob). */
+/** Goo landing: a round "plop". */
+export function synthSplat(seed = 19): Float32Array {
+  const out = buffer(0.22);
+  const nz = new Noise(seed);
+  tone(out, 0, 0.2, 600, 150, 'sine', 1, 0.002, 2);
+  hush(out, 0, 0.05, 1800, 600, 0.25, 0.001, 2, nz);
+  return finish(retro(out, 4000), 0.55, 0);
+}
+
+/** AI cannon: a soft "pomp". */
+export function synthCannon(seed = 23): Float32Array {
+  const out = buffer(0.32);
+  const nz = new Noise(seed);
+  tone(out, 0, 0.26, 260, 90, 'tri', 0.9, 0.003, 1.8);
+  hush(out, 0, 0.18, 1400, 300, 0.4, 0.002, 2, nz);
+  return finish(retro(out, 3800), 0.5, 0);
+}
+
+/** Fruit tossed: a breathy swish. */
 export function synthWhoosh(seed = 29): Float32Array {
-  const out = buffer(1.4);
+  const out = buffer(0.4);
   const nz = new Noise(seed);
   const bp = new Biquad();
   for (let i = 0; i < out.length; i++) {
-    const t = i / SAMPLE_RATE;
-    if ((i & 31) === 0) bp.set('bp', 350 + 500 * Math.sin(Math.PI * Math.min(1, t / 1.4)), 0.9);
-    out[i] = bp.run(nz.white()) * Math.pow(Math.sin(Math.PI * Math.min(1, t / 1.4)), 2);
+    const u = i / out.length;
+    if ((i & 31) === 0) bp.set('bp', 500 * Math.pow(3.2, u), 1.2);
+    out[i] = bp.run(nz.white()) * Math.sin(Math.PI * u);
   }
-  return finish(out, 0.55, 0);
+  return finish(retro(out, 4500), 0.3, 0);
 }
 
-/** Fruit sinking into goo. */
-export function synthSquelch(seed = 31): Float32Array {
-  const out = buffer(0.55);
-  const nz = new Noise(seed);
-  const lp = new Biquad();
-  for (let i = 0; i < out.length; i++) {
-    const t = i / SAMPLE_RATE;
-    if ((i & 31) === 0) lp.set('lp', 260 + 1300 * Math.exp(-t * 9), 6);
-    out[i] = lp.run(nz.white()) * Math.exp(-t * 7) * 0.9;
-  }
-  bloop(out, 0.02, 520, 120, 0.1, 0.35);
-  bloop(out, 0.11, 420, 100, 0.12, 0.25);
-  return finish(out, 0.8, 1.1);
+/** Fruit sticks in the goo: two little bloops. */
+export function synthSquelch(): Float32Array {
+  const out = buffer(0.3);
+  tone(out, 0, 0.13, 420, 160, 'sine', 1, 0.002, 1.6);
+  tone(out, 0.09, 0.16, 340, 120, 'sine', 0.8, 0.002, 1.6);
+  return finish(retro(out, 4000), 0.5, 0);
 }
 
-/** Smoke "pfffff". */
+/** Smoke rolling in: a quiet airy "fooo". */
 export function synthSmoke(seed = 37): Float32Array {
-  const out = buffer(2.2);
+  const out = buffer(0.85);
   const nz = new Noise(seed);
   const lp = new Biquad();
-  lp.set('lp', 650, 0.7);
-  let b0 = 0;
-  let b1 = 0;
-  let b2 = 0;
+  lp.set('lp', 900, 0.7);
   for (let i = 0; i < out.length; i++) {
-    const t = i / SAMPLE_RATE;
-    const w = nz.white();
-    // Paul Kellet pink-ish
-    b0 = 0.99765 * b0 + w * 0.099046;
-    b1 = 0.963 * b1 + w * 0.2965164;
-    b2 = 0.57 * b2 + w * 1.0526913;
-    const pink = b0 + b1 + b2 + w * 0.1848;
-    const env = Math.min(1, t / 0.55) * Math.exp(-Math.max(0, t - 0.55) * 1.6);
-    out[i] = lp.run(pink) * env;
+    const u = i / out.length;
+    const e = Math.sin(Math.PI * u);
+    out[i] = lp.run(nz.white()) * e * e;
   }
-  return finish(out, 0.5, 0);
+  tone(out, 0.05, 0.7, 196, 165, 'sine', 0.12, 0.15, 1);
+  return finish(retro(out, 3500), 0.28, 0);
 }
 
-/** Crystal "tink" — almost subliminal. */
-export function synthTwinkle(seed = 41): Float32Array {
-  const out = buffer(0.9);
-  const nz = new Noise(seed);
-  const parts = [3520, 5290, 7180, 8870];
-  const decay = [5, 7, 9, 12];
-  const ph = parts.map(() => nz.uni() * Math.PI * 2);
-  for (let i = 0; i < out.length; i++) {
-    const t = i / SAMPLE_RATE;
-    let v = 0;
-    for (let k = 0; k < parts.length; k++) v += Math.sin(2 * Math.PI * parts[k] * t + ph[k]) * Math.exp(-t * decay[k]) / (k + 1);
-    out[i] = v * Math.min(1, t / 0.002);
-  }
-  return finish(out, 0.35, 0);
+/** Crystal twinkle: a three-note bell arpeggio (E6, G#6, B6). */
+export function synthTwinkle(): Float32Array {
+  const out = buffer(0.85);
+  const notes = [1318.5, 1661.2, 1975.5];
+  notes.forEach((f, k) => {
+    tone(out, k * 0.09, 0.6, f, f, 'sine', 0.6, 0.002, 3);
+    tone(out, k * 0.09, 0.3, f * 2.76, f * 2.76, 'sine', 0.12, 0.002, 4);
+  });
+  return finish(retro(out, 7000), 0.4, 0);
 }
 
-/** Rubber squeak + swish. */
-export function synthSqueegee(seed = 43): Float32Array {
-  const out = buffer(1.0);
-  const nz = new Noise(seed);
-  const bp = new Biquad();
-  bp.set('bp', 2100, 1.2);
+/** Squeegee: rubbery squeak-squeak-squeak. */
+export function synthSqueegee(): Float32Array {
+  const out = buffer(0.62);
+  tone(out, 0, 0.12, 1100, 1450, 'tri', 0.7, 0.01, 0.8);
+  tone(out, 0.17, 0.12, 1150, 1500, 'tri', 0.7, 0.01, 0.8);
+  tone(out, 0.34, 0.24, 1200, 900, 'tri', 0.6, 0.01, 1.2);
+  return finish(retro(out, 3000), 0.35, 0);
+}
+
+/** Flies: a soft, low hum with a lazy wobble (loops). */
+export function synthBuzz(): Float32Array {
+  const out = buffer(1.04);
+  const lp = new Biquad();
+  lp.set('lp', 700, 0.7);
   let ph = 0;
   for (let i = 0; i < out.length; i++) {
     const t = i / SAMPLE_RATE;
-    const f = 880 + 260 * Math.sin(2 * Math.PI * 6.5 * t) + 60 * Math.sin(2 * Math.PI * 41 * t);
+    const f = 175 + 6 * Math.sin(2 * Math.PI * 4 * t) + 3 * Math.sin(2 * Math.PI * 11 * t);
     ph += (2 * Math.PI * f) / SAMPLE_RATE;
-    const flutter = 0.6 + 0.4 * Math.sin(2 * Math.PI * 31 * t);
-    const env = Math.sin(Math.PI * Math.min(1, t / 0.95));
-    out[i] = (Math.sin(ph) * 0.5 + Math.sin(ph * 2) * 0.18) * flutter * env * 0.8 + bp.run(nz.white()) * env * 0.5;
+    out[i] = lp.run(osc('tri', ph) * (0.85 + 0.15 * Math.sin(2 * Math.PI * 9 * t)));
   }
-  return finish(out, 0.7, 0.8);
-}
-
-/** Fly buzz loop (2 s, seamless). */
-export function synthBuzz(seed = 47): Float32Array {
-  const out = buffer(2.0);
-  const nz = new Noise(seed);
-  const bp = new Biquad();
-  bp.set('bp', 520, 0.6);
-  let ph = 0;
-  for (let i = 0; i < out.length; i++) {
-    const t = i / SAMPLE_RATE;
-    // drift built from sines whose periods divide 2s -> loops cleanly
-    const f = 192 + 9 * Math.sin(2 * Math.PI * 0.5 * t) + 5 * Math.sin(2 * Math.PI * 1.5 * t + 1) + 3 * Math.sin(2 * Math.PI * 7 * t);
-    ph += (2 * Math.PI * f) / SAMPLE_RATE;
-    let saw = 0;
-    for (let k = 1; k <= 7; k++) saw += Math.sin(ph * k) / k;
-    const am = 0.8 + 0.2 * Math.sin(2 * Math.PI * 14 * t);
-    out[i] = bp.run(saw * am + nz.white() * 0.05);
-  }
-  return loopify(finish(out, 0.5, 0), 0.04);
+  return loopify(finish(retro(out, 2500), 0.25, 0), 0.04);
 }
 
 /** Crossfades the tail into the head so the buffer loops without a click. */

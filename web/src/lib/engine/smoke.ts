@@ -185,9 +185,9 @@ export class SmokeField {
       }
     }
     // dissipation
-    const dk = Math.exp(-0.085 * dt);
+    const dk = Math.exp(-0.14 * dt);
     const vk = Math.exp(-0.55 * dt);
-    const evap = 0.006 * dt;
+    const evap = 0.012 * dt;
     let mass = 0;
     let gi0 = N + 1;
     let gj0 = M + 1;

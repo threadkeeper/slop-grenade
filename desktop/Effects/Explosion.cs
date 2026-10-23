@@ -163,7 +163,7 @@ namespace SlopGrenadeDesktop
             {
                 clip.AddEllipse(Ink.Rect(x, y, r, r));
                 g.FillPath(Ink.Brush(shadow, al), clip);
-                g.SetClip(clip, CombineMode.Intersect);
+                Ink.ClipTo(g, clip, CombineMode.Intersect);
                 g.FillEllipse(Ink.Brush(baseC, al), Ink.Rect(x - r * 0.16f, y - r * 0.2f, r * 0.9f, r * 0.9f));
                 g.FillEllipse(Ink.Brush(light, al), Ink.Rect(x - r * 0.34f, y - r * 0.38f, r * 0.45f, r * 0.45f));
                 if (st.U > 0.35f)
@@ -171,7 +171,7 @@ namespace SlopGrenadeDesktop
                     using (GraphicsPath lit = new GraphicsPath())
                     {
                         lit.AddEllipse(Ink.Rect(x - r * 0.16f, y - r * 0.2f, r * 0.9f, r * 0.9f));
-                        g.SetClip(lit, CombineMode.Exclude);
+                        Ink.ClipTo(g, lit, CombineMode.Exclude);
                         Ink.Hatch(g, x - r, y - r, x + r, y + r, 5.5f * S, 1.4f * S, 0.45f * al);
                     }
                 }

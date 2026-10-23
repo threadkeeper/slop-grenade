@@ -202,7 +202,9 @@ namespace SlopGrenadeDesktop
             }
             catch (Exception ex)
             {
-                Trace.WriteLine("Slop Grenade overlay frame failed: " + ex);
+                DrawLog.Report("update", ex);
+                // redraw everything next frame so a half-finished frame never sticks
+                _needFull = true;
             }
             int l, r;
             _world.SlopCounts(out l, out r);
@@ -220,13 +222,30 @@ namespace SlopGrenadeDesktop
             bool full = _dirty.IsFull;
             foreach (Rectangle rc in _dirty.Rects())
             {
-                GraphicsState st = _g.Save();
+                // always start each area from a clean state: no leftover rotation,
+                // offset or clip from an earlier draw can skew the clear or the art
+                _g.ResetTransform();
+                _g.ResetClip();
                 _g.SetClip(rc);
                 _g.CompositingMode = CompositingMode.SourceCopy;
                 _g.FillRectangle(_clearBrush, rc);
                 _g.CompositingMode = CompositingMode.SourceOver;
-                _world.Render(_g, rc);
-                _g.Restore(st);
+                try
+                {
+                    _world.Render(_g, rc);
+                }
+                catch (Exception ex)
+                {
+                    DrawLog.Report("frame", ex);
+                    // repaint the whole screen next frame so nothing half-drawn stays up
+                    _needFull = true;
+                }
+                finally
+                {
+                    _g.ResetTransform();
+                    _g.ResetClip();
+                    _g.CompositingMode = CompositingMode.SourceOver;
+                }
             }
             _g.Flush(FlushIntention.Sync);
             NativeMethods.GdiFlush();

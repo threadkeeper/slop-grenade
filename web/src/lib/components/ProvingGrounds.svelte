@@ -22,6 +22,8 @@
   let lastSeq = -1;
 
   onMount(() => {
+    // don't replay whatever arrived before the range was opened
+    lastSeq = cue?.seq ?? -1;
     if (!canvas) return;
     stage = runStage(canvas, { flyDelay: 20, sfx });
     const ro = new ResizeObserver(() => stage?.resize());
@@ -74,7 +76,7 @@
 <section class="proving panel" aria-label="Effects test range">
   <div class="panel-head">
     <h2>Proving Grounds</h2>
-    <span class="meta">Test fire here &middot; nothing is recorded</span>
+    <span class="meta range-meta">Test fire here &middot; nothing is recorded</span>
   </div>
 
   <div class="monitor">
@@ -114,6 +116,10 @@
 </section>
 
 <style>
+  .range-meta {
+    margin-right: 80px;
+  }
+
   .monitor {
     position: relative;
     padding: 14px;

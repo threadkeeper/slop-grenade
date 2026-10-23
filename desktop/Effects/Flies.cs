@@ -174,6 +174,13 @@ namespace SlopGrenadeDesktop
             return true;
         }
 
+        /// <summary>One redraw rectangle per fly (so flies on both edges do not cover the whole screen).</summary>
+        public void AddBounds(float s, List<RectangleF> list)
+        {
+            float m = 30f * s;
+            foreach (Fly f in Flies) list.Add(new RectangleF(f.X - m, f.Y - m, m * 2f, m * 2f));
+        }
+
         public void Draw(Graphics g, float s)
         {
             foreach (Fly f in Flies) DrawFly(g, f, s);

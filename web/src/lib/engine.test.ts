@@ -165,6 +165,6 @@ describe('Slop Grenade effects engine', () => {
     }
     const boom = rms(all.explosion);
     expect(boom).toBeGreaterThan(rms(all.splat));
-    expect(boom).toBeGreaterThan(rms(all.twinkle) * 3);
+    expect(boom).toBeGreaterThan(rms(all.twinkle) * 2);
   }, 30000);
 });

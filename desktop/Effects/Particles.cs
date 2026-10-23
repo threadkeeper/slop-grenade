@@ -100,6 +100,26 @@ namespace SlopGrenadeDesktop
             return true;
         }
 
+        /// <summary>Redraw rectangles for the particles, one per screen half.</summary>
+        public void AddBounds(float midX, List<RectangleF> list)
+        {
+            for (int half = 0; half < 2; half++)
+            {
+                bool any = false;
+                float x0 = float.MaxValue, y0 = float.MaxValue, x1 = float.MinValue, y1 = float.MinValue;
+                for (int i = 0; i < Items.Count; i++)
+                {
+                    Particle p = Items[i];
+                    if ((p.X < midX) != (half == 0)) continue;
+                    float m = p.Kind == ParticleKind.Spoon || p.Kind == ParticleKind.Ring ? 60f * p.R : p.R * 3f + 30f;
+                    x0 = Math.Min(x0, p.X - m); y0 = Math.Min(y0, p.Y - m);
+                    x1 = Math.Max(x1, p.X + m); y1 = Math.Max(y1, p.Y + m);
+                    any = true;
+                }
+                if (any) list.Add(RectangleF.FromLTRB(x0, y0, x1, y1));
+            }
+        }
+
         public void Draw(Graphics g, float s)
         {
             for (int i = 0; i < Items.Count; i++)

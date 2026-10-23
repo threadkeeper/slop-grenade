@@ -15,9 +15,25 @@ namespace SlopGrenadeDesktop
         public float X, Y, R, Age;
     }
 
+    /// <summary>
+    /// A drip that oozes forever: it creeps down, its tip swells and necks, a drop
+    /// lets go, the drip springs back and starts again.
+    /// </summary>
     internal sealed class Drip
     {
-        public float X, Y0, Len, MaxLen, Rate, R;
+        public float X, Y0, Len, R;
+        /// <summary>Length at which the swollen tip lets a drop go, and the typical length.</summary>
+        public float MaxLen, BaseLen;
+        /// <summary>Creep speed (px/s), pulse phase and pulse rate.</summary>
+        public float Speed, Phase, Wob;
+        /// <summary>Seconds of spring-back left after a drop let go, its target and velocity.</summary>
+        public float Recoil, Rest, Lv;
+    }
+
+    /// <summary>A drop of goo that has let go of a drip and is falling.</summary>
+    internal sealed class GooDrop
+    {
+        public float X, Y, R, Vy;
     }
 
     internal sealed class Swirl
@@ -42,12 +58,16 @@ namespace SlopGrenadeDesktop
         public readonly float S;
         public List<GooBlob> Blobs = new List<GooBlob>();
         public List<Drip> Drips = new List<Drip>();
+        public List<GooDrop> Drops = new List<GooDrop>();
         public List<Swirl> Swirls = new List<Swirl>();
         public List<Splat> Splats = new List<Splat>();
         public readonly float[] Field;
         public readonly PixelSprite Sprite;
         private readonly List<int> _dirty = new List<int>();
         private int _nextSplatId = 1;
+        // clock for the drip pulse, and randomness for drop sizes
+        private float _time;
+        private readonly Rng _rng;
         private int _upY0 = int.MaxValue, _upY1 = int.MinValue;
 
         public SlopLayer(Side side, SlopPalette pal, int viewW, int viewH, float scale)
@@ -60,13 +80,37 @@ namespace SlopGrenadeDesktop
             StripW = Math.Max(64, (int)Math.Round(Math.Min(viewW * 0.22f, 380f * scale)));
             Field = new float[StripW * viewH];
             Sprite = new PixelSprite(StripW, viewH);
+            _rng = new Rng(side == Side.Left ? 0x51a7u : 0xb10bu);
         }
 
         public int StripX { get { return Side == Side.Left ? 0 : ViewW - StripW; } }
         public float Inward { get { return Side == Side.Left ? 1f : -1f; } }
         public float EdgeX { get { return Side == Side.Left ? 0f : ViewW; } }
 
-        public bool IsEmpty { get { return Blobs.Count == 0 && Drips.Count == 0 && Swirls.Count == 0; } }
+        public bool IsEmpty { get { return Blobs.Count == 0 && Drips.Count == 0 && Drops.Count == 0 && Swirls.Count == 0; } }
+
+        /// <summary>True while goo is moving (drips ooze for as long as slop is on screen).</summary>
+        public bool IsAnimating { get { return Drips.Count > 0 || Drops.Count > 0; } }
+
+        /// <summary>Start a drip at (x, y0). Skipped when there is no room above the screen bottom.</summary>
+        private void AddDrip(float x, float y0, float baseLen, float r, Rng rng)
+        {
+            float room = ViewH - 10f * S - y0;
+            if (room < 12f * S) return;
+            float b = Math.Min(baseLen, room);
+            Drips.Add(new Drip
+            {
+                X = x,
+                Y0 = y0,
+                Len = 0f,
+                MaxLen = b * rng.Range(0.8f, 1.1f),
+                BaseLen = b,
+                Speed = rng.Range(9f, 20f) * S,
+                Phase = rng.Range(0f, M.TAU),
+                Wob = rng.Range(0.7f, 1.4f),
+                R = r
+            });
+        }
 
         public int PieceCount { get { return Splats.Count; } }
 
@@ -86,7 +130,7 @@ namespace SlopGrenadeDesktop
             }
             _dirty.Add(a);
             _dirty.Add(b);
-            if (_dirty.Count > 24)
+            if (_dirty.Count > 64)
             {
                 int lo = _dirty[0], hi = _dirty[1];
                 for (int i = 2; i < _dirty.Count; i += 2) { lo = Math.Min(lo, _dirty[i]); hi = Math.Max(hi, _dirty[i + 1]); }
@@ -143,15 +187,12 @@ namespace SlopGrenadeDesktop
             int dn = 3 + (int)Math.Round(2f * size);
             for (int i = 0; i < dn; i++)
             {
-                Drips.Add(new Drip
-                {
-                    X = ex + inw * (10f + (float)i / Math.Max(1, dn - 1) * 80f + rng.Range(-6f, 6f)) * s,
-                    Y0 = y + rng.Range(30f, 70f) * s,
-                    Len = 0f,
-                    MaxLen = rng.Range(70f, 280f) * s,
-                    Rate = rng.Range(0.3f, 0.9f),
-                    R = rng.Range(4.5f, 8f) * S * (0.7f + 0.3f * size)
-                });
+                AddDrip(
+                    ex + inw * (10f + (float)i / Math.Max(1, dn - 1) * 80f + rng.Range(-6f, 6f)) * s,
+                    y + rng.Range(30f, 70f) * s,
+                    rng.Range(90f, 300f) * s,
+                    rng.Range(4.5f, 8f) * S * (0.7f + 0.3f * size),
+                    rng);
             }
             if (withSwirl)
             {
@@ -169,15 +210,7 @@ namespace SlopGrenadeDesktop
             Blobs.Add(new GooBlob { X = ex + inw * rng.Range(-2f, 10f) * S, Y = y, R = r, Age = 0f });
             if (rng.Chance(0.55f))
             {
-                Drips.Add(new Drip
-                {
-                    X = ex + inw * rng.Range(2f, 9f) * S,
-                    Y0 = y,
-                    Len = 0f,
-                    MaxLen = rng.Range(20f, 110f) * S,
-                    Rate = rng.Range(0.4f, 1.2f),
-                    R = Math.Max(2.5f * S, r * 0.45f)
-                });
+                AddDrip(ex + inw * rng.Range(2f, 9f) * S, y, rng.Range(50f, 150f) * S, Math.Max(2.5f * S, r * 0.45f), rng);
             }
             MarkDirty(y - r * 3f, y + 130f * S);
         }
@@ -220,17 +253,48 @@ namespace SlopGrenadeDesktop
                     moved = true;
                 }
             }
+            _time += dt;
             for (int i = 0; i < Drips.Count; i++)
             {
                 Drip d = Drips[i];
-                if (d.Len < d.MaxLen - 0.3f)
+                float old = d.Len;
+                if (d.Recoil > 0f)
                 {
-                    float old = d.Len;
-                    d.Len += (d.MaxLen - d.Len) * (1f - M.Exp(-d.Rate * dt)) + 1.5f * S * dt;
-                    if (d.Len > d.MaxLen) d.Len = d.MaxLen;
-                    MarkDirty(d.Y0 + old - d.R * 4f, d.Y0 + d.Len + d.R * 4f);
-                    moved = true;
+                    // the drip springs back up after letting a drop go (with a little bounce)
+                    d.Recoil -= dt;
+                    float a = (d.Rest - d.Len) * 90f - d.Lv * 8f;
+                    d.Lv += a * dt;
+                    d.Len = Math.Max(0f, d.Len + d.Lv * dt);
+                    if (d.Recoil <= 0f) d.Lv = 0f;
                 }
+                else
+                {
+                    // slow, pulsing creep that speeds up as the tip gets heavy
+                    float ripe = M.Clamp01(d.Len / d.MaxLen);
+                    float pulse = 0.55f + 0.45f * M.Sin(_time * d.Wob * 1.6f + d.Phase);
+                    d.Len += d.Speed * pulse * (1f + 1.6f * ripe * ripe) * dt;
+                    if (d.Len >= d.MaxLen)
+                    {
+                        // the neck gives way: a drop lets go and the drip snaps back
+                        Drops.Add(new GooDrop { X = d.X, Y = d.Y0 + d.Len + d.R * 0.8f, R = d.R * _rng.Range(1.2f, 1.5f), Vy = d.Speed * 1.5f });
+                        d.Rest = d.Len * _rng.Range(0.3f, 0.55f);
+                        d.Recoil = 0.7f;
+                        d.Lv = 0f;
+                        d.MaxLen = d.BaseLen * _rng.Range(0.8f, 1.15f);
+                    }
+                }
+                MarkDirty(d.Y0 + Math.Min(old, d.Len) - d.R * 4f, d.Y0 + Math.Max(old, d.Len) + d.R * 4.5f);
+                moved = true;
+            }
+            for (int i = Drops.Count - 1; i >= 0; i--)
+            {
+                GooDrop p = Drops[i];
+                float oldY = p.Y;
+                p.Vy += 700f * S * dt;
+                p.Y += p.Vy * dt;
+                MarkDirty(oldY - p.R * 4.5f, p.Y + p.R * 2.5f);
+                if (p.Y - p.R * 3f > ViewH) Drops.RemoveAt(i);
+                moved = true;
             }
             for (int i = 0; i < Swirls.Count; i++)
             {
@@ -260,11 +324,13 @@ namespace SlopGrenadeDesktop
                     float cut = bladeY - d.Y0;
                     d.Y0 = bladeY;
                     d.Len = Math.Max(0f, d.Len - cut);
-                    d.MaxLen = Math.Max(d.Len, d.MaxLen - cut);
+                    d.Rest = Math.Max(0f, d.Rest - cut);
+                    d.MaxLen = Math.Max(d.Len + 4f * S, d.MaxLen - cut);
                 }
                 keepD.Add(d);
             }
             Drips = keepD;
+            Drops.RemoveAll(delegate(GooDrop p) { return p.Y < bladeY; });
             Swirls.RemoveAll(delegate(Swirl sw) { return sw.Y + 40f * sw.Size < bladeY; });
             Splats.RemoveAll(delegate(Splat sp) { return sp.Y < bladeY; });
             if (mass > 0f) MarkDirty(0f, bladeY + 16f * S);
@@ -276,6 +342,7 @@ namespace SlopGrenadeDesktop
             bool had = !IsEmpty;
             Blobs.Clear();
             Drips.Clear();
+            Drops.Clear();
             Swirls.Clear();
             Splats.Clear();
             if (had) MarkDirty(0f, ViewH);
@@ -389,19 +456,34 @@ namespace SlopGrenadeDesktop
                 Drip d = Drips[i];
                 if (d.Len <= 0.5f) continue;
                 float top = d.Y0, bot = d.Y0 + d.Len;
-                float reach = d.R * Support * 1.8f;
+                float reach = d.R * Support * 2.2f;
                 if (bot + reach < y0 || top - reach > y1) continue;
+                // how heavy the tip is: the neck thins and the bulb swells before it lets go
+                float ripe = d.Recoil > 0f ? 0f : M.Clamp01(d.Len / d.MaxLen);
+                float swell = 0.45f + 0.75f * ripe;
                 float step = Math.Max(1.5f, d.R * 0.55f);
                 int n = Math.Max(1, (int)Math.Ceiling(d.Len / step));
                 for (int k = 0; k <= n; k++)
                 {
                     float f = (float)k / n;
                     float yy = top + d.Len * f;
-                    float bulb = f > 0.82f ? 1f + 0.75f * M.Sin((f - 0.82f) / 0.18f * M.PI * 0.5f) : 1f - 0.18f * f;
-                    float rr = d.R * bulb;
+                    float kk = 1f - 0.18f * f;
+                    if (f > 0.55f && f < 0.88f) kk *= 1f - 0.55f * ripe * ripe * M.Sin((f - 0.55f) / 0.33f * M.PI);
+                    if (f > 0.82f) kk = Math.Max(kk, 1f + swell * M.Sin((f - 0.82f) / 0.18f * M.PI * 0.5f));
+                    float rr = d.R * kk;
                     if (yy + rr * Support < y0 || yy - rr * Support > y1) continue;
                     SplatKernel(d.X, yy, rr * 0.82f, y0, y1);
                 }
+            }
+            for (int i = 0; i < Drops.Count; i++)
+            {
+                // a teardrop: round body plus a thinner tail that stretches as it speeds up
+                GooDrop p = Drops[i];
+                float stretch = Math.Min(1.8f, 0.6f + p.Vy / (420f * S));
+                float tailY = p.Y - p.R * 0.95f * stretch;
+                if (p.Y + p.R * Support < y0 || tailY - p.R * Support > y1) continue;
+                SplatKernel(p.X, p.Y, p.R, y0, y1);
+                SplatKernel(p.X, tailY, p.R * 0.62f, y0, y1);
             }
         }
 

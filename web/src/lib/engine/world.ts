@@ -19,6 +19,17 @@ import { FRUIT_FALLING, FRUIT_FLYING, FRUIT_GONE, FRUIT_STUCK, Fruit } from './f
 import { FruitShader, fruitJuice, fruitMesh, type FruitKind } from './fruitModels';
 import { ToonRenderer } from './toon3d';
 
+/** Size of grenades, fruit, slop, smoke and explosions relative to the screen scale. */
+export const ITEM_SCALE = 0.42;
+/** Bullet-time window: only the last moment of the grenade's flight is slowed. */
+const SLOWMO_FROM = 0.8;
+const SLOWMO_TO = 0.97;
+const SLOWMO_SCALE = 0.3;
+/** Business-friendly blast: smaller, a brief freeze and only a slight shake. */
+const EXPLOSION_SIZE = 0.75;
+const HIT_STOP = 0.04;
+const SHAKE = 0.3;
+
 /** The five message tiers, by their engine names. */
 export type EffectTier = 'human_sparkle' | 'peaceful_cloud' | 'innocent_fruit' | 'slop_splat' | 'slop_grenade';
 
@@ -87,7 +98,10 @@ export class World {
   readonly w: number;
   readonly h: number;
   /** Art scale (1 at 1080p). */
+  /** Item scale: everything that flies, splats or explodes is drawn at this scale. */
   readonly s: number;
+  /** Screen scale (1 at 1080p) for things that must stay readable: twinkles, flies. */
+  readonly ui: number;
   readonly rng: Rng;
   readonly left: SlopLayer;
   readonly right: SlopLayer;
@@ -120,7 +134,8 @@ export class World {
   constructor(w: number, h: number, opts: WorldOptions = {}) {
     this.w = w;
     this.h = h;
-    this.s = Math.max(0.35, Math.min(2.5, h / 1080));
+    this.ui = Math.max(0.35, Math.min(2.5, h / 1080));
+    this.s = this.ui * ITEM_SCALE;
     this.rng = new Rng(opts.seed ?? (Date.now() & 0xffffff));
     this.left = new SlopLayer('left', SLOP_PINK, w, h, this.s);
     this.right = new SlopLayer('right', SLOP_BLUE, w, h, this.s);
@@ -188,6 +203,8 @@ export class World {
       this.squeegees.length === 0 &&
       this.flies.flies.length === 0 &&
       this.smoke.isEmpty() &&
+      !this.left.isAnimating() &&
+      !this.right.isAnimating() &&
       !this.fruits.some((f) => f.state !== FRUIT_STUCK || f.stuckT < 1.2) &&
       this.timeScale > 0.99
     );
@@ -256,17 +273,17 @@ export class World {
     const y = this.h * this.rng.range(0.3, 0.88);
     const x = side === 'left' ? 2 : this.w - 2;
     const inward = side === 'left' ? 1 : -1;
-    // a rolling plume: many small puffs over ~2.6s that drift in and rise
-    const n = 44;
+    // a small rolling plume: a handful of puffs over ~1.6s that drift in and rise
+    const n = 22;
     for (let i = 0; i < n; i++) {
       const k = i / n;
       this.emitters.push({
-        t: k * 3.2 + this.rng.range(0, 0.05),
+        t: k * 1.6 + this.rng.range(0, 0.05),
         x,
         y: y + Math.sin(k * 7) * 18 * this.s + this.rng.range(-12, 12) * this.s,
         vx: inward * this.rng.range(240, 360) * this.s * (1 - 0.35 * k),
         vy: -this.rng.range(50, 140) * this.s,
-        amount: this.rng.range(0.42, 0.6) * (1 - 0.3 * k),
+        amount: this.rng.range(0.3, 0.42) * (1 - 0.3 * k),
         soot: 0.04
       });
     }
@@ -279,13 +296,15 @@ export class World {
     const inward = side === 'left' ? 1 : -1;
     const ex = side === 'left' ? 0 : this.w;
     const y = this.h * this.rng.range(0.12, 0.88);
-    const n = 1 + this.rng.int(3);
+    // one big glint, then one or two small ones nearby
+    const n = 2 + this.rng.int(2);
+    const x0 = ex + inward * this.rng.range(60, 150) * this.ui;
     for (let i = 0; i < n; i++) {
-      this.twinkles.push(
-        new Twinkle(ex + inward * this.rng.range(16, 70) * this.s, y + this.rng.range(-40, 40) * this.s, i * this.rng.range(0.18, 0.35), this.s, this.rng)
-      );
+      const dx = i === 0 ? 0 : inward * this.rng.range(20, 60) * this.ui;
+      const dy = i === 0 ? 0 : this.rng.range(-55, 55) * this.ui;
+      this.twinkles.push(new Twinkle(x0 + dx, y + dy, i * this.rng.range(0.25, 0.45), this.ui, this.rng, i === 0));
     }
-    this.sfx?.play('twinkle', this.pan(side), 0.22, this.rng.range(0.9, 1.15));
+    this.sfx?.play('twinkle', this.pan(side), 0.4, this.rng.range(0.9, 1.15));
   }
 
   private detonate(g: Grenade): void {
@@ -293,14 +312,15 @@ export class World {
     const inward = side === 'left' ? 1 : -1;
     const L = this.layer(side);
     const s = this.s;
-    this.explosions.push(new Explosion(g.x, g.y, inward, s, this.rng, side === 'right'));
+    // kept modest: this runs on people's work screens
+    this.explosions.push(new Explosion(g.x, g.y, inward, s, this.rng, side === 'right', EXPLOSION_SIZE));
     L.addSplat(g.y, 1, this.rng, this.now, true);
     // slop globs: some splatter back onto the bezel, most spray inward
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 16; i++) {
       const p = this.particles.spawn(P_GLOB);
-      const toEdge = i < 11;
+      const toEdge = i < 7;
       const a = toEdge ? (inward > 0 ? Math.PI : 0) + this.rng.range(-1.1, 1.1) : (inward > 0 ? 0 : Math.PI) + this.rng.range(-1.4, 1.4);
-      const sp = this.rng.range(380, 1050) * s;
+      const sp = this.rng.range(300, 750) * s;
       p.x = g.x + inward * this.rng.range(10, 30) * s;
       p.y = g.y + this.rng.range(-20, 20) * s;
       p.vx = Math.cos(a) * sp;
@@ -312,11 +332,11 @@ export class World {
       p.pal = L.pal;
       p.sticky = toEdge ? (side === 'left' ? 0 : 1) : -1;
     }
-    this.particles.sparks(g.x, g.y, 34, 1100 * s, s, this.rng);
+    this.particles.sparks(g.x, g.y, 12, 800 * s, s, this.rng);
     // the blast itself dumps soot + an outward push into the smoke field
-    this.smoke.puff(g.x + inward * 40 * s, g.y, 90 * s, 2.4, inward * 260 * s, -120 * s, 0.85);
-    this.hitStop = 0.085;
-    this.shake = 1;
+    this.smoke.puff(g.x + inward * 40 * s, g.y, 80 * s, 1.1, inward * 200 * s, -100 * s, 0.7);
+    this.hitStop = HIT_STOP;
+    this.shake = SHAKE;
     this.sfx?.loop('fuse-' + side, null, 0, 0);
     this.sfx?.play('explosion', this.pan(side), 1);
   }
@@ -357,18 +377,18 @@ export class World {
     let target = 1;
     for (const g of this.grenades) {
       const t = g.t;
-      if (t > 0.2 && t < 0.9) target = 0.28;
+      if (t > SLOWMO_FROM && t < SLOWMO_TO) target = SLOWMO_SCALE;
     }
     if (this.hitStop > 0) {
       this.hitStop -= dtR;
       this.timeScale = 0.04;
     } else {
-      const rate = target < this.timeScale ? 7 : 5;
+      const rate = target < this.timeScale ? 18 : 9;
       this.timeScale += (target - this.timeScale) * (1 - Math.exp(-rate * dtR));
     }
     if (!this.slowmoOn && this.timeScale < 0.6 && this.hitStop <= 0) {
       this.slowmoOn = true;
-      this.sfx?.play('slowmo_in', 0, 0.6);
+      this.sfx?.play('slowmo_in', 0, 0.35);
     } else if (this.slowmoOn && this.timeScale > 0.7) {
       this.slowmoOn = false;
     }
@@ -413,7 +433,7 @@ export class World {
       e.update(dt);
       for (const p of e.puffs) {
         const st = e.puffState(p);
-        if (st.u > 0.45 && st.u < 0.95 && this.rng.chance(0.35)) this.smoke.puff(st.x, st.y, st.r * 0.6, 0.11, 0, -40 * this.s, 0.8);
+        if (st.u > 0.45 && st.u < 0.95 && this.rng.chance(0.15)) this.smoke.puff(st.x, st.y, st.r * 0.6, 0.11, 0, -40 * this.s, 0.8);
       }
     }
     for (let i = this.explosions.length - 1; i >= 0; i--) if (this.explosions[i].done) this.explosions.splice(i, 1);
@@ -443,7 +463,7 @@ export class World {
           p.life = 3;
           p.pal = L.pal;
         }
-        this.shake = Math.max(this.shake, 0.35);
+        this.shake = Math.max(this.shake, 0.12);
         this.sfx?.play('splat', this.pan(c.side), 0.85);
       }
     }
@@ -634,9 +654,10 @@ export class World {
     }
     for (const e of this.explosions) e.draw(ctx);
     this.particles.draw(ctx, s);
-    for (const t of this.twinkles) t.draw(ctx, s);
+    for (const t of this.twinkles) t.draw(ctx, this.ui);
     for (const q of this.squeegees) q.draw(ctx, s);
-    this.flies.draw(ctx, s);
+    // flies stay big enough to read as flies
+    this.flies.draw(ctx, this.ui * 0.65);
     ctx.restore();
   }
 

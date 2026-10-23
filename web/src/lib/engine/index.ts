@@ -47,7 +47,9 @@ export function runStage(canvas: HTMLCanvasElement, opts: WorldOptions = {}, max
     world: new World(w, h, opts),
     resize() {
       const [nw, nh] = size();
-      if (nw === w && nh === h) return;
+      // small layout shifts just stretch the canvas; only a real size change
+      // rebuilds the world (which clears what is on screen)
+      if (Math.abs(nw - w) < w * 0.25 && Math.abs(nh - h) < h * 0.25) return;
       w = nw;
       h = nh;
       canvas.width = w;

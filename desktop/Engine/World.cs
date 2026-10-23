@@ -48,8 +48,18 @@ namespace SlopGrenadeDesktop
             public float T, X, Y, Vx, Vy, Amount, Soot;
         }
 
+        /// <summary>Size of grenades, fruit, slop, smoke and explosions relative to the screen scale.</summary>
+        public const float ItemScale = 0.42f;
+        // bullet-time only for the last moment of the grenade's flight
+        private const float SlowmoFrom = 0.8f, SlowmoTo = 0.97f, SlowmoScale = 0.3f;
+        // business-friendly blast: smaller, a brief freeze and only a slight shake
+        private const float ExplosionSize = 0.75f, HitStop = 0.04f, ShakeAmount = 0.3f;
+
         public readonly int W, H;
+        /// <summary>Item scale (everything that flies, splats or explodes).</summary>
         public readonly float S;
+        /// <summary>Screen scale (1 at 1080p) for things that must stay readable: twinkles, flies.</summary>
+        public readonly float UI;
         public readonly Rng Rng;
         public readonly SlopLayer Left, Right;
         public readonly List<Grenade> Grenades = new List<Grenade>();
@@ -79,7 +89,8 @@ namespace SlopGrenadeDesktop
         {
             W = w;
             H = h;
-            S = M.Clamp(h / 1080f, 0.35f, 2.5f);
+            UI = M.Clamp(h / 1080f, 0.35f, 2.5f);
+            S = UI * ItemScale;
             Rng = new Rng(seed);
             Left = new SlopLayer(Side.Left, Palette.Pink, w, h, S);
             Right = new SlopLayer(Side.Right, Palette.Blue, w, h, S);
@@ -160,8 +171,7 @@ namespace SlopGrenadeDesktop
                 foreach (Fruit f in Fruits) if (f.State != FruitState.Stuck || f.StuckT < 1.2f) return false;
                 foreach (Swirl sw in Left.Swirls) if (sw.Age < 1f) return false;
                 foreach (Swirl sw in Right.Swirls) if (sw.Age < 1f) return false;
-                foreach (Drip d in Left.Drips) if (d.Len < d.MaxLen - 0.3f) return false;
-                foreach (Drip d in Right.Drips) if (d.Len < d.MaxLen - 0.3f) return false;
+                if (Left.IsAnimating || Right.IsAnimating) return false;
                 foreach (GooBlob b in Left.Blobs) if (b.Age < 0.22f) return false;
                 foreach (GooBlob b in Right.Blobs) if (b.Age < 0.22f) return false;
                 return true;
@@ -258,17 +268,17 @@ namespace SlopGrenadeDesktop
             float y = H * Rng.Range(0.3f, 0.88f);
             float x = side == Side.Left ? 2f : W - 2f;
             float inward = side == Side.Left ? 1f : -1f;
-            const int n = 44;
+            const int n = 22;
             for (int i = 0; i < n; i++)
             {
                 float k = (float)i / n;
                 Emitter e = new Emitter();
-                e.T = k * 3.2f + Rng.Range(0f, 0.05f);
+                e.T = k * 1.6f + Rng.Range(0f, 0.05f);
                 e.X = x;
                 e.Y = y + M.Sin(k * 7f) * 18f * S + Rng.Range(-12f, 12f) * S;
                 e.Vx = inward * Rng.Range(240f, 360f) * S * (1f - 0.35f * k);
                 e.Vy = -Rng.Range(50f, 140f) * S;
-                e.Amount = Rng.Range(0.42f, 0.6f) * (1f - 0.3f * k);
+                e.Amount = Rng.Range(0.3f, 0.42f) * (1f - 0.3f * k);
                 e.Soot = 0.04f;
                 _emitters.Add(e);
             }
@@ -280,12 +290,16 @@ namespace SlopGrenadeDesktop
             float inward = side == Side.Left ? 1f : -1f;
             float ex = side == Side.Left ? 0f : W;
             float y = H * Rng.Range(0.12f, 0.88f);
-            int n = 1 + Rng.Int(3);
+            // one big glint, then one or two small ones nearby
+            int n = 2 + Rng.Int(2);
+            float x0 = ex + inward * Rng.Range(60f, 150f) * UI;
             for (int i = 0; i < n; i++)
             {
-                Twinkles.Add(new Twinkle(ex + inward * Rng.Range(16f, 70f) * S, y + Rng.Range(-40f, 40f) * S, i * Rng.Range(0.18f, 0.35f), S, Rng));
+                float dx = i == 0 ? 0f : inward * Rng.Range(20f, 60f) * UI;
+                float dy = i == 0 ? 0f : Rng.Range(-55f, 55f) * UI;
+                Twinkles.Add(new Twinkle(x0 + dx, y + dy, i * Rng.Range(0.25f, 0.45f), UI, Rng, i == 0));
             }
-            Play("twinkle", Pan(side), 0.22f, Rng.Range(0.9f, 1.15f));
+            Play("twinkle", Pan(side), 0.4f, Rng.Range(0.9f, 1.15f));
         }
 
         private void Detonate(Grenade g)
@@ -293,14 +307,15 @@ namespace SlopGrenadeDesktop
             Side side = g.Side;
             float inward = side == Side.Left ? 1f : -1f;
             SlopLayer L = Layer(side);
-            Explosions.Add(new Explosion(g.X, g.Y, inward, S, Rng, side == Side.Right, 1f));
+            // kept modest: this runs on people's work screens
+            Explosions.Add(new Explosion(g.X, g.Y, inward, S, Rng, side == Side.Right, ExplosionSize));
             L.AddSplat(g.Y, 1f, Rng, Now, true);
-            for (int i = 0; i < 30; i++)
+            for (int i = 0; i < 16; i++)
             {
                 Particle p = Particles.Spawn(ParticleKind.Glob);
-                bool toEdge = i < 11;
+                bool toEdge = i < 7;
                 float a = toEdge ? (inward > 0f ? M.PI : 0f) + Rng.Range(-1.1f, 1.1f) : (inward > 0f ? 0f : M.PI) + Rng.Range(-1.4f, 1.4f);
-                float sp = Rng.Range(380f, 1050f) * S;
+                float sp = Rng.Range(300f, 750f) * S;
                 p.X = g.X + inward * Rng.Range(10f, 30f) * S;
                 p.Y = g.Y + Rng.Range(-20f, 20f) * S;
                 p.Vx = M.Cos(a) * sp;
@@ -312,10 +327,10 @@ namespace SlopGrenadeDesktop
                 p.Pal = L.Pal;
                 p.Sticky = toEdge ? (side == Side.Left ? 0 : 1) : -1;
             }
-            Particles.Sparks(g.X, g.Y, 34, 1100f * S, S, Rng);
-            Smoke.Puff(g.X + inward * 40f * S, g.Y, 90f * S, 2.4f, inward * 260f * S, -120f * S, 0.85f);
-            _hitStop = 0.085f;
-            _shake = 1f;
+            Particles.Sparks(g.X, g.Y, 12, 800f * S, S, Rng);
+            Smoke.Puff(g.X + inward * 40f * S, g.Y, 80f * S, 1.1f, inward * 200f * S, -100f * S, 0.7f);
+            _hitStop = HitStop;
+            _shake = ShakeAmount;
             Loop("fuse-" + side, null, 0f, 0f, 1f);
             Play("explosion", Pan(side), 1f, 1f);
         }
@@ -368,7 +383,7 @@ namespace SlopGrenadeDesktop
             foreach (Grenade g in Grenades)
             {
                 float t = g.T;
-                if (t > 0.2f && t < 0.9f) target = 0.28f;
+                if (t > SlowmoFrom && t < SlowmoTo) target = SlowmoScale;
             }
             if (_hitStop > 0f)
             {
@@ -377,13 +392,13 @@ namespace SlopGrenadeDesktop
             }
             else
             {
-                float rate = target < TimeScale ? 7f : 5f;
+                float rate = target < TimeScale ? 18f : 9f;
                 TimeScale += (target - TimeScale) * (1f - M.Exp(-rate * dtR));
             }
             if (!_slowmoOn && TimeScale < 0.6f && _hitStop <= 0f)
             {
                 _slowmoOn = true;
-                Play("slowmo_in", 0f, 0.6f, 1f);
+                Play("slowmo_in", 0f, 0.35f, 1f);
             }
             else if (_slowmoOn && TimeScale > 0.7f)
             {
@@ -448,7 +463,7 @@ namespace SlopGrenadeDesktop
                 foreach (Puff p in e.Puffs)
                 {
                     PuffState st = e.State(p);
-                    if (st.U > 0.45f && st.U < 0.95f && Rng.Chance(0.35f)) Smoke.Puff(st.X, st.Y, st.R * 0.6f, 0.11f, 0f, -40f * S, 0.8f);
+                    if (st.U > 0.45f && st.U < 0.95f && Rng.Chance(0.15f)) Smoke.Puff(st.X, st.Y, st.R * 0.6f, 0.11f, 0f, -40f * S, 0.8f);
                 }
             }
             Explosions.RemoveAll(delegate(Explosion e) { return e.Done; });
@@ -480,7 +495,7 @@ namespace SlopGrenadeDesktop
                         p.Life = 3f;
                         p.Pal = L.Pal;
                     }
-                    _shake = Math.Max(_shake, 0.35f);
+                    _shake = Math.Max(_shake, 0.12f);
                     Play("splat", Pan(c.Side), 0.85f, 1f);
                 }
             }
@@ -590,15 +605,17 @@ namespace SlopGrenadeDesktop
         public void CollectDirty(DirtyRegion dirty)
         {
             List<RectangleF> now = new List<RectangleF>();
-            float sh = 12f * S;
+            // generous padding so outlines, shake and motion never get clipped
+            float sh = 14f * UI + 6f;
             foreach (Grenade g in Grenades)
             {
                 float r = g.Radius + 90f * S;
                 now.Add(new RectangleF(g.X - r, g.Y - r, r * 2f, r * 2f));
             }
             foreach (Explosion e in Explosions) now.Add(RectangleF.Inflate(e.Bounds, sh, sh));
-            RectangleF pr;
-            if (Particles.Bounds(out pr)) now.Add(RectangleF.Inflate(pr, sh, sh));
+            List<RectangleF> parts = new List<RectangleF>();
+            Particles.AddBounds(W * 0.5f, parts);
+            foreach (RectangleF pr in parts) now.Add(RectangleF.Inflate(pr, sh, sh));
             foreach (Fruit f in Fruits)
             {
                 if (f.State != FruitState.Stuck || f.StuckT < 1.3f) now.Add(FruitBounds(f));
@@ -610,8 +627,7 @@ namespace SlopGrenadeDesktop
             }
             foreach (Twinkle t in Twinkles) now.Add(t.Bounds);
             foreach (Squeegee q in Squeegees) now.Add(q.Bounds(S));
-            RectangleF fr;
-            if (Flies.Bounds(S, out fr)) now.Add(fr);
+            Flies.AddBounds(UI * 0.65f, now);
             AddSwirlActivity(Left, now);
             AddSwirlActivity(Right, now);
             if (!Smoke.IsEmpty || Smoke.Bx1 >= Smoke.Bx0) now.Add(SmokeScreenRect());
@@ -635,7 +651,7 @@ namespace SlopGrenadeDesktop
 
         private void AddStripRows(SlopLayer L, DirtyRegion dirty)
         {
-            L.Flush(IsCalm ? 1200 : 220);
+            L.Flush(IsCalm ? 1200 : 700);
             int y0, y1;
             if (L.TakeDirtyRows(out y0, out y1)) dirty.Add(new RectangleF(L.StripX, y0, L.StripW, y1 - y0 + 1));
         }
@@ -654,17 +670,18 @@ namespace SlopGrenadeDesktop
         {
             float s = S;
             // smoke (behind everything, re-rendered at ~30 Hz)
-            if (!Smoke.IsEmpty)
+            if (!Smoke.IsEmpty && clip.IntersectsWith(Rectangle.Round(SmokeScreenRect())))
+                Safe(g, "smoke", delegate { DrawSmoke(g); });
+            Safe(g, "slop", delegate
             {
-                if (clip.IntersectsWith(Rectangle.Round(SmokeScreenRect())))
-                {
-                    DrawSmoke(g);
-                }
-            }
-            DrawStrip(g, Left, clip);
-            DrawStrip(g, Right, clip);
-            Left.DrawSwirls(g);
-            Right.DrawSwirls(g);
+                DrawStrip(g, Left, clip);
+                DrawStrip(g, Right, clip);
+            });
+            Safe(g, "swirls", delegate
+            {
+                Left.DrawSwirls(g);
+                Right.DrawSwirls(g);
+            });
             for (int pass = 0; pass < 2; pass++)
             {
                 foreach (Fruit f in Fruits)
@@ -672,19 +689,66 @@ namespace SlopGrenadeDesktop
                     bool stuck = f.State == FruitState.Stuck;
                     if ((pass == 0) != stuck) continue;
                     if (!clip.IntersectsWith(Rectangle.Round(FruitBounds(f)))) continue;
-                    DrawFruit(g, f);
+                    Fruit ff = f;
+                    Safe(g, "fruit", delegate { DrawFruit(g, ff); });
                 }
             }
-            GraphicsState shake = g.Save();
-            if (_shakeX != 0f || _shakeY != 0f) g.TranslateTransform(_shakeX, _shakeY);
-            foreach (CannonBall c in Cannon) DrawCannon(g, c);
-            foreach (Grenade gr in Grenades) DrawGrenade(g, gr);
-            foreach (Explosion e in Explosions) e.Draw(g);
-            Particles.Draw(g, s);
-            g.Restore(shake);
-            foreach (Twinkle t in Twinkles) t.Draw(g, s);
-            foreach (Squeegee q in Squeegees) q.Draw(g, s);
-            Flies.Draw(g, s);
+            float sx = _shakeX, sy = _shakeY;
+            foreach (CannonBall c in Cannon)
+            {
+                CannonBall cc = c;
+                Safe(g, "cannon", delegate { g.TranslateTransform(sx, sy); DrawCannon(g, cc); });
+            }
+            foreach (Grenade gr in Grenades)
+            {
+                Grenade gg = gr;
+                Safe(g, "grenade", delegate { g.TranslateTransform(sx, sy); DrawGrenade(g, gg); });
+            }
+            foreach (Explosion e in Explosions)
+            {
+                Explosion ee = e;
+                Safe(g, "explosion", delegate { g.TranslateTransform(sx, sy); ee.Draw(g); });
+            }
+            Safe(g, "particles", delegate { g.TranslateTransform(sx, sy); Particles.Draw(g, s); });
+            foreach (Twinkle t in Twinkles)
+            {
+                Twinkle tt = t;
+                Safe(g, "twinkle", delegate { tt.Draw(g, UI); });
+            }
+            foreach (Squeegee q in Squeegees)
+            {
+                Squeegee qq = q;
+                Safe(g, "squeegee", delegate { qq.Draw(g, s); });
+            }
+            // flies stay big enough to read as flies
+            Safe(g, "flies", delegate { Flies.Draw(g, UI * 0.65f); });
+        }
+
+        /// <summary>
+        /// Runs one drawing step with its own graphics state. If it fails, the state
+        /// is still restored (so nothing after it is drawn rotated or shifted) and the
+        /// error is logged; the effect simply skips that frame.
+        /// </summary>
+        private static void Safe(Graphics g, string what, Action draw)
+        {
+            GraphicsState st = null;
+            try
+            {
+                st = g.Save();
+                draw();
+            }
+            catch (Exception ex)
+            {
+                DrawLog.Report(what, ex);
+            }
+            finally
+            {
+                if (st != null)
+                {
+                    try { g.Restore(st); }
+                    catch (Exception ex) { DrawLog.Report(what + " restore", ex); }
+                }
+            }
         }
 
         /// <summary>Re-render smoke pixels once per frame (call before Render).</summary>

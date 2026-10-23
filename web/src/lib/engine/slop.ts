@@ -1,14 +1,16 @@
 /**
  * Gooey slop that sticks to the left/right monitor edge.
  *
- * Model: metaball "blobs", growing "drips" and cartoon soft-serve "swirls".
+ * Model: metaball "blobs", "drips" that ooze forever (a drip creeps down, its
+ * tip swells and necks, a drop lets go and falls, the drip springs back and
+ * starts again) and cartoon soft-serve "swirls".
  * Render: the metaball field is evaluated per pixel inside a narrow edge strip
  * and cel-shaded (flat bands, gloss, hatched core shadow, thick ink contour).
  * Only rows that changed are recomputed, so a settled pile costs nothing.
  *
  * Mirrored in `desktop/Effects/SlopLayer.cs`.
  */
-import { clamp01, easeOutBack, type Rng } from './math';
+import { Rng, clamp01, easeOutBack } from './math';
 import { INK, type SlopPalette } from './palette';
 
 /** Iso threshold of the metaball field. */
@@ -28,10 +30,29 @@ export interface Drip {
   x: number;
   y0: number;
   len: number;
+  /** Length at which the swollen tip lets a drop go. */
   maxLen: number;
-  /** Viscous approach rate (1/s). */
-  rate: number;
+  /** Typical length for this drip (maxLen varies around it). */
+  baseLen: number;
+  /** Creep speed (px/s) before the tip gets heavy. */
+  speed: number;
+  /** Phase and rate of the slow pulsing creep. */
+  phase: number;
+  wob: number;
   r: number;
+  /** Seconds of spring-back left after a drop let go (0 = creeping). */
+  recoil: number;
+  /** Length the drip springs back towards, and its spring velocity. */
+  rest: number;
+  lv: number;
+}
+
+/** A drop of goo that has let go of a drip and is falling. */
+export interface GooDrop {
+  x: number;
+  y: number;
+  r: number;
+  vy: number;
 }
 
 export interface Swirl {
@@ -63,6 +84,7 @@ export class SlopLayer {
   readonly s: number;
   blobs: GooBlob[] = [];
   drips: Drip[] = [];
+  drops: GooDrop[] = [];
   swirls: Swirl[] = [];
   splats: Splat[] = [];
   /** Metaball field (stripW x viewH). */
@@ -72,6 +94,9 @@ export class SlopLayer {
   /** Pending dirty row intervals [y0, y1, y0, y1, ...]. */
   private dirty: number[] = [];
   private nextSplatId = 1;
+  /** Clock for the drip pulse, and randomness for drop sizes. */
+  private time = 0;
+  private readonly rng: Rng;
   /** Bumped whenever pixels change so renderers know to re-upload. */
   version = 0;
   /** Rows changed since the last `takeDirtyRows` (for partial uploads). */
@@ -87,6 +112,7 @@ export class SlopLayer {
     this.stripW = Math.max(64, Math.round(Math.min(viewW * 0.22, 380 * scale)));
     this.field = new Float32Array(this.stripW * viewH);
     this.pixels = new Uint8ClampedArray(this.stripW * viewH * 4);
+    this.rng = new Rng(side === 'left' ? 0x51a7 : 0xb10b);
   }
 
   /** Screen x of the strip's left column. */
@@ -105,7 +131,33 @@ export class SlopLayer {
   }
 
   isEmpty(): boolean {
-    return this.blobs.length === 0 && this.drips.length === 0 && this.swirls.length === 0;
+    return this.blobs.length === 0 && this.drips.length === 0 && this.drops.length === 0 && this.swirls.length === 0;
+  }
+
+  /** True while goo is moving (drips ooze for as long as slop is on screen). */
+  isAnimating(): boolean {
+    return this.drips.length > 0 || this.drops.length > 0;
+  }
+
+  /** Start a drip at (x, y0). Skipped when there is no room above the screen bottom. */
+  private addDrip(x: number, y0: number, baseLen: number, r: number, rng: Rng): void {
+    const room = this.viewH - 10 * this.s - y0;
+    if (room < 12 * this.s) return;
+    const base = Math.min(baseLen, room);
+    this.drips.push({
+      x,
+      y0,
+      len: 0,
+      maxLen: base * rng.range(0.8, 1.1),
+      baseLen: base,
+      speed: rng.range(9, 20) * this.s,
+      phase: rng.range(0, Math.PI * 2),
+      wob: rng.range(0.7, 1.4),
+      r,
+      recoil: 0,
+      rest: 0,
+      lv: 0
+    });
   }
 
   /** Persistent pieces stuck on this side (used by the tray "slop count"). */
@@ -126,7 +178,7 @@ export class SlopLayer {
       }
     }
     d.push(a, b);
-    if (d.length > 24) {
+    if (d.length > 64) {
       let lo = d[0];
       let hi = d[1];
       for (let i = 2; i < d.length; i += 2) {
@@ -185,14 +237,13 @@ export class SlopLayer {
     // a few drips running down the bezel
     const dn = 3 + Math.round(2 * size);
     for (let i = 0; i < dn; i++) {
-      this.drips.push({
-        x: ex + inw * (10 + (i / Math.max(1, dn - 1)) * 80 + rng.range(-6, 6)) * s,
-        y0: y + rng.range(30, 70) * s,
-        len: 0,
-        maxLen: rng.range(70, 280) * s,
-        rate: rng.range(0.3, 0.9),
-        r: rng.range(4.5, 8) * this.s * (0.7 + 0.3 * size)
-      });
+      this.addDrip(
+        ex + inw * (10 + (i / Math.max(1, dn - 1)) * 80 + rng.range(-6, 6)) * s,
+        y + rng.range(30, 70) * s,
+        rng.range(90, 300) * s,
+        rng.range(4.5, 8) * this.s * (0.7 + 0.3 * size),
+        rng
+      );
     }
     if (withSwirl) {
       this.swirls.push({
@@ -215,14 +266,7 @@ export class SlopLayer {
     const ex = this.edgeX;
     this.blobs.push({ x: ex + inw * rng.range(-2, 10) * this.s, y, r, age: 0 });
     if (rng.chance(0.55)) {
-      this.drips.push({
-        x: ex + inw * rng.range(2, 9) * this.s,
-        y0: y,
-        len: 0,
-        maxLen: rng.range(20, 110) * this.s,
-        rate: rng.range(0.4, 1.2),
-        r: Math.max(2.5 * this.s, r * 0.45)
-      });
+      this.addDrip(ex + inw * rng.range(2, 9) * this.s, y, rng.range(50, 150) * this.s, Math.max(2.5 * this.s, r * 0.45), rng);
     }
     this.markDirty(y - r * 3, y + 130 * this.s);
   }
@@ -258,14 +302,42 @@ export class SlopLayer {
         moved = true;
       }
     }
+    this.time += dt;
+    const s = this.s;
     for (const d of this.drips) {
-      if (d.len < d.maxLen - 0.3) {
-        const old = d.len;
-        d.len += (d.maxLen - d.len) * (1 - Math.exp(-d.rate * dt)) + 1.5 * this.s * dt;
-        if (d.len > d.maxLen) d.len = d.maxLen;
-        this.markDirty(d.y0 + old - d.r * 4, d.y0 + d.len + d.r * 4);
-        moved = true;
+      const old = d.len;
+      if (d.recoil > 0) {
+        // the drip springs back up after letting a drop go (with a little bounce)
+        d.recoil -= dt;
+        const a = (d.rest - d.len) * 90 - d.lv * 8;
+        d.lv += a * dt;
+        d.len = Math.max(0, d.len + d.lv * dt);
+        if (d.recoil <= 0) d.lv = 0;
+      } else {
+        // slow, pulsing creep that speeds up as the tip gets heavy
+        const ripe = clamp01(d.len / d.maxLen);
+        const pulse = 0.55 + 0.45 * Math.sin(this.time * d.wob * 1.6 + d.phase);
+        d.len += d.speed * pulse * (1 + 1.6 * ripe * ripe) * dt;
+        if (d.len >= d.maxLen) {
+          // the neck gives way: a drop lets go and the drip snaps back
+          this.drops.push({ x: d.x, y: d.y0 + d.len + d.r * 0.8, r: d.r * this.rng.range(1.2, 1.5), vy: d.speed * 1.5 });
+          d.rest = d.len * this.rng.range(0.3, 0.55);
+          d.recoil = 0.7;
+          d.lv = 0;
+          d.maxLen = d.baseLen * this.rng.range(0.8, 1.15);
+        }
       }
+      this.markDirty(d.y0 + Math.min(old, d.len) - d.r * 4, d.y0 + Math.max(old, d.len) + d.r * 4.5);
+      moved = true;
+    }
+    for (let i = this.drops.length - 1; i >= 0; i--) {
+      const p = this.drops[i];
+      const oldY = p.y;
+      p.vy += 700 * s * dt;
+      p.y += p.vy * dt;
+      this.markDirty(oldY - p.r * 4.5, p.y + p.r * 2.5);
+      if (p.y - p.r * 3 > this.viewH) this.drops.splice(i, 1);
+      moved = true;
     }
     for (const sw of this.swirls) {
       if (sw.age < 1) {
@@ -299,11 +371,13 @@ export class SlopLayer {
         const cut = bladeY - d.y0;
         d.y0 = bladeY;
         d.len = Math.max(0, d.len - cut);
-        d.maxLen = Math.max(d.len, d.maxLen - cut);
+        d.rest = Math.max(0, d.rest - cut);
+        d.maxLen = Math.max(d.len + 4 * this.s, d.maxLen - cut);
       }
       keepD.push(d);
     }
     this.drips = keepD;
+    this.drops = this.drops.filter((p) => p.y >= bladeY);
     this.swirls = this.swirls.filter((sw) => sw.y + 40 * sw.size >= bladeY);
     this.splats = this.splats.filter((sp) => sp.y >= bladeY);
     this.markDirty(0, bladeY + 16 * this.s);
@@ -314,6 +388,7 @@ export class SlopLayer {
   clear(): void {
     this.blobs = [];
     this.drips = [];
+    this.drops = [];
     this.swirls = [];
     this.splats = [];
     this.markDirty(0, this.viewH);
@@ -406,19 +481,31 @@ export class SlopLayer {
       if (d.len <= 0.5) continue;
       const top = d.y0;
       const bot = d.y0 + d.len;
-      const reach = d.r * SUPPORT * 1.8;
+      const reach = d.r * SUPPORT * 2.2;
       if (bot + reach < y0 || top - reach > y1) continue;
+      // how heavy the tip is: the neck thins and the bulb swells before it lets go
+      const ripe = d.recoil > 0 ? 0 : clamp01(d.len / d.maxLen);
+      const swell = 0.45 + 0.75 * ripe;
       const step = Math.max(1.5, d.r * 0.55);
       const n = Math.max(1, Math.ceil(d.len / step));
       for (let i = 0; i <= n; i++) {
         const f = i / n;
         const yy = top + d.len * f;
-        // taper slightly then bulge into a droplet at the tip
-        const bulb = f > 0.82 ? 1 + 0.75 * Math.sin(((f - 0.82) / 0.18) * Math.PI * 0.5) : 1 - 0.18 * f;
-        const rr = d.r * bulb;
+        let k = 1 - 0.18 * f;
+        if (f > 0.55 && f < 0.88) k *= 1 - 0.55 * ripe * ripe * Math.sin(((f - 0.55) / 0.33) * Math.PI);
+        if (f > 0.82) k = Math.max(k, 1 + swell * Math.sin(((f - 0.82) / 0.18) * Math.PI * 0.5));
+        const rr = d.r * k;
         if (yy + rr * SUPPORT < y0 || yy - rr * SUPPORT > y1) continue;
         this.splatKernel(d.x, yy, rr * 0.82, y0, y1);
       }
+    }
+    for (const p of this.drops) {
+      // a teardrop: round body plus a thinner tail that stretches as it speeds up
+      const stretch = Math.min(1.8, 0.6 + p.vy / (420 * this.s));
+      const tailY = p.y - p.r * 0.95 * stretch;
+      if (p.y + p.r * SUPPORT < y0 || tailY - p.r * SUPPORT > y1) continue;
+      this.splatKernel(p.x, p.y, p.r, y0, y1);
+      this.splatKernel(p.x, tailY, p.r * 0.62, y0, y1);
     }
   }
 

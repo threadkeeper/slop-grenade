@@ -99,7 +99,7 @@ namespace SlopGrenadeDesktop
                 RoundRect(p, x, y, w, h, 2.5f * (w / 22f));
                 g.FillPath(Ink.Brush(Palette.BrassDark, 1f), p);
                 GraphicsState st = g.Save();
-                g.SetClip(p, CombineMode.Intersect);
+                Ink.ClipTo(g, p, CombineMode.Intersect);
                 g.FillRectangle(Ink.Brush(Palette.BrassBase, 1f), x + (lx < 0f ? -2f : w * 0.25f), y - 2f, w * 0.78f, h + 4f);
                 g.FillRectangle(Ink.Brush(Palette.BrassLight, 1f), x + (lx < 0f ? w * 0.12f : w * 0.6f), y - 2f, w * 0.16f, h + 4f);
                 g.Restore(st);
@@ -146,11 +146,11 @@ namespace SlopGrenadeDesktop
                 Egg(core, lx * 10f * k, ly * 10f * k, 0.95f * k);
                 g.FillPath(Ink.Brush(pal.Shadow, 1f), body);
                 GraphicsState st = g.Save();
-                g.SetClip(body, CombineMode.Intersect);
+                Ink.ClipTo(g, body, CombineMode.Intersect);
                 g.FillPath(Ink.Brush(pal.Base, 1f), lit);
                 // hatched core shadow
                 GraphicsState st2 = g.Save();
-                g.SetClip(core, CombineMode.Exclude);
+                Ink.ClipTo(g, core, CombineMode.Exclude);
                 Ink.Hatch(g, -40f * k, -40f * k, 40f * k, 40f * k, 5f * k, 1.3f * k, 0.5f);
                 g.Restore(st2);
                 float la = M.Atan2(ly, lx) + M.PI / 2f;
@@ -278,7 +278,7 @@ namespace SlopGrenadeDesktop
                 if (!uh)
                 {
                     GraphicsState st = g.Save();
-                    g.SetClip(mouth, CombineMode.Intersect);
+                    Ink.ClipTo(g, mouth, CombineMode.Intersect);
                     Ink.FillEllipse(g, 1f * k, 18f * k, 4f * k, 3f * k, 0xff6f8f, 1f);
                     g.Restore(st);
                 }

@@ -68,12 +68,27 @@ namespace SlopGrenadeDesktop
                 }
             }
             _rects.Add(cur);
-            if (_rects.Count > 8)
+            // too many pieces: merge the pair that wastes the least area, so the two
+            // monitor edges stay separate instead of becoming one screen-wide block
+            while (_rects.Count > 8)
             {
-                Rectangle u = _rects[0];
-                for (int i = 1; i < _rects.Count; i++) u = Rectangle.Union(u, _rects[i]);
-                _rects.Clear();
-                _rects.Add(u);
+                int bi = 0, bj = 1;
+                long best = long.MaxValue;
+                for (int i = 0; i < _rects.Count; i++)
+                {
+                    for (int j = i + 1; j < _rects.Count; j++)
+                    {
+                        Rectangle u = Rectangle.Union(_rects[i], _rects[j]);
+                        long waste = (long)u.Width * u.Height
+                            - (long)_rects[i].Width * _rects[i].Height
+                            - (long)_rects[j].Width * _rects[j].Height;
+                        if (waste < best) { best = waste; bi = i; bj = j; }
+                    }
+                }
+                Rectangle pair = Rectangle.Union(_rects[bi], _rects[bj]);
+                _rects.RemoveAt(bj);
+                _rects.RemoveAt(bi);
+                _rects.Add(pair);
             }
             long area = 0;
             for (int i = 0; i < _rects.Count; i++) area += (long)_rects[i].Width * _rects[i].Height;

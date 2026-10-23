@@ -1,5 +1,5 @@
 // Fruit.cs
-// A 3D fruit tumbling across the screen in slow motion about a random axis.
+// A 3D fruit tossed across the screen, tumbling about a random axis.
 // It only sticks when it actually hits slop on the edge; otherwise it sails off.
 // Mirrors web/src/lib/engine/fruit.ts.
 
@@ -37,8 +37,8 @@ namespace SlopGrenadeDesktop
             float edge = side == Side.Left ? 0f : viewW;
             X = viewW * 0.5f + inward * viewW * rng.Range(0.05f, 0.35f);
             Y = viewH + R * 1.6f;
-            float T = rng.Range(4.6f, 6.2f);
-            Gravity = 120f * s;
+            float T = rng.Range(1.5f, 2.1f);
+            Gravity = 1100f * s;
             float tx = edge - inward * R * 0.2f;
             Vx = (tx - X) / T;
             Vy = (targetY - Y - 0.5f * Gravity * T * T) / T;
@@ -48,7 +48,7 @@ namespace SlopGrenadeDesktop
             Ax = r * M.Cos(t);
             Ay = r * M.Sin(t);
             Az = z;
-            Omega = rng.Range(0.5f, 0.95f) * rng.Sign();
+            Omega = rng.Range(2.2f, 4f) * rng.Sign();
             Toon.AxisAngle(0f, 1f, 0f, rng.Range(0f, M.TAU), _tmp);
             Toon.AxisAngle(1f, 0f, 0f, rng.Range(-0.7f, 0.7f), Base);
             Toon.Mul3(Base, _tmp, Base);
