@@ -4,7 +4,7 @@ This ledger defines the dependency-ordered, test-driven work packets coordinated
 
 ## Global Rules
 
-- **No Service Tree Registration**: Authentication to Microsoft 365 uses the standalone **WorkIQ MCP** CLI/stdio server (`workiq auth login`, `workiq mcp`, `workiq fetch`), and LLM inference uses the user's **GitHub account** (`gh auth token` / `GITHUB_TOKEN`) against `https://api.githubcopilot.com/responses` with `model: "gpt-5.6-luna"`.
+- **No admin app Registration**: Authentication to Microsoft 365 uses the standalone **WorkIQ MCP** CLI/stdio server (`workiq auth login`, `workiq mcp`, `workiq fetch`), and LLM inference uses the user's **GitHub account** (`gh auth token` / `GITHUB_TOKEN`) against `https://api.githubcopilot.com/responses` with `model: "gpt-5.6-luna"`.
 - **Privacy First**: Never commit, log, or persist raw personal emails, Teams messages, or bearer tokens to disk or Git. The in-memory `AwarenessLedger` stores only sanitized metadata, slop scores, signal tags, and short redacted previews in memory.
 - **Test-Driven Verification**: Every packet must include deterministic unit and/or integration tests that prove the behavior works before the packet is marked complete.
 
@@ -27,7 +27,7 @@ This ledger defines the dependency-ordered, test-driven work packets coordinated
   3. Generates actionable, constructive self-awareness coaching tips (especially tailored when `direction == MessageDirection::Sent`).
   4. 100% unit test coverage of all 5 tiers and edge cases.
 
-### WP02 — Zero-Service-Tree Auth, WorkIQ MCP & GitHub GPT Luna (`rust/src/auth.rs`, `rust/src/workiq_mcp.rs`, `rust/src/llm_luna.rs`)
+### WP02 — Standalone User-Auth Auth, WorkIQ MCP & GitHub GPT Luna (`rust/src/auth.rs`, `rust/src/workiq_mcp.rs`, `rust/src/llm_luna.rs`)
 - **Status**: `done` (target)
 - **Owned Paths**: `rust/src/config.rs`, `rust/src/auth.rs`, `rust/src/workiq_mcp.rs`, `rust/src/llm_luna.rs`
 - **Dependencies**: `WP01`

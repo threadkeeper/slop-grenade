@@ -2,7 +2,7 @@
 //!
 //! Exposes endpoints for:
 //! - Health & version readiness (`GET /api/v1/health`)
-//! - Zero-Service-Tree authentication status & updates (`GET /api/v1/auth/status`,
+//! - Standalone User-Auth authentication status & updates (`GET /api/v1/auth/status`,
 //!   `POST /api/v1/auth/github-token`, `POST /api/v1/auth/workiq-account`,
 //!   `POST /api/v1/auth/workiq-login`)
 //! - Live message analysis & pre-send self-check (`POST /api/v1/analyze`)
@@ -213,7 +213,7 @@ async fn handle_health() -> Json<Value> {
         "status": "ok",
         "service": "slop-grenade",
         "version": env!("CARGO_PKG_VERSION"),
-        "serviceTreeRequired": false,
+        "adminAppRequired": false,
         "model": "gpt-5.6-luna"
     }))
 }

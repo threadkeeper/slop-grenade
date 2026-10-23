@@ -65,7 +65,7 @@ async fn health_and_auth_endpoints_confirm_zero_service_tree_requirement() {
         .await
         .unwrap();
     assert_eq!(health["status"], "ok");
-    assert_eq!(health["serviceTreeRequired"], false);
+    assert_eq!(health["adminAppRequired"], false);
     assert_eq!(health["model"], "gpt-5.6-luna");
 
     let auth: Value = client
@@ -76,7 +76,7 @@ async fn health_and_auth_endpoints_confirm_zero_service_tree_requirement() {
         .json()
         .await
         .unwrap();
-    assert_eq!(auth["serviceTreeRequired"], false);
+    assert_eq!(auth["adminAppRequired"], false);
     assert_eq!(auth["githubLuna"]["model"], "gpt-5.6-luna");
     assert_eq!(auth["workiq"]["account"], "test@contoso.com");
 }

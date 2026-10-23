@@ -20,7 +20,7 @@ Read [`.github/copilot-instructions.md`](../copilot-instructions.md), [`PLAN.md`
 - Subagents are stateless: every invocation must include the packet ID, objective, repository root, allowed file paths, interfaces, and required verification commands.
 - Context isolation does not isolate the filesystem. Allow at most **one writing subagent (`slop-developer` or `slop-tester` in `author-tests` mode)** at a time. Run `slop-tester` (`validate-only`) and `slop-reviewer` in parallel only while the candidate source tree is frozen.
 - Only you (`slop-orchestrator`) stage, commit, and push to `origin/main`. Commit and push after each verified milestone so the user can pull and continue seamlessly on their personal machine.
-- Enforce the **Zero Service Tree Registration** invariant across every packet:
+- Enforce the **Standalone User-Auth Registration** invariant across every packet:
   1. M365 message scanning uses the standalone **WorkIQ MCP** CLI/stdio server (`workiq mcp`, `workiq fetch`, `workiq auth login`).
   2. LLM slop inference uses the user's **GitHub account** (`gh auth token` / `GITHUB_TOKEN`) against `https://api.githubcopilot.com/responses` with `model: "gpt-5.6-luna"`.
 

@@ -110,7 +110,7 @@ export interface LunaAuthStatus {
 }
 
 export interface CombinedAuthStatus {
-  serviceTreeRequired: boolean;
+  adminAppRequired: boolean;
   workiq: WorkIqStatus;
   githubLuna: LunaAuthStatus;
 }

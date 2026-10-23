@@ -1,4 +1,4 @@
-//! Zero-Service-Tree GitHub account authentication and GPT Luna (`gpt-5.6-luna`) client.
+//! Standalone User-Auth GitHub account authentication and GPT Luna (`gpt-5.6-luna`) client.
 //!
 //! Resolves the user's GitHub credential from an in-memory session token,
 //! `GITHUB_TOKEN`, or `gh auth token` and calls the GitHub Copilot Responses API

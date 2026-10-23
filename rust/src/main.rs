@@ -2,9 +2,9 @@
 //!
 //! Wires together:
 //! 1. Runtime configuration (`AppConfig::from_env`)
-//! 2. Zero-Service-Tree **WorkIQ MCP** client (`WorkIqClient`) for scanning
+//! 2. Standalone User-Auth **WorkIQ MCP** client (`WorkIqClient`) for scanning
 //!    Microsoft Teams and Outlook communications
-//! 3. Zero-Service-Tree **GitHub GPT Luna (`gpt-5.6-luna`)** client (`LunaClient`)
+//! 3. Standalone User-Auth **GitHub GPT Luna (`gpt-5.6-luna`)** client (`LunaClient`)
 //!    for semantic slop evaluation via `https://api.githubcopilot.com/responses`
 //! 4. In-memory **Self-Awareness Ledger** (`AwarenessLedger`) and **SSE Event Bus** (`AnimationEventBus`)
 //! 5. Background M365 scanner daemon (`ScannerDaemon`)
@@ -26,13 +26,13 @@ async fn main() {
     // 1. Load runtime configuration from environment with sensible local defaults.
     let config = AppConfig::from_env();
 
-    // 2. Initialize zero-Service-Tree WorkIQ MCP client (discovers local `workiq` binary).
+    // 2. Initialize Standalone User-Auth WorkIQ MCP client (discovers local `workiq` binary).
     let workiq = Arc::new(WorkIqClient::new(
         config.workiq_bin.clone(),
         config.workiq_account.clone(),
     ));
 
-    // 3. Initialize zero-Service-Tree GitHub GPT Luna (`gpt-5.6-luna`) client.
+    // 3. Initialize Standalone User-Auth GitHub GPT Luna (`gpt-5.6-luna`) client.
     let luna = Arc::new(LunaClient::new(
         config.luna_endpoint.clone(),
         config.luna_model.clone(),
@@ -87,7 +87,7 @@ async fn main() {
         config.http_bind
     );
     println!("  GPT Luna Model         : {}", config.luna_model);
-    println!("  Service Tree Required  : false (WorkIQ MCP + GitHub Auth)");
+    println!("  admin app Required  : false (WorkIQ MCP + GitHub Auth)");
     println!("================================================================");
 
     axum::serve(listener, app)

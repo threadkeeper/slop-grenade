@@ -1,9 +1,9 @@
-//! Zero-Service-Tree Microsoft 365 connector via the local WorkIQ MCP server.
+//! Standalone User-Auth Microsoft 365 connector via the local WorkIQ MCP server.
 //!
 //! Speaks JSON-RPC 2.0 over stdio to `workiq mcp` (and supports direct CLI
 //! `workiq fetch` calls) so the user can scan their Microsoft Teams chats and
 //! Outlook emails using WorkIQ's built-in first-party authentication broker—
-//! without registering an Entra application in Service Tree.
+//! without registering an Entra application in admin app.
 
 use std::env;
 use std::path::{Path, PathBuf};
@@ -95,7 +95,7 @@ impl WorkIqClient {
                 mcp_tool_count: tool_count,
                 account: self.account(),
                 message: format!(
-                    "Connected to WorkIQ MCP ({tool_count} M365 tools registered; zero Service Tree registration required)."
+                    "Connected to WorkIQ MCP ({tool_count} M365 tools registered; Standalone User-Auth registration required)."
                 ),
             },
             Err(err) => WorkIqStatus {

@@ -1,7 +1,7 @@
 //! Runtime configuration for the Slop Grenade daemon.
 //!
 //! Reads environment variables with sensible local defaults so the standalone
-//! daemon works out-of-the-box without requiring any Service Tree registration
+//! daemon works out-of-the-box without requiring any admin app registration
 //! or cloud provisioning.
 
 use std::env;

@@ -23,5 +23,5 @@ Require an explicit mode in the task packet:
 Return to `slop-orchestrator`:
 1. **Packet ID & Mode** (`author-tests` or `validate-only`).
 2. **Commands Executed & Pass/Fail Counts**.
-3. **Coverage & Edge-Case Verification**: Confirmation that all 5 animation tiers, zero-Service-Tree auth fallbacks, and sent/received self-awareness counters are tested.
+3. **Coverage & Edge-Case Verification**: Confirmation that all 5 animation tiers, Standalone User-Auth auth fallbacks, and sent/received self-awareness counters are tested.
 4. **Blocking Failures or Missing Tests** (if any).

@@ -14,7 +14,7 @@ You are the independent read-only code and security reviewer for **Slop Grenade*
 
 ## Review Checklist
 
-1. **Zero Service Tree Compliance**: Confirms WorkIQ MCP and GitHub GPT Luna (`gpt-5.6-luna`) work without requiring any custom Entra app registration or Service Tree ID.
+1. **Standalone User-Auth Compliance**: Confirms WorkIQ MCP and GitHub GPT Luna (`gpt-5.6-luna`) work without requiring any custom Entra app registration or admin app registration.
 2. **Privacy & Credential Hygiene**: Ensures bearer tokens, GitHub tokens, and raw M365 message bodies are never logged or persisted to disk.
 3. **Code Quality & Conventions**: Checks Rust one-type-per-file structure, `//!`/`///` documentation, absence of `unwrap()` in fallible runtime paths, and strict TypeScript/Svelte 5 types.
 4. **TDD Completeness**: Confirms every behavior has deterministic tests.
