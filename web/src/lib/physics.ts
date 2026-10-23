@@ -168,20 +168,20 @@ export function seededRandom(seed: number): () => number {
   };
 }
 
-const BROWN_RED_SLUDGE_SWATCHES: Array<[string, string, string]> = [
-  ['#5c2216', '#7a3122', '#2e0e08'], // Deep russet-poop & crimson-mud
-  ['#4a1b12', '#69271b', '#240a06'], // Dark mahogany sludge
-  ['#68291b', '#873827', '#36120b'], // Terracotta-umber splatter
-  ['#521d14', '#702c1f', '#290c07'], // Roasted chestnut-red goop
-  ['#612419', '#823526', '#30100a'] // Earthy oxblood-brown sludge
+const PLASTIC_PINK_SWATCHES: Array<[string, string, string]> = [
+  ['#ff2e93', '#ff6bb5', '#a30b52'], // Glossy vinyl plastic pink
+  ['#f01c82', '#ff5cad', '#8f0847'], // Hot bubblegum plastic pink
+  ['#ff429e', '#ff85c2', '#b3125d'], // Bright magenta-pink plastic
+  ['#e6197a', '#ff66b2', '#820640'], // Deep berry-pink vinyl
+  ['#ff3898', '#ff78bd', '#990d4d'] // Neon coral-pink plastic
 ];
 
-const BROWN_BLUE_SLUDGE_SWATCHES: Array<[string, string, string]> = [
-  ['#3b3228', '#2c4259', '#1b1d24'], // Muddy umber marbled with dull slate-blue
-  ['#2d3847', '#4a3d31', '#161b22'], // Gunmetal blue-brown sludge
-  ['#42372b', '#324b66', '#1e2026'], // Peat-brown & oxidized steel-blue
-  ['#343d4b', '#524336', '#181d24'], // Bruised indigo-mud
-  ['#3d352e', '#293e54', '#1a1c21'] // Dark sepia-cobalt poop goop
+const PLASTIC_BLUE_SWATCHES: Array<[string, string, string]> = [
+  ['#0096ff', '#5cc2ff', '#00488a'], // Glossy vinyl plastic blue
+  ['#007be6', '#38b6ff', '#003a70'], // Electric cobalt plastic blue
+  ['#1aa3ff', '#70ccff', '#005299'], // Toy cyan-blue plastic
+  ['#0084f0', '#4dbdff', '#003f7a'], // Vivid azure vinyl
+  ['#0d9eff', '#66c7ff', '#004c8f'] // Bright sky-plastic blue
 ];
 
 /**
@@ -228,11 +228,11 @@ export function createAnimationInstance(params: {
 
   const rand = seededRandom(id * 131 + score * 17 + (side === 'left' ? 7 : 23));
   const swatches =
-    slopPalette === 'brown_blue' ? BROWN_BLUE_SLUDGE_SWATCHES : BROWN_RED_SLUDGE_SWATCHES;
+    slopPalette === 'brown_blue' ? PLASTIC_BLUE_SWATCHES : PLASTIC_PINK_SWATCHES;
 
-  const impactX = side === 'left' ? 28 : Math.max(80, viewportWidth - 28);
-  const impactY = Math.round(viewportHeight * (0.14 + rand() * 0.54));
-  const startX = Math.round(viewportWidth * 0.5 + (side === 'left' ? 160 : -160));
+  const impactX = side === 'left' ? 14 : Math.max(40, viewportWidth - 14);
+  const impactY = Math.round(viewportHeight * (0.06 + rand() * 0.86));
+  const startX = Math.round(viewportWidth * 0.5 + (side === 'left' ? 140 : -140));
   const startY = Math.round(viewportHeight * 0.82);
 
   const blobs: GoopBlob[] = [];
@@ -240,26 +240,26 @@ export function createAnimationInstance(params: {
   const bubbles: GoopBubble[] = [];
   const sparkles: SparkleParticle[] = [];
 
-  let duration = 4.0;
-  let persistentSlop = false;
+  // Every animation type sticks to the monitor edge until squeegeed!
+  let duration = 3.2;
+  const persistentSlop = true;
   let maxSlideDistance = 0;
 
   if (tier === 'slop_grenade') {
-    duration = 12.0;
-    persistentSlop = true;
-    maxSlideDistance = 155 + rand() * 140;
+    duration = 6.0;
+    maxSlideDistance = 42 + rand() * 54;
     const inward = side === 'left' ? 1 : -1;
 
-    for (let i = 0; i < 18; i++) {
+    for (let i = 0; i < 10; i++) {
       const [primaryColor, secondaryColor, shadowColor] =
         swatches[Math.floor(rand() * swatches.length)];
       blobs.push({
-        offsetX: inward * (rand() * 68),
-        offsetY: (rand() - 0.45) * 120,
-        baseRadius: 18 + rand() * 30,
+        offsetX: inward * (rand() * 24),
+        offsetY: (rand() - 0.45) * 44,
+        baseRadius: 6 + rand() * 10,
         squishFreq: 3.5 + rand() * 4.0,
         squishPhase: rand() * Math.PI * 2,
-        slideRate: 22 + rand() * 30,
+        slideRate: 10 + rand() * 14,
         primaryColor,
         secondaryColor,
         shadowColor,
@@ -267,50 +267,46 @@ export function createAnimationInstance(params: {
       });
     }
 
-    for (let i = 0; i < 12; i++) {
-      const originOffset = (rand() - 0.3) * 85;
+    for (let i = 0; i < 6; i++) {
+      const originOffset = (rand() - 0.3) * 32;
       const [primaryColor, secondaryColor] = swatches[Math.floor(rand() * swatches.length)];
       drips.push({
-        offsetX: inward * (4 + rand() * 58),
+        offsetX: inward * (2 + rand() * 20),
         originY: impactY + originOffset,
         currentY: impactY + originOffset,
-        maxDropDistance: 130 + rand() * 240,
-        radius: 8 + rand() * 13,
-        slideSpeed: 32 + rand() * 56,
+        maxDropDistance: 36 + rand() * 72,
+        radius: 3.5 + rand() * 5.0,
+        slideSpeed: 16 + rand() * 28,
         wobbleFreq: 2.5 + rand() * 3.5,
         wobblePhase: rand() * Math.PI * 2,
         color: i % 2 === 0 ? primaryColor : secondaryColor,
-        highlightColor:
-          slopPalette === 'brown_blue'
-            ? 'rgba(186, 214, 242, 0.42)'
-            : 'rgba(245, 198, 184, 0.42)'
+        highlightColor: 'rgba(255, 255, 255, 0.65)'
       });
     }
 
-    for (let i = 0; i < 14; i++) {
+    for (let i = 0; i < 6; i++) {
       bubbles.push({
-        offsetX: inward * (6 + rand() * 52),
-        offsetY: (rand() - 0.4) * 90,
-        radius: 3.5 + rand() * 7,
-        popTime: 2.0 + rand() * 9.0
+        offsetX: inward * (3 + rand() * 20),
+        offsetY: (rand() - 0.4) * 36,
+        radius: 1.8 + rand() * 3.2,
+        popTime: 2.0 + rand() * 7.0
       });
     }
   } else if (tier === 'slop_splat') {
-    duration = 8.0;
-    persistentSlop = true;
-    maxSlideDistance = 85 + rand() * 75;
+    duration = 4.5;
+    maxSlideDistance = 24 + rand() * 32;
     const inward = side === 'left' ? 1 : -1;
 
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 7; i++) {
       const [primaryColor, secondaryColor, shadowColor] =
         swatches[Math.floor(rand() * swatches.length)];
       blobs.push({
-        offsetX: inward * (rand() * 42),
-        offsetY: (rand() - 0.5) * 68,
-        baseRadius: 13 + rand() * 18,
+        offsetX: inward * (rand() * 18),
+        offsetY: (rand() - 0.5) * 28,
+        baseRadius: 5 + rand() * 7,
         squishFreq: 4.5 + rand() * 3.5,
         squishPhase: rand() * Math.PI * 2,
-        slideRate: 14 + rand() * 18,
+        slideRate: 8 + rand() * 10,
         primaryColor,
         secondaryColor,
         shadowColor,
@@ -318,54 +314,50 @@ export function createAnimationInstance(params: {
       });
     }
 
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 4; i++) {
       const [primaryColor, secondaryColor] = swatches[Math.floor(rand() * swatches.length)];
       drips.push({
-        offsetX: inward * (4 + rand() * 34),
+        offsetX: inward * (2 + rand() * 14),
         originY: impactY,
         currentY: impactY,
-        maxDropDistance: 75 + rand() * 120,
-        radius: 6 + rand() * 8,
-        slideSpeed: 20 + rand() * 28,
+        maxDropDistance: 24 + rand() * 48,
+        radius: 2.8 + rand() * 3.8,
+        slideSpeed: 12 + rand() * 18,
         wobbleFreq: 3.5,
         wobblePhase: rand() * Math.PI * 2,
         color: i % 2 === 0 ? primaryColor : secondaryColor,
-        highlightColor:
-          slopPalette === 'brown_blue'
-            ? 'rgba(186, 214, 242, 0.36)'
-            : 'rgba(245, 198, 184, 0.36)'
+        highlightColor: 'rgba(255, 255, 255, 0.6)'
       });
     }
   } else if (tier === 'innocent_fruit') {
-    duration = 6.5;
+    duration = 2.4;
     const inward = side === 'left' ? 1 : -1;
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 6; i++) {
       sparkles.push({
-        x: impactX + inward * 44,
+        x: impactX + inward * 16,
         y: impactY,
-        vx: inward * (20 + rand() * 48),
-        vy: -42 - rand() * 45,
-        size: 3 + rand() * 3.5,
+        vx: inward * (10 + rand() * 22),
+        vy: -20 - rand() * 24,
+        size: 1.8 + rand() * 2.0,
         alpha: 0.85,
         twinklePhase: rand() * Math.PI * 2,
         color: '#fde047'
       });
     }
   } else if (tier === 'peaceful_cloud') {
-    duration = 7.0;
+    duration = 2.4;
   } else {
-    // 'human_sparkle': small, barely visible plumes of sparkles
-    duration = 5.5;
+    // 'human_sparkle': small sparkles that settle into the edge buildup
+    duration = 2.2;
     const inward = side === 'left' ? 1 : -1;
-    const baseY = Math.round(viewportHeight * 0.68);
-    for (let i = 0; i < 16; i++) {
+    for (let i = 0; i < 10; i++) {
       sparkles.push({
-        x: impactX + inward * (10 + rand() * 32),
-        y: baseY + (rand() - 0.5) * 50,
-        vx: inward * (3 + rand() * 9) + (rand() - 0.5) * 6,
-        vy: -16 - rand() * 24,
-        size: 1.6 + rand() * 2.4,
-        alpha: 0.16 + rand() * 0.24, // Subtle, barely visible plume!
+        x: impactX + inward * (4 + rand() * 18),
+        y: impactY + (rand() - 0.5) * 26,
+        vx: inward * (2 + rand() * 5) + (rand() - 0.5) * 4,
+        vy: -8 - rand() * 12,
+        size: 1.4 + rand() * 1.8,
+        alpha: 0.32 + rand() * 0.28,
         twinklePhase: rand() * Math.PI * 2,
         color: '#fde68a'
       });
@@ -495,23 +487,43 @@ export function stepAnimation(anim: ActiveAnimation, dtSeconds: number): ActiveA
     }
   } else if (anim.tier === 'innocent_fruit') {
     const inward = anim.side === 'left' ? 1 : -1;
-    const bounceT = anim.elapsed;
-    anim.currentX = anim.impactX + inward * (135 + Math.sin(bounceT * 2.2) * 35);
-    anim.currentY = anim.impactY - Math.abs(Math.sin(bounceT * 3.8)) * 52;
-    for (const sp of anim.sparkles) {
-      sp.x += sp.vx * dt;
-      sp.y += sp.vy * dt;
-      sp.vy += 85 * dt;
+    if (anim.elapsed < anim.duration) {
+      anim.phase = 'sliding_goop';
+      const t = anim.elapsed / anim.duration;
+      // Bounces in toward the edge and sticks into the slop buildup!
+      const dist = 54 * (1 - t * 0.72) + Math.sin(anim.elapsed * 5.0) * 8 * (1 - t);
+      anim.currentX = anim.impactX + inward * dist;
+      anim.currentY = anim.impactY - Math.abs(Math.sin(anim.elapsed * 4.2)) * 22 * (1 - t);
+      for (const sp of anim.sparkles) {
+        sp.x += sp.vx * dt;
+        sp.y += sp.vy * dt;
+        sp.vy += 65 * dt;
+      }
+    } else {
+      anim.phase = 'accumulated';
+      anim.currentX = anim.impactX + inward * 14;
     }
   } else if (anim.tier === 'peaceful_cloud') {
     const inward = anim.side === 'left' ? 1 : -1;
-    anim.currentX = anim.impactX + inward * (145 + anim.elapsed * 28);
-    anim.currentY = anim.impactY + Math.sin(anim.elapsed * 1.8) * 10;
+    if (anim.elapsed < anim.duration) {
+      anim.phase = 'sliding_goop';
+      const t = anim.elapsed / anim.duration;
+      anim.currentX = anim.impactX + inward * (64 * (1 - t * 0.75));
+      anim.currentY = anim.impactY + Math.sin(anim.elapsed * 2.2) * 5 * (1 - t);
+    } else {
+      anim.phase = 'accumulated';
+      anim.currentX = anim.impactX + inward * 16;
+    }
   } else {
-    // 'human_sparkle': gentle rising sparkle plume
-    for (const sp of anim.sparkles) {
-      sp.x += sp.vx * dt + Math.sin(anim.elapsed * 3 + sp.twinklePhase) * 0.3;
-      sp.y += sp.vy * dt;
+    // 'human_sparkle': gentle rising sparkle plume that sticks to the slop on the bezel
+    if (anim.elapsed < anim.duration) {
+      anim.phase = 'sliding_goop';
+      for (const sp of anim.sparkles) {
+        sp.x += sp.vx * dt * 0.4 + Math.sin(anim.elapsed * 3 + sp.twinklePhase) * 0.2;
+        sp.y += sp.vy * dt * 0.4;
+      }
+    } else {
+      anim.phase = 'accumulated';
     }
   }
 

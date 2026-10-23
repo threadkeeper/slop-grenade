@@ -5,6 +5,9 @@
     computeInOutGauges,
     computeTopFiveLists,
     filterReports,
+    gaugeWhiteToPurpleColor,
+    rankGridReports,
+    tierDisplayName,
     type DashboardFilterState,
     type TimeSpanFilter
   } from '$lib/dashboard';
@@ -12,6 +15,8 @@
 
   let scorecard = $state<AwarenessScorecard | null>(null);
   let lastSeenSequence = $state(0);
+  let selectedBucket = $state<string | null>(null);
+  let selectedPerson = $state<string | null>(null);
 
   let filters = $state<DashboardFilterState>({
     timeSpan: 'today',
@@ -30,6 +35,16 @@
   const filteredReports = $derived(filterReports(allReports, filters));
   const gauges = $derived(computeInOutGauges(filteredReports));
   const buckets = $derived(computeBarChartBuckets(filteredReports, filters.timeSpan));
+  const maxBucketTotal = $derived(
+    Math.max(1, ...buckets.map((b) => b.totalCount))
+  );
+  const allTiersActive = $derived(
+    filters.tiers.slop_grenade &&
+      filters.tiers.slop_splat &&
+      filters.tiers.innocent_fruit &&
+      filters.tiers.peaceful_cloud &&
+      filters.tiers.human_sparkle
+  );
   const leaderboards = $derived(
     filteredReports.length > 0
       ? computeTopFiveLists(filteredReports)
@@ -37,6 +52,9 @@
           topSloppers: scorecard?.topSloppers ?? [],
           topPDoomers: scorecard?.topPDoomers ?? []
         }
+  );
+  const gridRows = $derived(
+    rankGridReports(filteredReports, selectedBucket, selectedPerson, filters.timeSpan)
   );
 
   async function loadLedger() {
@@ -52,10 +70,55 @@
 
   function setTimeSpan(span: TimeSpanFilter) {
     filters.timeSpan = span;
+    selectedBucket = null;
+  }
+
+  function toggleBucketSelection(label: string) {
+    selectedBucket = selectedBucket === label ? null : label;
+  }
+
+  function togglePersonSelection(name: string) {
+    selectedPerson = selectedPerson === name ? null : name;
+  }
+
+  function clearCrossFilters() {
+    selectedBucket = null;
+    selectedPerson = null;
+  }
+
+  function gaugeMarkerCoords(score: number): { x: number; y: number; innerX: number; innerY: number } {
+    const clamped = Math.max(0, Math.min(100, score));
+    const angle = Math.PI - (clamped / 100) * Math.PI;
+    const cx = 90;
+    const cy = 84;
+    const r = 64;
+    return {
+      x: cx + r * Math.cos(angle),
+      y: cy - r * Math.sin(angle),
+      innerX: cx + (r - 18) * Math.cos(angle),
+      innerY: cy - (r - 18) * Math.sin(angle)
+    };
+  }
+
+  function shortWords(text: string, maxWords = 9): string {
+    const words = text.trim().split(/\s+/);
+    if (words.length <= maxWords) return text;
+    return `${words.slice(0, maxWords).join(' ')}…`;
   }
 
   function toggleTier(tier: AnimationTier) {
     filters.tiers[tier] = !filters.tiers[tier];
+  }
+
+  function toggleAllTiers() {
+    const next = !allTiersActive;
+    filters.tiers = {
+      slop_grenade: next,
+      slop_splat: next,
+      innocent_fruit: next,
+      peaceful_cloud: next,
+      human_sparkle: next
+    };
   }
 
   function gaugeArcPath(score: number): string {
@@ -147,35 +210,38 @@
 
       <div class="filter-group" role="group" aria-label="Slop and non-slop types">
         <span class="group-label">Types</span>
+        <button class:active={allTiersActive} onclick={toggleAllTiers}>
+          All
+        </button>
         <button
           class:active={filters.tiers.slop_grenade}
           onclick={() => toggleTier('slop_grenade')}
         >
-          Grenade
+          slop-grenade
         </button>
         <button
           class:active={filters.tiers.slop_splat}
           onclick={() => toggleTier('slop_splat')}
         >
-          Slop
+          ai-cannon
         </button>
         <button
           class:active={filters.tiers.innocent_fruit}
           onclick={() => toggleTier('innocent_fruit')}
         >
-          Fruit
+          sprinkled
         </button>
         <button
           class:active={filters.tiers.peaceful_cloud}
           onclick={() => toggleTier('peaceful_cloud')}
         >
-          Cloud
+          polish
         </button>
         <button
           class:active={filters.tiers.human_sparkle}
           onclick={() => toggleTier('human_sparkle')}
         >
-          Non-Slop (Human)
+          human
         </button>
       </div>
     </div>
@@ -183,43 +249,78 @@
 
   <div class="layout">
     <div class="main-col">
-      <!-- Daily In / Out Slop Gauges -->
+      <!-- Daily In / Out Slop Gauges (0–100% Marker, White -> Fully Purple) -->
       <section class="gauges-row" aria-label="In and Out Slop Gauges">
         <div class="panel gauge-panel">
           <div class="panel-head">
             <h2>Received Slop (In)</h2>
-            <span class="meta">Resets daily at 00:00 • Brown-Red</span>
+            <span class="meta">0% White → 100% Purple • Resets 00:00</span>
           </div>
           <div class="gauge-body">
-            <svg viewBox="0 0 180 100" class="gauge-svg" aria-label="Received slop gauge">
-              <path
-                d="M 26 84 A 64 64 0 0 1 154 84"
-                fill="none"
-                stroke="#262930"
-                stroke-width="14"
-                stroke-linecap="butt"
-              />
-              {#if gauges.received.averageScore > 0}
+            {#snippet gaugeVisual(score: number, gradId: string)}
+              {@const marker = gaugeMarkerCoords(score)}
+              {@const markerColor = gaugeWhiteToPurpleColor(score)}
+              <svg viewBox="0 0 180 104" class="gauge-svg" aria-label="Slop gauge">
+                <defs>
+                  <linearGradient id={gradId} x1="0%" y1="0%" x2="100%" y2="0%">
+                    <stop offset="0%" stop-color="#ffffff" />
+                    <stop offset="45%" stop-color="#d8b4fe" />
+                    <stop offset="100%" stop-color="#9333ea" />
+                  </linearGradient>
+                </defs>
                 <path
-                  d={gaugeArcPath(gauges.received.averageScore)}
+                  d="M 26 84 A 64 64 0 0 1 154 84"
                   fill="none"
-                  stroke="#8c3a2b"
+                  stroke="#262930"
                   stroke-width="14"
                   stroke-linecap="butt"
                 />
-              {/if}
-              <text x="90" y="72" text-anchor="middle" class="gauge-num">
-                {gauges.received.averageScore}
-              </text>
-              <text x="90" y="88" text-anchor="middle" class="gauge-unit">AVG / 100</text>
-            </svg>
+                {#if score > 0}
+                  <path
+                    d={gaugeArcPath(score)}
+                    fill="none"
+                    stroke="url(#{gradId})"
+                    stroke-width="14"
+                    stroke-linecap="butt"
+                  />
+                {/if}
+                <!-- 0%, 50%, 100% scale labels -->
+                <text x="16" y="98" text-anchor="middle" class="scale-txt">0%</text>
+                <text x="90" y="13" text-anchor="middle" class="scale-txt">50%</text>
+                <text x="164" y="98" text-anchor="middle" class="scale-txt">100%</text>
+
+                <!-- Gauge Marker showing exact 0–100% position -->
+                <line
+                  x1={marker.innerX}
+                  y1={marker.innerY}
+                  x2={marker.x}
+                  y2={marker.y}
+                  stroke={markerColor}
+                  stroke-width="3"
+                />
+                <circle
+                  cx={marker.x}
+                  cy={marker.y}
+                  r="6"
+                  fill={markerColor}
+                  stroke="#111317"
+                  stroke-width="2"
+                />
+                <text x="90" y="70" text-anchor="middle" class="gauge-num" fill={markerColor}>
+                  {score}%
+                </text>
+                <text x="90" y="86" text-anchor="middle" class="gauge-unit">SLOP LEVEL</text>
+              </svg>
+            {/snippet}
+
+            {@render gaugeVisual(gauges.received.averageScore, 'grad-in')}
             <div class="gauge-stats">
               <div>
                 <span class="k">Messages</span>
                 <span class="v">{gauges.received.messageCount}</span>
               </div>
               <div>
-                <span class="k">Grenades In</span>
+                <span class="k">slop-grenades In</span>
                 <span class="v">{gauges.received.grenadeCount}</span>
               </div>
             </div>
@@ -229,38 +330,17 @@
         <div class="panel gauge-panel">
           <div class="panel-head">
             <h2>Sent Slop (Out)</h2>
-            <span class="meta">Resets daily at 00:00 • Brown-Blue</span>
+            <span class="meta">0% White → 100% Purple • Resets 00:00</span>
           </div>
           <div class="gauge-body">
-            <svg viewBox="0 0 180 100" class="gauge-svg" aria-label="Sent slop gauge">
-              <path
-                d="M 26 84 A 64 64 0 0 1 154 84"
-                fill="none"
-                stroke="#262930"
-                stroke-width="14"
-                stroke-linecap="butt"
-              />
-              {#if gauges.sent.averageScore > 0}
-                <path
-                  d={gaugeArcPath(gauges.sent.averageScore)}
-                  fill="none"
-                  stroke="#3b5978"
-                  stroke-width="14"
-                  stroke-linecap="butt"
-                />
-              {/if}
-              <text x="90" y="72" text-anchor="middle" class="gauge-num">
-                {gauges.sent.averageScore}
-              </text>
-              <text x="90" y="88" text-anchor="middle" class="gauge-unit">AVG / 100</text>
-            </svg>
+            {@render gaugeVisual(gauges.sent.averageScore, 'grad-out')}
             <div class="gauge-stats">
               <div>
                 <span class="k">Messages</span>
                 <span class="v">{gauges.sent.messageCount}</span>
               </div>
               <div>
-                <span class="k">Grenades Out</span>
+                <span class="k">slop-grenades Out</span>
                 <span class="v">{gauges.sent.grenadeCount}</span>
               </div>
             </div>
@@ -268,13 +348,16 @@
         </div>
       </section>
 
-      <!-- In vs Out Slop Bar Chart -->
-      <section class="panel chart-panel" aria-label="In vs Out Slop Bar Chart">
+      <!-- Per-Day Stacked Bar Chart by Type -->
+      <section class="panel chart-panel" aria-label="Stacked Message Type Bar Chart">
         <div class="panel-head">
-          <h2>In vs. Out Slop Over Time</h2>
+          <h2>Daily Breakdown by Type (Stacked)</h2>
           <div class="legend">
-            <span class="leg-item"><i class="swatch in"></i> Received (In)</span>
-            <span class="leg-item"><i class="swatch out"></i> Sent (Out)</span>
+            <span class="leg-item"><i class="swatch type-grenade"></i> slop-grenade</span>
+            <span class="leg-item"><i class="swatch type-cannon"></i> ai-cannon</span>
+            <span class="leg-item"><i class="swatch type-sprinkled"></i> sprinkled</span>
+            <span class="leg-item"><i class="swatch type-polish"></i> polish</span>
+            <span class="leg-item"><i class="swatch type-human"></i> human</span>
           </div>
         </div>
 
@@ -282,37 +365,62 @@
           <p class="empty">No messages match the current filters.</p>
         {:else}
           <svg viewBox="0 0 680 220" class="bar-svg">
-            {#each [0, 25, 50, 75, 100] as tick}
-              {@const y = 185 - (tick / 100) * 155}
+            {#each [0, 0.25, 0.5, 0.75, 1] as frac}
+              {@const y = 185 - frac * 155}
+              {@const val = Math.round(frac * maxBucketTotal)}
               <line x1="38" y1={y} x2="665" y2={y} stroke="#1f232b" stroke-width="1" />
-              <text x="30" y={y + 4} text-anchor="end" class="axis-txt">{tick}</text>
+              <text x="30" y={y + 4} text-anchor="end" class="axis-txt">{val}</text>
             {/each}
 
             {#each buckets as b, idx}
               {@const slotW = 610 / Math.max(1, buckets.length)}
-              {@const groupX = 48 + idx * slotW}
-              {@const inH = (b.receivedScore / 100) * 155}
-              {@const outH = (b.sentScore / 100) * 155}
-              <g>
-                <rect
-                  x={groupX}
-                  y={185 - inH}
-                  width="16"
-                  height={Math.max(2, inH)}
-                  fill="#8c3a2b"
-                >
-                  <title>Received ({b.label}): {b.receivedScore}/100 ({b.receivedCount} msgs)</title>
-                </rect>
-                <rect
-                  x={groupX + 19}
-                  y={185 - outH}
-                  width="16"
-                  height={Math.max(2, outH)}
-                  fill="#3b5978"
-                >
-                  <title>Sent ({b.label}): {b.sentScore}/100 ({b.sentCount} msgs)</title>
-                </rect>
-                <text x={groupX + 17} y="204" text-anchor="middle" class="axis-txt">
+              {@const barW = Math.min(34, Math.max(14, slotW * 0.56))}
+              {@const barX = 48 + idx * slotW + (slotW - barW) * 0.5}
+              {@const scale = 155 / maxBucketTotal}
+              {@const hHuman = b.humanCount * scale}
+              {@const hPolish = b.polishCount * scale}
+              {@const hSprinkled = b.sprinkledCount * scale}
+              {@const hCannon = b.aiCannonCount * scale}
+              {@const hGrenade = b.slopGrenadeCount * scale}
+              {@const yHuman = 185 - hHuman}
+              {@const yPolish = yHuman - hPolish}
+              {@const ySprinkled = yPolish - hSprinkled}
+              {@const yCannon = ySprinkled - hCannon}
+              {@const yGrenade = yCannon - hGrenade}
+              <g
+                class="bar-group"
+                class:dimmed={selectedBucket !== null && selectedBucket !== b.label}
+                onclick={() => toggleBucketSelection(b.label)}
+                role="button"
+                tabindex="0"
+                onkeydown={(e) => e.key === 'Enter' && toggleBucketSelection(b.label)}
+              >
+                {#if b.humanCount > 0}
+                  <rect x={barX} y={yHuman} width={barW} height={hHuman} fill="#ffffff">
+                    <title>{b.label} • human: {b.humanCount}</title>
+                  </rect>
+                {/if}
+                {#if b.polishCount > 0}
+                  <rect x={barX} y={yPolish} width={barW} height={hPolish} fill="#22c55e">
+                    <title>{b.label} • polish: {b.polishCount}</title>
+                  </rect>
+                {/if}
+                {#if b.sprinkledCount > 0}
+                  <rect x={barX} y={ySprinkled} width={barW} height={hSprinkled} fill="#facc15">
+                    <title>{b.label} • sprinkled: {b.sprinkledCount}</title>
+                  </rect>
+                {/if}
+                {#if b.aiCannonCount > 0}
+                  <rect x={barX} y={yCannon} width={barW} height={hCannon} fill="#8b5a2b">
+                    <title>{b.label} • ai-cannon: {b.aiCannonCount}</title>
+                  </rect>
+                {/if}
+                {#if b.slopGrenadeCount > 0}
+                  <rect x={barX} y={yGrenade} width={barW} height={hGrenade} fill="#00a2ff">
+                    <title>{b.label} • slop-grenade: {b.slopGrenadeCount}</title>
+                  </rect>
+                {/if}
+                <text x={barX + barW * 0.5} y="204" text-anchor="middle" class="axis-txt">
                   {b.label}
                 </text>
               </g>
@@ -343,7 +451,11 @@
             </thead>
             <tbody>
               {#each leaderboards.topSloppers as p, i}
-                <tr>
+                <tr
+                  class="clickable-row"
+                  class:selected-row={selectedPerson === p.name}
+                  onclick={() => togglePersonSelection(p.name)}
+                >
                   <td class="rank">{i + 1}</td>
                   <td class="name">{p.name}</td>
                   <td class="num">{p.slopGrenades}</td>
@@ -374,7 +486,11 @@
             </thead>
             <tbody>
               {#each leaderboards.topPDoomers as p, i}
-                <tr>
+                <tr
+                  class="clickable-row"
+                  class:selected-row={selectedPerson === p.name}
+                  onclick={() => togglePersonSelection(p.name)}
+                >
                   <td class="rank">{i + 1}</td>
                   <td class="name">{p.name}</td>
                   <td class="num">{p.humanMessages}</td>
@@ -387,6 +503,65 @@
       </section>
     </aside>
   </div>
+
+  <!-- Bottom Power BI-Style Drill-Down Grid Ranked by Highest Slop Score -->
+  <section class="panel grid-panel" aria-label="Selected Messages Drill-Down Grid">
+    <div class="panel-head">
+      <h2>
+        Selected Communications ({gridRows.length}) — Ranked by Highest Slop Score
+      </h2>
+      <div class="grid-filter-pills">
+        {#if selectedBucket || selectedPerson}
+          <span class="meta">
+            Filtered by:
+            {#if selectedBucket}<strong>{selectedBucket}</strong>{/if}
+            {#if selectedPerson}<strong>{selectedPerson}</strong>{/if}
+          </span>
+          <button class="clear-btn" onclick={clearCrossFilters}>Clear selection</button>
+        {:else}
+          <span class="meta">Click any bar or person above to cross-filter</span>
+        {/if}
+      </div>
+    </div>
+
+    <div class="grid-scroll">
+      <table class="data-grid">
+        <thead>
+          <tr>
+            <th class="num">Slop %</th>
+            <th>Type</th>
+            <th>Source</th>
+            <th>Core Metrics (Lex / Struct / Burst / Handoff • Words)</th>
+            <th>From</th>
+            <th>To</th>
+            <th>Subject</th>
+            <th>Preview</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each gridRows as row (row.messageId)}
+            <tr>
+              <td class="num">
+                <span class="score-pill" style="color: {gaugeWhiteToPurpleColor(row.slopScore)}">
+                  {row.slopScore}%
+                </span>
+              </td>
+              <td><span class="type-tag {row.tier}">{tierDisplayName(row.tier)}</span></td>
+              <td class="cap">{row.app}</td>
+              <td class="metrics-cell">
+                L:{row.breakdown.lexicalScore} • S:{row.breakdown.structuralScore} • B:{row.breakdown.burstinessScore}
+                • H:{row.breakdown.handoffScore} ({row.wordCount}w)
+              </td>
+              <td class="name">{row.sender}</td>
+              <td>{row.direction === 'received' ? 'You' : 'Team / Recipient'}</td>
+              <td>{row.subjectOrTopic}</td>
+              <td class="preview-cell">{shortWords(row.redactedPreview, 10)}</td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
+  </section>
 </main>
 
 <style>
@@ -607,12 +782,25 @@
     height: 10px;
   }
 
-  .swatch.in {
-    background: #8c3a2b;
+  .swatch.type-grenade {
+    background: #00a2ff;
   }
 
-  .swatch.out {
-    background: #3b5978;
+  .swatch.type-cannon {
+    background: #8b5a2b;
+  }
+
+  .swatch.type-sprinkled {
+    background: #facc15;
+  }
+
+  .swatch.type-polish {
+    background: #22c55e;
+  }
+
+  .swatch.type-human {
+    background: #ffffff;
+    border: 1px solid #3f4654;
   }
 
   .bar-svg {
@@ -677,5 +865,142 @@
     color: #7d8594;
     font-size: 12px;
     margin: 12px 0;
+  }
+
+  .scale-txt {
+    fill: #7d8594;
+    font-size: 8.5px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .bar-group {
+    cursor: pointer;
+    transition: opacity 0.12s ease;
+  }
+
+  .bar-group.dimmed {
+    opacity: 0.32;
+  }
+
+  .clickable-row {
+    cursor: pointer;
+  }
+
+  .clickable-row:hover {
+    background: #1d212a;
+  }
+
+  .selected-row {
+    background: #252b37;
+  }
+
+  .grid-panel {
+    margin-top: 20px;
+  }
+
+  .grid-filter-pills {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .clear-btn {
+    background: #252a34;
+    color: #e4e7ec;
+    border: 1px solid #383f4d;
+    border-radius: 3px;
+    padding: 3px 8px;
+    font-size: 11px;
+    cursor: pointer;
+  }
+
+  .grid-scroll {
+    max-height: 240px;
+    overflow-y: auto;
+    border-top: 1px solid #232730;
+  }
+
+  .data-grid {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .data-grid th {
+    position: sticky;
+    top: 0;
+    background: #16181d;
+    text-align: left;
+    font-size: 11px;
+    font-weight: 500;
+    color: #7d8594;
+    padding: 7px 8px;
+    border-bottom: 1px solid #232730;
+  }
+
+  .data-grid td {
+    padding: 7px 8px;
+    border-bottom: 1px solid #1d2027;
+    white-space: nowrap;
+  }
+
+  .data-grid th.num,
+  .data-grid td.num {
+    text-align: right;
+  }
+
+  .score-pill {
+    font-weight: 600;
+  }
+
+  .type-tag {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 500;
+  }
+
+  .type-tag.slop_grenade {
+    background: rgba(0, 162, 255, 0.18);
+    color: #38bdf8;
+  }
+
+  .type-tag.slop_splat {
+    background: rgba(139, 90, 43, 0.25);
+    color: #d99b66;
+  }
+
+  .type-tag.innocent_fruit {
+    background: rgba(250, 204, 21, 0.18);
+    color: #facc15;
+  }
+
+  .type-tag.peaceful_cloud {
+    background: rgba(34, 197, 94, 0.18);
+    color: #4ade80;
+  }
+
+  .type-tag.human_sparkle {
+    background: rgba(255, 255, 255, 0.12);
+    color: #ffffff;
+  }
+
+  .cap {
+    text-transform: capitalize;
+    color: #9da4b0;
+  }
+
+  .metrics-cell {
+    color: #8b929e;
+    font-size: 11px;
+  }
+
+  .preview-cell {
+    color: #9da4b0;
+    max-width: 260px;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 </style>

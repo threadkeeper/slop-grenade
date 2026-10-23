@@ -236,20 +236,20 @@ namespace SlopGrenadeDesktop
 
         private static readonly Color[][] BrownRedSwatches = new Color[][]
         {
-            new Color[] { Color.FromArgb(92, 34, 22), Color.FromArgb(122, 49, 34), Color.FromArgb(46, 14, 8) },
-            new Color[] { Color.FromArgb(74, 27, 18), Color.FromArgb(105, 39, 27), Color.FromArgb(36, 10, 6) },
-            new Color[] { Color.FromArgb(104, 41, 27), Color.FromArgb(135, 56, 39), Color.FromArgb(54, 18, 11) },
-            new Color[] { Color.FromArgb(82, 29, 20), Color.FromArgb(112, 44, 31), Color.FromArgb(41, 12, 7) },
-            new Color[] { Color.FromArgb(97, 36, 25), Color.FromArgb(130, 53, 38), Color.FromArgb(48, 16, 10) }
+            new Color[] { Color.FromArgb(255, 46, 147), Color.FromArgb(255, 115, 185), Color.FromArgb(158, 12, 82) },
+            new Color[] { Color.FromArgb(240, 28, 130), Color.FromArgb(255, 92, 173), Color.FromArgb(143, 8, 71) },
+            new Color[] { Color.FromArgb(255, 66, 158), Color.FromArgb(255, 133, 194), Color.FromArgb(179, 18, 93) },
+            new Color[] { Color.FromArgb(230, 25, 122), Color.FromArgb(255, 102, 178), Color.FromArgb(130, 6, 64) },
+            new Color[] { Color.FromArgb(255, 56, 152), Color.FromArgb(255, 120, 189), Color.FromArgb(153, 13, 77) }
         };
 
         private static readonly Color[][] BrownBlueSwatches = new Color[][]
         {
-            new Color[] { Color.FromArgb(59, 50, 40), Color.FromArgb(44, 66, 89), Color.FromArgb(27, 29, 36) },
-            new Color[] { Color.FromArgb(45, 56, 71), Color.FromArgb(74, 61, 49), Color.FromArgb(22, 27, 34) },
-            new Color[] { Color.FromArgb(66, 55, 43), Color.FromArgb(50, 75, 102), Color.FromArgb(30, 32, 38) },
-            new Color[] { Color.FromArgb(52, 61, 75), Color.FromArgb(82, 67, 54), Color.FromArgb(24, 29, 36) },
-            new Color[] { Color.FromArgb(61, 53, 46), Color.FromArgb(41, 62, 84), Color.FromArgb(26, 28, 33) }
+            new Color[] { Color.FromArgb(0, 150, 255), Color.FromArgb(102, 204, 255), Color.FromArgb(0, 72, 138) },
+            new Color[] { Color.FromArgb(0, 123, 230), Color.FromArgb(56, 182, 255), Color.FromArgb(0, 58, 112) },
+            new Color[] { Color.FromArgb(26, 163, 255), Color.FromArgb(112, 204, 255), Color.FromArgb(0, 82, 153) },
+            new Color[] { Color.FromArgb(0, 132, 240), Color.FromArgb(77, 189, 255), Color.FromArgb(0, 63, 122) },
+            new Color[] { Color.FromArgb(13, 158, 255), Color.FromArgb(102, 199, 255), Color.FromArgb(0, 76, 143) }
         };
 
         private readonly object _sync = new object();
@@ -321,17 +321,17 @@ namespace SlopGrenadeDesktop
                 bool isBrownBlue = (side == MonitorSide.Right);
                 Color[][] swatches = isBrownBlue ? BrownBlueSwatches : BrownRedSwatches;
 
-                float impactX = side == MonitorSide.Left ? 32f : Math.Max(80f, w - 32f);
-                float impactY = (float)(h * (0.14 + _rng.NextDouble() * 0.56));
-                float startX = (float)(w * 0.5 + (side == MonitorSide.Left ? 180 : -180));
+                float impactX = side == MonitorSide.Left ? 14f : Math.Max(40f, w - 14f);
+                float impactY = (float)(h * (0.06 + _rng.NextDouble() * 0.86));
+                float startX = (float)(w * 0.5 + (side == MonitorSide.Left ? 140 : -140));
                 float startY = (float)(h * 0.82);
 
                 float inward = side == MonitorSide.Left ? 1f : -1f;
                 float initialX = tier == AnimationTier.SlopGrenade
                     ? startX
                     : (tier == AnimationTier.InnocentFruit
-                        ? impactX + inward * 145f
-                        : (tier == AnimationTier.PeacefulCloud ? impactX + inward * 155f : impactX));
+                        ? impactX + inward * 64f
+                        : (tier == AnimationTier.PeacefulCloud ? impactX + inward * 72f : impactX));
 
                 ActiveAnimation anim = new ActiveAnimation
                 {
@@ -343,8 +343,8 @@ namespace SlopGrenadeDesktop
                     Sender = sender ?? "M365 Colleague",
                     Subject = subject ?? "M365 Message",
                     Elapsed = 0f,
-                    Duration = tier == AnimationTier.SlopGrenade ? 12f : (tier == AnimationTier.SlopSplat ? 8f : 6.2f),
-                    PersistentSlop = (tier == AnimationTier.SlopGrenade || tier == AnimationTier.SlopSplat),
+                    Duration = tier == AnimationTier.SlopGrenade ? 6f : (tier == AnimationTier.SlopSplat ? 4.5f : 2.4f),
+                    PersistentSlop = true,
                     StartX = startX,
                     StartY = startY,
                     ImpactX = impactX,
@@ -353,17 +353,17 @@ namespace SlopGrenadeDesktop
                     CurrentY = tier == AnimationTier.SlopGrenade ? startY : impactY,
                     Phase = tier == AnimationTier.SlopGrenade ? GrenadePhase.Flight : GrenadePhase.SlidingGoop,
                     MaxSlideDistance = tier == AnimationTier.SlopGrenade
-                        ? (float)(160 + _rng.NextDouble() * 150)
-                        : (float)(90 + _rng.NextDouble() * 80),
+                        ? (float)(42 + _rng.NextDouble() * 54)
+                        : (float)(24 + _rng.NextDouble() * 32),
                     FruitIndex = fruitOverride ?? _rng.Next(FruitNames.Length)
                 };
 
                 if (tier == AnimationTier.SlopGrenade || tier == AnimationTier.SlopSplat)
                 {
-                    int blobCount = tier == AnimationTier.SlopGrenade ? 18 : 10;
-                    int dripCount = tier == AnimationTier.SlopGrenade ? 12 : 6;
-                    float spreadX = tier == AnimationTier.SlopGrenade ? 70f : 44f;
-                    float spreadY = tier == AnimationTier.SlopGrenade ? 125f : 70f;
+                    int blobCount = tier == AnimationTier.SlopGrenade ? 10 : 6;
+                    int dripCount = tier == AnimationTier.SlopGrenade ? 6 : 4;
+                    float spreadX = tier == AnimationTier.SlopGrenade ? 24f : 16f;
+                    float spreadY = tier == AnimationTier.SlopGrenade ? 44f : 28f;
 
                     for (int i = 0; i < blobCount; i++)
                     {
@@ -372,10 +372,10 @@ namespace SlopGrenadeDesktop
                         {
                             OffsetX = inward * (float)(_rng.NextDouble() * spreadX),
                             OffsetY = (float)((_rng.NextDouble() - 0.45) * spreadY),
-                            BaseRadius = (float)((tier == AnimationTier.SlopGrenade ? 19 : 13) + _rng.NextDouble() * (tier == AnimationTier.SlopGrenade ? 30 : 18)),
+                            BaseRadius = (float)((tier == AnimationTier.SlopGrenade ? 6.5 : 5.0) + _rng.NextDouble() * (tier == AnimationTier.SlopGrenade ? 9.5 : 6.5)),
                             SquishFreq = (float)(3.5 + _rng.NextDouble() * 4.0),
                             SquishPhase = (float)(_rng.NextDouble() * Math.PI * 2),
-                            SlideRate = (float)((tier == AnimationTier.SlopGrenade ? 22 : 14) + _rng.NextDouble() * 28),
+                            SlideRate = (float)((tier == AnimationTier.SlopGrenade ? 10 : 7) + _rng.NextDouble() * 12),
                             PrimaryColor = sw[0],
                             SecondaryColor = sw[1],
                             ShadowColor = sw[2],
@@ -386,46 +386,44 @@ namespace SlopGrenadeDesktop
                     for (int i = 0; i < dripCount; i++)
                     {
                         Color[] sw = swatches[_rng.Next(swatches.Length)];
-                        float origOff = (float)((_rng.NextDouble() - 0.3) * 85.0);
+                        float origOff = (float)((_rng.NextDouble() - 0.3) * 32.0);
                         anim.Drips.Add(new GoopDrip
                         {
-                            OffsetX = inward * (float)(4 + _rng.NextDouble() * (spreadX * 0.85)),
+                            OffsetX = inward * (float)(2 + _rng.NextDouble() * (spreadX * 0.85)),
                             OriginY = impactY + origOff,
                             CurrentY = impactY + origOff,
-                            MaxDropDistance = (float)((tier == AnimationTier.SlopGrenade ? 135 : 80) + _rng.NextDouble() * 230),
-                            Radius = (float)((tier == AnimationTier.SlopGrenade ? 8.5 : 6.0) + _rng.NextDouble() * 12.0),
-                            SlideSpeed = (float)(32 + _rng.NextDouble() * 55),
+                            MaxDropDistance = (float)((tier == AnimationTier.SlopGrenade ? 36 : 22) + _rng.NextDouble() * 68),
+                            Radius = (float)((tier == AnimationTier.SlopGrenade ? 3.5 : 2.8) + _rng.NextDouble() * 4.5),
+                            SlideSpeed = (float)(16 + _rng.NextDouble() * 28),
                             WobbleFreq = (float)(2.5 + _rng.NextDouble() * 3.5),
                             WobblePhase = (float)(_rng.NextDouble() * Math.PI * 2),
                             DripColor = (i % 2 == 0) ? sw[0] : sw[1],
-                            HighlightColor = isBrownBlue
-                                ? Color.FromArgb(115, 186, 214, 242)
-                                : Color.FromArgb(115, 245, 198, 184)
+                            HighlightColor = Color.FromArgb(180, 255, 255, 255)
                         });
                     }
 
-                    for (int i = 0; i < 12; i++)
+                    for (int i = 0; i < 6; i++)
                     {
                         anim.Bubbles.Add(new GoopBubble
                         {
-                            OffsetX = inward * (float)(6 + _rng.NextDouble() * 50),
-                            OffsetY = (float)((_rng.NextDouble() - 0.4) * 90),
-                            Radius = (float)(3.5 + _rng.NextDouble() * 6.5),
-                            PopTime = (float)(2.0 + _rng.NextDouble() * 8.5)
+                            OffsetX = inward * (float)(3 + _rng.NextDouble() * 20),
+                            OffsetY = (float)((_rng.NextDouble() - 0.4) * 36),
+                            Radius = (float)(1.8 + _rng.NextDouble() * 3.0),
+                            PopTime = (float)(2.0 + _rng.NextDouble() * 6.5)
                         });
                     }
                 }
                 else if (tier == AnimationTier.InnocentFruit)
                 {
-                    for (int i = 0; i < 10; i++)
+                    for (int i = 0; i < 6; i++)
                     {
                         anim.Sparkles.Add(new SparkleParticle
                         {
                             X = initialX,
                             Y = impactY,
-                            Vx = inward * (float)(20 + _rng.NextDouble() * 48),
-                            Vy = (float)(-45 - _rng.NextDouble() * 45),
-                            Size = (float)(3.5 + _rng.NextDouble() * 3.5),
+                            Vx = inward * (float)(10 + _rng.NextDouble() * 22),
+                            Vy = (float)(-22 - _rng.NextDouble() * 22),
+                            Size = (float)(1.8 + _rng.NextDouble() * 2.0),
                             Alpha = 0.85f,
                             TwinklePhase = (float)(_rng.NextDouble() * Math.PI * 2)
                         });
@@ -433,17 +431,16 @@ namespace SlopGrenadeDesktop
                 }
                 else if (tier == AnimationTier.HumanSparkle)
                 {
-                    float baseY = h * 0.68f;
-                    for (int i = 0; i < 18; i++)
+                    for (int i = 0; i < 10; i++)
                     {
                         anim.Sparkles.Add(new SparkleParticle
                         {
-                            X = impactX + inward * (float)(14 + _rng.NextDouble() * 38),
-                            Y = baseY + (float)((_rng.NextDouble() - 0.5) * 60),
-                            Vx = inward * (float)(3 + _rng.NextDouble() * 10) + (float)((_rng.NextDouble() - 0.5) * 6),
-                            Vy = (float)(-18 - _rng.NextDouble() * 26),
-                            Size = (float)(2.2 + _rng.NextDouble() * 2.8),
-                            Alpha = (float)(0.22 + _rng.NextDouble() * 0.25),
+                            X = impactX + inward * (float)(4 + _rng.NextDouble() * 18),
+                            Y = impactY + (float)((_rng.NextDouble() - 0.5) * 26),
+                            Vx = inward * (float)(2 + _rng.NextDouble() * 5) + (float)((_rng.NextDouble() - 0.5) * 4),
+                            Vy = (float)(-8 - _rng.NextDouble() * 12),
+                            Size = (float)(1.5 + _rng.NextDouble() * 1.8),
+                            Alpha = (float)(0.35 + _rng.NextDouble() * 0.3),
                             TwinklePhase = (float)(_rng.NextDouble() * Math.PI * 2)
                         });
                     }
@@ -636,27 +633,56 @@ namespace SlopGrenadeDesktop
             else if (anim.Tier == AnimationTier.InnocentFruit)
             {
                 float inward = anim.Side == MonitorSide.Left ? 1f : -1f;
-                anim.CurrentX = anim.ImpactX + inward * (145f + (float)Math.Sin(anim.Elapsed * 2.2) * 35f);
-                anim.CurrentY = anim.ImpactY - (float)Math.Abs(Math.Sin(anim.Elapsed * 3.8)) * 52f;
-                foreach (SparkleParticle sp in anim.Sparkles)
+                if (anim.Elapsed < anim.Duration)
                 {
-                    sp.X += sp.Vx * dt;
-                    sp.Y += sp.Vy * dt;
-                    sp.Vy += 85f * dt;
+                    anim.Phase = GrenadePhase.SlidingGoop;
+                    float t = anim.Elapsed / anim.Duration;
+                    float dist = 54f * (1f - t * 0.72f) + (float)Math.Sin(anim.Elapsed * 5.0) * 8f * (1f - t);
+                    anim.CurrentX = anim.ImpactX + inward * dist;
+                    anim.CurrentY = anim.ImpactY - (float)Math.Abs(Math.Sin(anim.Elapsed * 4.2)) * 20f * (1f - t);
+                    foreach (SparkleParticle sp in anim.Sparkles)
+                    {
+                        sp.X += sp.Vx * dt;
+                        sp.Y += sp.Vy * dt;
+                        sp.Vy += 65f * dt;
+                    }
+                }
+                else
+                {
+                    anim.Phase = GrenadePhase.Accumulated;
+                    anim.CurrentX = anim.ImpactX + inward * 14f;
                 }
             }
             else if (anim.Tier == AnimationTier.PeacefulCloud)
             {
                 float inward = anim.Side == MonitorSide.Left ? 1f : -1f;
-                anim.CurrentX = anim.ImpactX + inward * (155f + anim.Elapsed * 28f);
-                anim.CurrentY = anim.ImpactY + (float)Math.Sin(anim.Elapsed * 1.8) * 10f;
+                if (anim.Elapsed < anim.Duration)
+                {
+                    anim.Phase = GrenadePhase.SlidingGoop;
+                    float t = anim.Elapsed / anim.Duration;
+                    anim.CurrentX = anim.ImpactX + inward * (64f * (1f - t * 0.75f));
+                    anim.CurrentY = anim.ImpactY + (float)Math.Sin(anim.Elapsed * 2.2) * 5f * (1f - t);
+                }
+                else
+                {
+                    anim.Phase = GrenadePhase.Accumulated;
+                    anim.CurrentX = anim.ImpactX + inward * 16f;
+                }
             }
             else
             {
-                foreach (SparkleParticle sp in anim.Sparkles)
+                if (anim.Elapsed < anim.Duration)
                 {
-                    sp.X += sp.Vx * dt + (float)Math.Sin(anim.Elapsed * 3.0 + sp.TwinklePhase) * 0.35f;
-                    sp.Y += sp.Vy * dt;
+                    anim.Phase = GrenadePhase.SlidingGoop;
+                    foreach (SparkleParticle sp in anim.Sparkles)
+                    {
+                        sp.X += sp.Vx * dt * 0.4f + (float)Math.Sin(anim.Elapsed * 3.0 + sp.TwinklePhase) * 0.2f;
+                        sp.Y += sp.Vy * dt * 0.4f;
+                    }
+                }
+                else
+                {
+                    anim.Phase = GrenadePhase.Accumulated;
                 }
             }
         }
@@ -714,11 +740,11 @@ namespace SlopGrenadeDesktop
                     g.DrawBezier(trailPen, p0, p1, p1, p2);
                 }
 
-                // Realistic Dull Metallic Blue Mk2 Pineapple Hand Grenade
+                // Compact Dull Metallic Blue Mk2 Pineapple Hand Grenade
                 GraphicsState gs = g.Save();
                 g.TranslateTransform(anim.CurrentX, anim.CurrentY);
                 g.RotateTransform(anim.RotationRad * 180f / (float)Math.PI);
-                g.ScaleTransform(1.38f, 1.38f);
+                g.ScaleTransform(0.68f, 0.68f);
 
                 // Cast gunmetal-blue ovoid body
                 using (GraphicsPath bodyPath = new GraphicsPath())
@@ -830,12 +856,12 @@ namespace SlopGrenadeDesktop
 
         private void DrawPoopSlopSplat(Graphics g, ActiveAnimation anim, bool isGrenade)
         {
-            float crustW = isGrenade ? 62f : 40f;
+            float crustW = isGrenade ? 22f : 15f;
             float crustX = anim.Side == MonitorSide.Left ? 0f : (Width - crustW);
-            RectangleF crustRect = new RectangleF(crustX, anim.ImpactY - 50f, crustW, anim.SlideDistance + 130f);
+            RectangleF crustRect = new RectangleF(crustX, anim.ImpactY - 18f, crustW, anim.SlideDistance + 44f);
 
-            Color cTop = anim.IsBrownBlue ? Color.FromArgb(225, 58, 48, 38) : Color.FromArgb(225, 88, 32, 20);
-            Color cBot = anim.IsBrownBlue ? Color.FromArgb(175, 42, 62, 84) : Color.FromArgb(175, 116, 44, 28);
+            Color cTop = anim.IsBrownBlue ? Color.FromArgb(225, 0, 150, 255) : Color.FromArgb(225, 255, 46, 147);
+            Color cBot = anim.IsBrownBlue ? Color.FromArgb(195, 0, 98, 204) : Color.FromArgb(195, 214, 20, 114);
             using (LinearGradientBrush smearBrush = new LinearGradientBrush(crustRect, cTop, cBot, 90f))
             {
                 g.FillRectangle(smearBrush, crustRect);
@@ -910,41 +936,14 @@ namespace SlopGrenadeDesktop
                     g.DrawArc(creasePen, -rx * 0.68f, -ry * 0.45f, rx * 1.36f, ry * 1.1f, 25f, 130f);
                 }
 
-                // Wet specular sludge highlight
-                Color sheen = anim.IsBrownBlue ? Color.FromArgb(95, 186, 212, 238) : Color.FromArgb(95, 248, 202, 190);
+                // Glossy white vinyl plastic highlight
+                Color sheen = Color.FromArgb(155, 255, 255, 255);
                 using (SolidBrush sheenBrush = new SolidBrush(sheen))
                 {
                     g.FillEllipse(sheenBrush, -rx * 0.55f, -ry * 0.52f, rx * 0.58f, ry * 0.34f);
                 }
 
                 g.Restore(bs);
-            }
-
-            // Show floating callout during active impact/drip (first 6 seconds)
-            if (anim.Elapsed < 6.0f)
-            {
-                float lx = anim.Side == MonitorSide.Left ? 98f : (Width - 336f);
-                float ly = Math.Min(Height - 100f, Math.Max(64f, anim.CurrentY - 22f));
-                RectangleF card = new RectangleF(lx, ly, 238f, 54f);
-                Color bg = anim.IsBrownBlue ? Color.FromArgb(235, 23, 31, 42) : Color.FromArgb(235, 46, 18, 12);
-                Color border = anim.IsBrownBlue ? Color.FromArgb(255, 96, 165, 250) : Color.FromArgb(255, 248, 113, 113);
-
-                using (SolidBrush bgBrush = new SolidBrush(bg))
-                using (Pen borderPen = new Pen(border, 2f))
-                using (Font titleFont = new Font("Segoe UI", 9.5f, FontStyle.Bold))
-                using (Font subFont = new Font("Segoe UI", 8.5f, FontStyle.Regular))
-                using (SolidBrush titleBrush = new SolidBrush(border))
-                using (SolidBrush subBrush = new SolidBrush(Color.FromArgb(255, 226, 232, 240)))
-                {
-                    g.FillRectangle(bgBrush, card);
-                    g.DrawRectangle(borderPen, card.X, card.Y, card.Width, card.Height);
-                    string title = isGrenade
-                        ? (anim.IsBrownBlue ? "SENT SLOP GRENADE (" + anim.Score + "/100)" : "RECEIVED SLOP GRENADE (" + anim.Score + "/100)")
-                        : (anim.IsBrownBlue ? "SENT POOP-SLOP (" + anim.Score + "/100)" : "RECEIVED POOP-SLOP (" + anim.Score + "/100)");
-                    string sub = anim.IsBrownBlue ? "Brown-Blue Outgoing Buildup" : "Brown-Red Incoming Buildup";
-                    g.DrawString(title, titleFont, titleBrush, lx + 10f, ly + 8f);
-                    g.DrawString(sub, subFont, subBrush, lx + 10f, ly + 29f);
-                }
             }
         }
 
@@ -1012,8 +1011,8 @@ namespace SlopGrenadeDesktop
 
             GraphicsState fs = g.Save();
             g.TranslateTransform(anim.CurrentX, anim.CurrentY);
-            float squish = 1f + (float)Math.Sin(anim.Elapsed * 8.0) * 0.06f;
-            g.ScaleTransform(squish * 1.55f, (2f - squish) * 1.55f);
+            float squish = anim.Phase == GrenadePhase.Accumulated ? 1f : (1f + (float)Math.Sin(anim.Elapsed * 8.0) * 0.06f);
+            g.ScaleTransform(squish * 0.56f, (2f - squish) * 0.56f);
 
             // Botanical fruit body with multi-stop shading
             using (GraphicsPath fp = new GraphicsPath())
@@ -1067,18 +1066,6 @@ namespace SlopGrenadeDesktop
             }
 
             g.Restore(fs);
-
-            // Botanical label badge
-            using (SolidBrush tagBg = new SolidBrush(Color.FromArgb(Math.Min(230, alpha), 15, 23, 42)))
-            using (Pen tagPen = new Pen(Color.FromArgb(alpha, primary), 1.5f))
-            using (Font f = new Font("Segoe UI", 8.5f, FontStyle.Bold))
-            using (SolidBrush tb = new SolidBrush(Color.FromArgb(alpha, 248, 250, 252)))
-            {
-                RectangleF tr = new RectangleF(anim.CurrentX - 68f, anim.CurrentY + 42f, 138f, 24f);
-                g.FillRectangle(tagBg, tr);
-                g.DrawRectangle(tagPen, tr.X, tr.Y, tr.Width, tr.Height);
-                g.DrawString(fruitName, f, tb, tr.X + 8f, tr.Y + 4f);
-            }
         }
 
         private static void GetFruitColors(int idx, out Color primary, out Color secondary, out Color accent)
@@ -1116,10 +1103,10 @@ namespace SlopGrenadeDesktop
             {
                 float x = anim.CurrentX;
                 float y = anim.CurrentY;
-                g.FillEllipse(cloudBrush, x - 44f, y - 10f, 36f, 36f);
-                g.FillEllipse(cloudBrush, x - 22f, y - 24f, 46f, 46f);
-                g.FillEllipse(cloudBrush, x + 8f, y - 18f, 38f, 38f);
-                g.FillEllipse(cloudBrush, x + 26f, y - 6f, 30f, 30f);
+                g.FillEllipse(cloudBrush, x - 18f, y - 5f, 16f, 16f);
+                g.FillEllipse(cloudBrush, x - 9f, y - 11f, 20f, 20f);
+                g.FillEllipse(cloudBrush, x + 3f, y - 8f, 17f, 17f);
+                g.FillEllipse(cloudBrush, x + 11f, y - 3f, 13f, 13f);
             }
         }
 
@@ -1228,12 +1215,12 @@ namespace SlopGrenadeDesktop
                 ForeColor = Color.FromArgb(248, 250, 252),
                 BackColor = BackColor,
                 Font = new Font("Segoe UI", 8.5f, FontStyle.Bold),
-                Text = side == MonitorSide.Left ? "Squeegee Left (0)" : "Squeegee Right (0)",
+                Text = side == MonitorSide.Left ? "Squeegee Left" : "Squeegee Right",
                 Cursor = Cursors.Hand
             };
             _btn.FlatAppearance.BorderColor = side == MonitorSide.Left
-                ? Color.FromArgb(248, 113, 113)
-                : Color.FromArgb(96, 165, 250);
+                ? Color.FromArgb(255, 66, 158)
+                : Color.FromArgb(0, 150, 255);
             _btn.FlatAppearance.BorderSize = 1;
             _btn.Click += (s, e) => _onClick();
             Controls.Add(_btn);
@@ -1258,12 +1245,7 @@ namespace SlopGrenadeDesktop
 
         public void UpdateCount(int count)
         {
-            if (InvokeRequired)
-            {
-                BeginInvoke(new Action<int>(UpdateCount), count);
-                return;
-            }
-            _btn.Text = (_side == MonitorSide.Left ? "Squeegee Left (" : "Squeegee Right (") + count + ")";
+            // Keep clean label without numeric count suffix
         }
     }
 
@@ -1332,8 +1314,8 @@ namespace SlopGrenadeDesktop
             _chkStartup.CheckedChanged += (s, e) => onStartupChanged(_chkStartup.Checked);
             _chkTeams = CreateCheck("Monitor Microsoft Teams", 14, 182, true);
             _chkOutlook = CreateCheck("Monitor Microsoft Outlook", 14, 206, true);
-            _chkSlop = CreateCheck("Slop animations (Grenade & Splat)", 14, 230, true);
-            _chkNonSlop = CreateCheck("Non-slop animations (Fruit, Cloud, Sparkle)", 14, 254, true);
+            _chkSlop = CreateCheck("Slop animations (slop-grenade & ai-cannon)", 14, 230, true);
+            _chkNonSlop = CreateCheck("Non-slop animations (sprinkled, polish, human)", 14, 254, true);
 
             Controls.Add(_chkStartup);
             Controls.Add(_chkTeams);
@@ -1427,27 +1409,48 @@ namespace SlopGrenadeDesktop
             DrawSingleGauge(g, 170, 14, "Sent (Out)", _sentAvg, _sentCount, Color.FromArgb(59, 89, 120));
         }
 
-        private static void DrawSingleGauge(Graphics g, int x, int y, string label, int avgScore, int count, Color arcColor)
+        private static Color WhiteToPurple(int scorePercent)
+        {
+            double t = Math.Max(0.0, Math.Min(100.0, scorePercent)) / 100.0;
+            int r = (int)Math.Round(255 + (147 - 255) * t);
+            int gr = (int)Math.Round(255 + (51 - 255) * t);
+            int b = (int)Math.Round(255 + (234 - 255) * t);
+            return Color.FromArgb(255, r, gr, b);
+        }
+
+        private static void DrawSingleGauge(Graphics g, int x, int y, string label, int avgScore, int count, Color unused)
         {
             Rectangle arcRect = new Rectangle(x + 12, y + 18, 96, 96);
+            Color levelColor = WhiteToPurple(avgScore);
             using (Pen trackPen = new Pen(Color.FromArgb(38, 42, 51), 11f))
-            using (Pen valPen = new Pen(arcColor, 11f))
+            using (Pen valPen = new Pen(levelColor, 11f))
+            using (Pen markerPen = new Pen(levelColor, 2.5f))
+            using (SolidBrush markerBrush = new SolidBrush(levelColor))
             using (Font lblFont = new Font("Segoe UI", 8.2f, FontStyle.Bold))
-            using (Font numFont = new Font("Segoe UI", 15f, FontStyle.Bold))
+            using (Font numFont = new Font("Segoe UI", 14f, FontStyle.Bold))
             using (Font subFont = new Font("Segoe UI", 7.8f, FontStyle.Regular))
-            using (SolidBrush txtBrush = new SolidBrush(Color.FromArgb(243, 244, 246)))
             using (SolidBrush mutedBrush = new SolidBrush(Color.FromArgb(141, 149, 165)))
             {
                 g.DrawString(label, lblFont, mutedBrush, x + 16, y - 2);
                 g.DrawArc(trackPen, arcRect, 180f, 180f);
-                float sweep = Math.Max(0f, Math.Min(180f, (avgScore / 100f) * 180f));
+                float clamped = Math.Max(0f, Math.Min(100f, avgScore));
+                float sweep = (clamped / 100f) * 180f;
                 if (sweep > 1f)
                 {
                     g.DrawArc(valPen, arcRect, 180f, sweep);
                 }
 
+                // 0-100% Marker on the gauge arc
+                double angleRad = Math.PI - (clamped / 100.0) * Math.PI;
+                float cx = x + 60f;
+                float cy = y + 66f;
+                float r = 48f;
+                float mx = cx + (float)(r * Math.Cos(angleRad));
+                float my = cy - (float)(r * Math.Sin(angleRad));
+                g.FillEllipse(markerBrush, mx - 5f, my - 5f, 10f, 10f);
+
                 StringFormat sf = new StringFormat { Alignment = StringAlignment.Center };
-                g.DrawString(avgScore.ToString(), numFont, txtBrush, x + 60, y + 36, sf);
+                g.DrawString(avgScore + "%", numFont, markerBrush, x + 60, y + 36, sf);
                 g.DrawString(count + " msgs today", subFont, mutedBrush, x + 60, y + 66, sf);
             }
         }

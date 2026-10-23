@@ -13,6 +13,9 @@ import {
   computeInOutGauges,
   computeTopFiveLists,
   filterReports,
+  gaugeWhiteToPurpleColor,
+  rankGridReports,
+  tierDisplayName,
   type DashboardFilterState
 } from './dashboard';
 import type { SlopReport } from './types';
@@ -49,8 +52,8 @@ describe('Slop Grenade & 5-Tier Monitor Physics Engine', () => {
     expect(outgoing.persistentSlop).toBe(true);
 
     expect(incoming.phase).toBe('flight');
-    expect(incoming.blobs.length).toBeGreaterThanOrEqual(16);
-    expect(incoming.drips.length).toBeGreaterThanOrEqual(10);
+    expect(incoming.blobs.length).toBeGreaterThanOrEqual(8);
+    expect(incoming.drips.length).toBeGreaterThanOrEqual(5);
 
     // Step midway through flight (0.3s)
     stepAnimation(incoming, 0.25);
@@ -62,7 +65,7 @@ describe('Slop Grenade & 5-Tier Monitor Physics Engine', () => {
     stepAnimation(incoming, 0.25);
     stepAnimation(incoming, 0.2);
     expect(incoming.phase).toBe('impact');
-    expect(incoming.currentX).toBe(28);
+    expect(incoming.currentX).toBe(14);
     expect(incoming.shakeIntensity).toBeGreaterThan(0);
 
     // Step into dripping goop and then permanent accumulated buildup
@@ -72,7 +75,7 @@ describe('Slop Grenade & 5-Tier Monitor Physics Engine', () => {
       stepAnimation(incoming, 0.25);
     }
     expect(incoming.phase).toBe('accumulated');
-    expect(incoming.slideDistance).toBeGreaterThan(60);
+    expect(incoming.slideDistance).toBeGreaterThan(25);
     expect(incoming.currentY).toBeGreaterThan(initialY);
     expect(incoming.drips[0].currentY).toBeGreaterThan(initialDripY);
   });
@@ -133,7 +136,7 @@ describe('Slop Grenade & 5-Tier Monitor Physics Engine', () => {
     }
   });
 
-  it('creates subtle low-opacity rising sparkle plumes for authentic human messages', () => {
+  it('creates subtle rising sparkle plumes for authentic human messages', () => {
     const anim = createAnimationInstance({
       id: 2,
       tier: 'human_sparkle',
@@ -145,9 +148,9 @@ describe('Slop Grenade & 5-Tier Monitor Physics Engine', () => {
       viewportHeight: 1080
     });
 
-    expect(anim.sparkles.length).toBe(16);
+    expect(anim.sparkles.length).toBe(10);
     for (const sp of anim.sparkles) {
-      expect(sp.alpha).toBeLessThanOrEqual(0.42);
+      expect(sp.alpha).toBeLessThanOrEqual(0.65);
     }
 
     const startSparkleY = anim.sparkles[0].y;
@@ -155,7 +158,7 @@ describe('Slop Grenade & 5-Tier Monitor Physics Engine', () => {
     expect(anim.sparkles[0].y).toBeLessThan(startSparkleY);
   });
 
-  it('completes transient animations (peaceful_cloud, innocent_fruit, human_sparkle) while keeping slop persistent', () => {
+  it('sticks sprinkled (fruit), polish (cloud), and human (sparkles) to the monitor edge until squeegeed', () => {
     for (const tier of ['peaceful_cloud', 'innocent_fruit', 'human_sparkle'] as const) {
       const anim = createAnimationInstance({
         id: 3,
@@ -168,13 +171,20 @@ describe('Slop Grenade & 5-Tier Monitor Physics Engine', () => {
         viewportHeight: 900
       });
 
-      let safety = 0;
-      while (anim.phase !== 'done' && safety < 60) {
+      expect(anim.persistentSlop).toBe(true);
+      for (let i = 0; i < 20; i++) {
         stepAnimation(anim, 0.2);
-        safety++;
       }
-      expect(anim.phase).toBe('done');
+      expect(anim.phase).toBe('accumulated');
     }
+
+    expect(tierDisplayName('slop_grenade')).toBe('slop-grenade');
+    expect(tierDisplayName('slop_splat')).toBe('ai-cannon');
+    expect(tierDisplayName('innocent_fruit')).toBe('sprinkled');
+    expect(tierDisplayName('peaceful_cloud')).toBe('polish');
+    expect(tierDisplayName('human_sparkle')).toBe('human');
+    expect(gaugeWhiteToPurpleColor(0)).toBe('rgb(255, 255, 255)');
+    expect(gaugeWhiteToPurpleColor(100)).toBe('rgb(147, 51, 234)');
   });
 
   it('filters reports by time span, Teams/Outlook source, and computes Daily Gauges + Top 5 Sloppers & P-Doomers', () => {

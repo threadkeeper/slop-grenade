@@ -21,6 +21,12 @@ export interface BarBucket {
   sentScore: number;
   receivedCount: number;
   sentCount: number;
+  slopGrenadeCount: number;
+  aiCannonCount: number;
+  sprinkledCount: number;
+  polishCount: number;
+  humanCount: number;
+  totalCount: number;
 }
 
 /**
@@ -104,8 +110,8 @@ export function computeInOutGauges(reports: SlopReport[]): {
 }
 
 /**
- * Group filtered reports into chronological bar-chart buckets comparing
- * Received (In) vs. Sent (Out) slop.
+ * Group filtered reports into per-day stacked bar-chart buckets with counts for each
+ * of the 5 types (`slop-grenade`, `ai-cannon`, `sprinkled`, `polish`, `human`).
  */
 export function computeBarChartBuckets(
   reports: SlopReport[],
@@ -113,7 +119,17 @@ export function computeBarChartBuckets(
 ): BarBucket[] {
   const bucketMap = new Map<
     string,
-    { recSum: number; recCount: number; sentSum: number; sentCount: number }
+    {
+      recSum: number;
+      recCount: number;
+      sentSum: number;
+      sentCount: number;
+      slopGrenadeCount: number;
+      aiCannonCount: number;
+      sprinkledCount: number;
+      polishCount: number;
+      humanCount: number;
+    }
   >();
 
   const ordered = [...reports].reverse();
@@ -123,7 +139,17 @@ export function computeBarChartBuckets(
         ? `${r.timestamp.slice(11, 13) || '12'}:00`
         : r.timestamp.slice(5, 10) || '10-23';
 
-    const cur = bucketMap.get(key) ?? { recSum: 0, recCount: 0, sentSum: 0, sentCount: 0 };
+    const cur = bucketMap.get(key) ?? {
+      recSum: 0,
+      recCount: 0,
+      sentSum: 0,
+      sentCount: 0,
+      slopGrenadeCount: 0,
+      aiCannonCount: 0,
+      sprinkledCount: 0,
+      polishCount: 0,
+      humanCount: 0
+    };
     if (r.direction === 'received') {
       cur.recSum += r.slopScore;
       cur.recCount++;
@@ -131,17 +157,35 @@ export function computeBarChartBuckets(
       cur.sentSum += r.slopScore;
       cur.sentCount++;
     }
+
+    if (r.tier === 'slop_grenade') cur.slopGrenadeCount++;
+    else if (r.tier === 'slop_splat') cur.aiCannonCount++;
+    else if (r.tier === 'innocent_fruit') cur.sprinkledCount++;
+    else if (r.tier === 'peaceful_cloud') cur.polishCount++;
+    else cur.humanCount++;
+
     bucketMap.set(key, cur);
   }
 
   return Array.from(bucketMap.entries())
-    .slice(-10)
+    .slice(-12)
     .map(([label, v]) => ({
       label,
       receivedScore: v.recCount > 0 ? Math.round(v.recSum / v.recCount) : 0,
       sentScore: v.sentCount > 0 ? Math.round(v.sentSum / v.sentCount) : 0,
       receivedCount: v.recCount,
-      sentCount: v.sentCount
+      sentCount: v.sentCount,
+      slopGrenadeCount: v.slopGrenadeCount,
+      aiCannonCount: v.aiCannonCount,
+      sprinkledCount: v.sprinkledCount,
+      polishCount: v.polishCount,
+      humanCount: v.humanCount,
+      totalCount:
+        v.slopGrenadeCount +
+        v.aiCannonCount +
+        v.sprinkledCount +
+        v.polishCount +
+        v.humanCount
     }));
 }
 
@@ -197,4 +241,64 @@ export function computeTopFiveLists(reports: SlopReport[]): {
     .slice(0, 5);
 
   return { topSloppers, topPDoomers };
+}
+
+/**
+ * Canonical display label for each tier:
+ * `slop-grenade`, `ai-cannon`, `sprinkled`, `polish`, `human`.
+ */
+export function tierDisplayName(tier: AnimationTier): string {
+  switch (tier) {
+    case 'slop_grenade':
+      return 'slop-grenade';
+    case 'slop_splat':
+      return 'ai-cannon';
+    case 'innocent_fruit':
+      return 'sprinkled';
+    case 'peaceful_cloud':
+      return 'polish';
+    case 'human_sparkle':
+      return 'human';
+  }
+}
+
+/**
+ * Interpolate gauge color from White (#ffffff at 0%) to Fully Purple (#9333ea at 100%).
+ */
+export function gaugeWhiteToPurpleColor(scorePercent: number): string {
+  const t = Math.max(0, Math.min(100, scorePercent)) / 100;
+  // White (255, 255, 255) -> Deep Purple (147, 51, 234)
+  const r = Math.round(255 + (147 - 255) * t);
+  const g = Math.round(255 + (51 - 255) * t);
+  const b = Math.round(255 + (234 - 255) * t);
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
+/**
+ * Compute the chart bucket key for a single report so clicking a bar filters the bottom grid.
+ */
+export function bucketKeyForReport(r: SlopReport, timeSpan: TimeSpanFilter): string {
+  return timeSpan === 'today'
+    ? `${r.timestamp.slice(11, 13) || '12'}:00`
+    : r.timestamp.slice(5, 10) || '10-23';
+}
+
+/**
+ * Filter by optional chart selection (bucket / person) and sort descending by slopScore
+ * for the Power BI-style drill-down grid at the bottom of the dashboard.
+ */
+export function rankGridReports(
+  reports: SlopReport[],
+  selectedBucket: string | null,
+  selectedPerson: string | null,
+  timeSpan: TimeSpanFilter
+): SlopReport[] {
+  return reports
+    .filter((r) => {
+      if (selectedBucket && bucketKeyForReport(r, timeSpan) !== selectedBucket) return false;
+      if (selectedPerson && r.sender.trim() !== selectedPerson) return false;
+      return true;
+    })
+    .slice()
+    .sort((a, b) => b.slopScore - a.slopScore);
 }

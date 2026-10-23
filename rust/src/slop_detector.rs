@@ -41,14 +41,14 @@ impl AnimationTier {
         }
     }
 
-    /// Human-readable title displayed in the UI and overlay badge.
+    /// Canonical display name for the tier (`human`, `polish`, `sprinkled`, `ai-cannon`, `slop-grenade`).
     pub fn display_name(self) -> &'static str {
         match self {
-            Self::HumanSparkle => "Human Sparkle Plume",
-            Self::PeacefulCloud => "Peaceful Cloud",
-            Self::InnocentFruit => "Innocent Fruit",
-            Self::SlopSplat => "Slop Splat",
-            Self::SlopGrenade => "SLOP GRENADE",
+            Self::HumanSparkle => "human",
+            Self::PeacefulCloud => "polish",
+            Self::InnocentFruit => "sprinkled",
+            Self::SlopSplat => "ai-cannon",
+            Self::SlopGrenade => "slop-grenade",
         }
     }
 

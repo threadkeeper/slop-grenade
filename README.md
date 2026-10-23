@@ -21,14 +21,14 @@ Good workplace communication is short, human, and considerate of other people's 
 
 Slop Grenade overlays your main Windows desktop monitor without interrupting your work (you can click and type right through the animations in any app):
 
-- **Real Human Writing (0–19)**: Barely visible, delicate plumes of warm sparkles drift gently upward near the edge of your screen.
-- **Calm, Lightly Polished Note (20–39)**: A small, peaceful cloud drifts across the top corner of your monitor.
-- **Mild AI Assistance (40–59)**: One of **20 realistic, hand-illustrated fruits** (such as a Honeycrisp Apple, Bartlett Pear, Ruby Strawberry, Emerald Kiwi, or Alphonso Mango) bounces playfully along the edge.
-- **Heavy Corporate Slop (60–79)**: A lump of thick sludge splats onto the edge of your screen.
-- **Full Slop Grenade (80–100)**: A **dull metallic blue hand grenade** arcs across your desktop, impacts the side of your monitor, and drips thick poop-like slop down the bezel:
-  - **Slop You Receive (Left Side of Monitor)**: Drips and builds up in **Brown-Red**.
-  - **Slop You Send (Right Side of Monitor)**: Drips and builds up in **Brown-Blue**.
-  - **Daily Buildup & Squeegee**: Slop stays caked on the sides of your monitor as the day progresses until you click the **Squeegee** button on that side of your screen to wipe the glass clean.
+- **`human` (0–19)**: Barely visible, delicate plumes of warm sparkles drift gently and stick to the edge of your screen.
+- **`polish` (20–39)**: A small, calm cloud drifts to the edge of your monitor and stays perched on the bezel.
+- **`sprinkled` (40–59)**: One of **20 realistic, hand-illustrated fruits** (such as a Honeycrisp Apple, Bartlett Pear, Ruby Strawberry, Emerald Kiwi, or Alphonso Mango) bounces in and sticks to the edge buildup.
+- **`ai-cannon` (60–79)**: A compact lump of glossy vinyl slop splats onto the edge of your screen.
+- **`slop-grenade` (80–100)**: A **dull metallic blue hand grenade** arcs across your desktop, impacts the side of your monitor, and drips glossy vinyl slop down the bezel:
+  - **Slop You Receive (Left Side of Monitor)**: Drips and builds up in **Plastic Pink**.
+  - **Slop You Send (Right Side of Monitor)**: Drips and builds up in **Plastic Blue**.
+  - **Daily Buildup & Squeegee**: Every item (`slop-grenade`, `ai-cannon`, `sprinkled`, `polish`, and `human`) stays stuck along the sides of your monitor as the day progresses—sized compactly so even 500 emails and 500 Teams messages fit along the bezel—until you click **Squeegee Left** or **Squeegee Right** to wipe that side clean.
 
 ---
 
@@ -95,9 +95,11 @@ Look for the **Slop Grenade** icon in your Windows System Tray (bottom-right tas
 
 ### 2. The Habit Dashboard (`http://127.0.0.1:8090/`)
 Clicking **Open Dashboard** in the tray opens a clean, distraction-free habit tracker in your browser featuring:
-- **Daily In / Out Slop Gauges** and an **In vs. Out Slop Bar Chart** over time.
-- **Filters** for time span (`Today`, `7d`, `30d`, `All`), source (`Teams` vs. `Outlook`), and message type (`Slop` vs. `Non-Slop`).
-- **Top 5 Sloppers** (the biggest senders of AI slop) and **Top 5 P-Doomers** (the colleagues who refuse to touch AI and type 100% human messages).
+- **Daily In / Out Slop Gauges** with a **0–100% Marker** that transitions from **White (0%) to Fully Purple (100%)**.
+- **Per-Day Stacked Bar Chart** broken down by type (`slop-grenade` in bright blue, `ai-cannon` in brown, `sprinkled` in bright yellow, `polish` in bright green, and `human` in white).
+- **Filters** for time span (`Today`, `7d`, `30d`, `All`), source (`Teams` vs. `Outlook`), and message type (`All`, `slop-grenade`, `ai-cannon`, `sprinkled`, `polish`, `human`).
+- **Top 5 Sloppers** and **Top 5 P-Doomers** (the colleagues who refuse to touch AI).
+- **Interactive Drill-Down Grid** at the bottom ranked by highest slop score, showing the score, type, source, core metrics, sender, recipient, subject, and a short preview of each message.
 
 ---
 
