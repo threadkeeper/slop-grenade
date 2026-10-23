@@ -1,6 +1,16 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { createAnimationInstance, stepAnimation, type ActiveAnimation } from '$lib/physics';
+  import {
+    FRUIT_LABELS,
+    FRUIT_VARIETIES,
+    createAnimationInstance,
+    createSqueegeeWipe,
+    stepAnimation,
+    stepSqueegeeWipe,
+    type ActiveAnimation,
+    type FruitKind,
+    type SqueegeeWipe
+  } from '$lib/physics';
   import { renderAnimations } from '$lib/renderer';
   import type {
     AnimationEvent,
@@ -9,6 +19,7 @@
     CombinedAuthStatus,
     M365App,
     MessageDirection,
+    MonitorSide,
     SlopReport
   } from '$lib/types';
 
@@ -18,8 +29,19 @@
   let viewportHeight = $state(900);
 
   let activeAnimations = $state<ActiveAnimation[]>([]);
+  let squeegeeWipes = $state<SqueegeeWipe[]>([]);
+  let selectedFruit = $state<FruitKind>('ruby_strawberry');
   let lastSeenSequence = $state(0);
   let sseConnected = $state(false);
+
+  const leftSlopCount = $derived(
+    activeAnimations.filter((a) => a.side === 'left' && a.persistentSlop && a.phase !== 'done')
+      .length
+  );
+  const rightSlopCount = $derived(
+    activeAnimations.filter((a) => a.side === 'right' && a.persistentSlop && a.phase !== 'done')
+      .length
+  );
 
   let authStatus = $state<CombinedAuthStatus | null>(null);
   let scorecard = $state<AwarenessScorecard | null>(null);
@@ -50,20 +72,79 @@
 
   let localAnimCounter = 1;
 
-  function launchMonitorAnimation(report: SlopReport) {
+  function launchMonitorAnimation(report: SlopReport, fruitKindOverride?: FruitKind) {
     const id = localAnimCounter++;
     const instance = createAnimationInstance({
       id,
       tier: report.tier,
       side: report.monitorSide,
+      direction: report.direction,
       score: report.slopScore,
       sender: report.sender,
       subject: report.subjectOrTopic,
       viewportWidth,
-      viewportHeight
+      viewportHeight,
+      fruitKindOverride
     });
     activeAnimations = [...activeAnimations.filter((a) => a.phase !== 'done'), instance];
     latestReport = report;
+  }
+
+  function triggerSqueegee(side: MonitorSide) {
+    const wipe = createSqueegeeWipe(side, viewportHeight);
+    squeegeeWipes = [...squeegeeWipes.filter((w) => !w.done), wipe];
+  }
+
+  function launchSpecificFruit(kind?: FruitKind) {
+    const id = localAnimCounter++;
+    const side: MonitorSide = id % 2 === 0 ? 'right' : 'left';
+    const instance = createAnimationInstance({
+      id,
+      tier: 'innocent_fruit',
+      side,
+      direction: side === 'right' ? 'sent' : 'received',
+      score: 48,
+      sender: kind ? FRUIT_LABELS[kind] : 'Random Orchard Fruit',
+      subject: 'Mild AI Polish (40–59)',
+      viewportWidth,
+      viewportHeight,
+      fruitKindOverride: kind
+    });
+    activeAnimations = [...activeAnimations.filter((a) => a.phase !== 'done'), instance];
+  }
+
+  function burstRandomFruits(count = 5) {
+    const shuffled = [...FRUIT_VARIETIES].sort(() => Math.random() - 0.5).slice(0, count);
+    const created: ActiveAnimation[] = [];
+    shuffled.forEach((fruit, idx) => {
+      const id = localAnimCounter++;
+      const side: MonitorSide = idx % 2 === 0 ? 'left' : 'right';
+      const inst = createAnimationInstance({
+        id,
+        tier: 'innocent_fruit',
+        side,
+        direction: side === 'right' ? 'sent' : 'received',
+        score: 44 + idx * 3,
+        sender: FRUIT_LABELS[fruit],
+        subject: 'Mild AI Polish (40–59)',
+        viewportWidth,
+        viewportHeight,
+        fruitKindOverride: fruit
+      });
+      // Spread multiple fruits cleanly along the vertical height so all 5 are visible at once!
+      inst.impactY = Math.round(viewportHeight * (0.18 + idx * 0.14));
+      inst.currentY = inst.impactY;
+      created.push(inst);
+    });
+    activeAnimations = [...activeAnimations.filter((a) => a.phase !== 'done'), ...created];
+  }
+
+  function runFullAnimationShowcase() {
+    void triggerPreset('slop_grenade');
+    setTimeout(() => void triggerPreset('my_outgoing_grenade'), 550);
+    setTimeout(() => burstRandomFruits(4), 1150);
+    setTimeout(() => void triggerPreset('peaceful_cloud'), 1800);
+    setTimeout(() => void triggerPreset('human_sparkle'), 2200);
   }
 
   async function refreshDashboardState() {
@@ -307,10 +388,24 @@
         }
       }
 
+      if (squeegeeWipes.length > 0) {
+        let currentAnims = activeAnimations;
+        const nextWipes: SqueegeeWipe[] = [];
+        for (const w of squeegeeWipes) {
+          const res = stepSqueegeeWipe(w, currentAnims, dt);
+          currentAnims = res.remaining;
+          if (!res.wipe.done) {
+            nextWipes.push(res.wipe);
+          }
+        }
+        activeAnimations = currentAnims;
+        squeegeeWipes = nextWipes;
+      }
+
       if (canvasEl) {
         const ctx = canvasEl.getContext('2d');
         if (ctx) {
-          renderAnimations(ctx, viewportWidth, viewportHeight, activeAnimations);
+          renderAnimations(ctx, viewportWidth, viewportHeight, activeAnimations, squeegeeWipes);
         }
       }
 
@@ -335,6 +430,29 @@
   aria-label="Slop Grenade Monitor Edge Physics Overlay"
 ></canvas>
 
+<!-- Floating Left & Right Monitor Edge Squeegee Buttons -->
+<div class="squeegee-dock left" title="Squeegee clean incoming Brown-Red slop on Left monitor bezel">
+  <button class="squeegee-btn incoming-slop" onclick={() => triggerSqueegee('left')}>
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2">
+      <rect x="2" y="4" width="20" height="4" rx="1.5" fill="#38bdf8" stroke="#bae6fd" />
+      <path d="M6 8h12l-3 4H9L6 8z" fill="#64748b" />
+      <rect x="10.5" y="12" width="3" height="9" rx="1" fill="#cbd5e1" />
+    </svg>
+    <span>Squeegee Left ({leftSlopCount})</span>
+  </button>
+</div>
+
+<div class="squeegee-dock right" title="Squeegee clean your outgoing Brown-Blue slop on Right monitor bezel">
+  <button class="squeegee-btn outgoing-slop" onclick={() => triggerSqueegee('right')}>
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2">
+      <rect x="2" y="4" width="20" height="4" rx="1.5" fill="#38bdf8" stroke="#bae6fd" />
+      <path d="M6 8h12l-3 4H9L6 8z" fill="#64748b" />
+      <rect x="10.5" y="12" width="3" height="9" rx="1" fill="#cbd5e1" />
+    </svg>
+    <span>Squeegee Right ({rightSlopCount})</span>
+  </button>
+</div>
+
 {#if overlayOnly}
   <!-- Transparent Monitor Overlay HUD Mode (?mode=overlay) -->
   <div class="hud-pill">
@@ -350,15 +468,28 @@
       <button onclick={() => triggerPreset('peaceful_cloud')} title="Trigger Peaceful Cloud">
         ☁️ Cloud
       </button>
-      <button onclick={() => triggerPreset('innocent_fruit')} title="Trigger Innocent Fruit">
-        🍑 Fruit
+      <button onclick={() => launchSpecificFruit()} title="Trigger Random Realistic Fruit (20 kinds)">
+        🍓 Fruit
       </button>
       <button
         class="grenade-btn"
         onclick={() => triggerPreset('slop_grenade')}
-        title="Throw Incoming Slop Grenade!"
+        title="Throw Incoming Slop Grenade (Brown-Red Slop)!"
       >
-        💣 Splat Grenade!
+        💣 Incoming Grenade
+      </button>
+      <button
+        class="self-grenade-btn"
+        onclick={() => triggerPreset('my_outgoing_grenade')}
+        title="Throw Outgoing Slop Grenade (Brown-Blue Slop)!"
+      >
+        🪞 My Grenade
+      </button>
+      <button onclick={() => triggerSqueegee('left')} title="Squeegee Left Bezel">
+        🪥 Wipe L ({leftSlopCount})
+      </button>
+      <button onclick={() => triggerSqueegee('right')} title="Squeegee Right Bezel">
+        🪥 Wipe R ({rightSlopCount})
       </button>
       <button
         onclick={() => {
@@ -399,6 +530,9 @@
             ? `Ready (${authStatus.githubLuna.githubLogin ?? authStatus.githubLuna.tokenSource})`
             : 'Offline Heuristic'}
         </span>
+        <button class="showcase-btn" onclick={runFullAnimationShowcase}>
+          🎬 Showcase All Animations
+        </button>
         <button class="scan-btn" onclick={scanM365WorkIqNow} disabled={isScanningM365}>
           {isScanningM365 ? 'Scanning M365…' : '🔄 Scan M365 Now'}
         </button>
@@ -421,10 +555,10 @@
     <!-- 5-Tier Instant Monitor Animation Launcher -->
     <section class="launcher-strip" aria-label="5-Tier Monitor Animation Launcher">
       <div class="strip-header">
-        <h2>🎯 Test Monitor Edge Animations (Watch the Left &amp; Right Edges of Your Screen!)</h2>
+        <h2>🎯 Test Monitor Edge Animations (Builds Up on Each Side Until Squeegeed!)</h2>
         <span class="strip-hint">
-          Incoming messages hit the <strong>Left Bezel</strong>; your own outgoing messages hit the
-          <strong>Right Bezel</strong>.
+          Incoming slop is <strong>Brown-Red (Left Bezel)</strong> • Slop you throw is
+          <strong>Brown-Blue (Right Bezel)</strong> • Grenades are <strong>Dull Metallic Blue</strong>.
         </span>
       </div>
       <div class="tier-buttons">
@@ -440,32 +574,66 @@
           <small>Serene drifting cloud for light prose polish</small>
         </button>
 
-        <button class="tier-card fruit" onclick={() => triggerPreset('innocent_fruit')}>
-          <span class="t-score">40–59 • Mild AI</span>
-          <strong>🍑 Innocent Fruit</strong>
-          <small>Playful bouncing peach/lemon with juice drops</small>
+        <button class="tier-card fruit" onclick={() => launchSpecificFruit()}>
+          <span class="t-score">40–59 • 20 Varieties</span>
+          <strong>🍓 Random Realistic Fruit</strong>
+          <small>Randomly launches 1 of 20 artistic botanical fruits</small>
         </button>
 
         <button class="tier-card splat" onclick={() => triggerPreset('slop_splat')}>
           <span class="t-score">60–79 • Heavy Slop</span>
-          <strong>🟢 Wobbly Slop Splat</strong>
-          <small>Gelatinous buzzword warning blob on bezel</small>
+          <strong>💩 Dripping Poop-Slop Splat</strong>
+          <small>Thick lumpy sludge caked onto the monitor edge</small>
         </button>
 
         <button class="tier-card grenade" onclick={() => triggerPreset('slop_grenade')}>
-          <span class="t-score">80–100 • Incoming</span>
-          <strong>💣 Throw Slop Grenade!</strong>
-          <small>Hand grenade splats &amp; slides down as squishy goop!</small>
+          <span class="t-score">80–100 • Incoming (Left)</span>
+          <strong>💣 Received Slop Grenade!</strong>
+          <small>Dull metallic blue grenade → Brown-Red poop slop!</small>
         </button>
 
         <button
           class="tier-card self-grenade"
           onclick={() => triggerPreset('my_outgoing_grenade')}
         >
-          <span class="t-score">80–100 • Outgoing</span>
-          <strong>🪞 My Own Slop Grenade</strong>
-          <small>Test what happens when YOU send unedited AI slop</small>
+          <span class="t-score">80–100 • Outgoing (Right)</span>
+          <strong>🪞 My Thrown Slop Grenade!</strong>
+          <small>Dull metallic blue grenade → Brown-Blue poop slop!</small>
         </button>
+      </div>
+
+      <!-- 20-Fruit Botanical Studio & Squeegee Control Bar -->
+      <div class="fruit-squeegee-bar">
+        <div class="fruit-picker-group">
+          <span class="bar-label">🍍 20 Artistic Fruit Varieties:</span>
+          <select bind:value={selectedFruit} aria-label="Select one of 20 fruit varieties">
+            {#each FRUIT_VARIETIES as kind}
+              <option value={kind}>{FRUIT_LABELS[kind]}</option>
+            {/each}
+          </select>
+          <button class="mini-action-btn" onclick={() => launchSpecificFruit(selectedFruit)}>
+            Launch {FRUIT_LABELS[selectedFruit]}
+          </button>
+          <button class="mini-action-btn highlight" onclick={() => burstRandomFruits(5)}>
+            🧺 Burst 5 Random Fruits!
+          </button>
+        </div>
+
+        <div class="squeegee-group">
+          <span class="bar-label">🪥 Monitor Bezel Squeegee:</span>
+          <button
+            class="mini-squeegee-btn left-tone"
+            onclick={() => triggerSqueegee('left')}
+          >
+            🪥 Squeegee Left Brown-Red ({leftSlopCount})
+          </button>
+          <button
+            class="mini-squeegee-btn right-tone"
+            onclick={() => triggerSqueegee('right')}
+          >
+            🪥 Squeegee Right Brown-Blue ({rightSlopCount})
+          </button>
+        </div>
       </div>
     </section>
 
@@ -761,6 +929,115 @@
     height: 100vh;
     pointer-events: none;
     z-index: 9999;
+  }
+
+  .squeegee-dock {
+    position: fixed;
+    top: 14px;
+    z-index: 10001;
+  }
+
+  .squeegee-dock.left {
+    left: 14px;
+  }
+
+  .squeegee-dock.right {
+    right: 14px;
+  }
+
+  .squeegee-btn {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 7px 13px;
+    border-radius: 99px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: #f8fafc;
+    cursor: pointer;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(8px);
+    transition: transform 0.12s ease;
+  }
+
+  .squeegee-btn:hover {
+    transform: scale(1.04);
+  }
+
+  .squeegee-btn.incoming-slop {
+    background: linear-gradient(135deg, rgba(88, 32, 20, 0.92), rgba(30, 41, 59, 0.94));
+    border: 1px solid #f87171;
+  }
+
+  .squeegee-btn.outgoing-slop {
+    background: linear-gradient(135deg, rgba(42, 62, 84, 0.92), rgba(58, 48, 38, 0.94));
+    border: 1px solid #60a5fa;
+  }
+
+  .showcase-btn {
+    background: linear-gradient(135deg, #2b3d4f, #1e293b);
+    color: #e0f2fe;
+    border: 1px solid #60a5fa;
+    padding: 7px 13px;
+    border-radius: 10px;
+    font-size: 0.82rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .fruit-squeegee-bar {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid #1e293b;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .fruit-picker-group,
+  .squeegee-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .bar-label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #cbd5e1;
+  }
+
+  .mini-action-btn,
+  .mini-squeegee-btn {
+    background: #1e293b;
+    color: #f8fafc;
+    border: 1px solid #475569;
+    border-radius: 8px;
+    padding: 6px 11px;
+    font-size: 0.78rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .mini-action-btn.highlight {
+    background: rgba(244, 63, 94, 0.18);
+    border-color: #fb7185;
+    color: #ffe4e6;
+  }
+
+  .mini-squeegee-btn.left-tone {
+    background: rgba(88, 32, 20, 0.65);
+    border-color: #f87171;
+    color: #fecaca;
+  }
+
+  .mini-squeegee-btn.right-tone {
+    background: rgba(42, 62, 84, 0.65);
+    border-color: #60a5fa;
+    color: #bfdbfe;
   }
 
   .hud-pill {
