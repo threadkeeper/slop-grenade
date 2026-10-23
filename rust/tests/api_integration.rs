@@ -52,7 +52,7 @@ async fn spawn_test_server() -> String {
 }
 
 #[tokio::test]
-async fn health_and_auth_endpoints_confirm_zero_service_tree_requirement() {
+async fn health_and_auth_endpoints_confirm_standalone_user_auth() {
     let base = spawn_test_server().await;
     let client = reqwest::Client::new();
 
