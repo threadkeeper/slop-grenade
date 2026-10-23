@@ -149,6 +149,8 @@ pub struct ScanNowRequest {
     /// Whether to enrich newly discovered M365 messages with GPT Luna (`gpt-5.6-luna`).
     #[serde(default)]
     pub use_luna: bool,
+    /// Set to `7` for a complete, quiet seven-day backfill; omitted for the normal recent poll.
+    pub lookback_days: Option<u8>,
 }
 
 /// Request payload for `POST /api/v1/squeegee`.
@@ -340,9 +342,32 @@ async fn handle_scan_now(
     State(state): State<AppState>,
     payload: Option<Json<ScanNowRequest>>,
 ) -> Response {
-    let use_luna = payload.map(|p| p.use_luna).unwrap_or(false);
-    match state.daemon.poll_workiq_once(use_luna).await {
-        Ok(batch) => (StatusCode::OK, Json(json!({ "ok": true, "batch": batch }))).into_response(),
+    let request = payload.map(|payload| payload.0).unwrap_or_default();
+    if request.lookback_days.is_some_and(|days| days != 7) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "ok": false, "error": "lookbackDays must be 7 when provided." })),
+        )
+            .into_response();
+    }
+    if request.lookback_days.is_some() && request.use_luna {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "ok": false, "error": "History refresh uses local scoring only." })),
+        )
+            .into_response();
+    }
+    let batch = if request.lookback_days == Some(7) {
+        state.daemon.refresh_last_seven_days().await
+    } else {
+        state.daemon.poll_workiq_once(request.use_luna).await
+    };
+    match batch {
+        Ok(batch) => (
+            StatusCode::OK,
+            Json(json!({ "ok": true, "lookbackDays": request.lookback_days, "batch": batch })),
+        )
+            .into_response(),
         Err(err) => (
             StatusCode::OK,
             Json(json!({

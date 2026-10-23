@@ -5,12 +5,15 @@
 //! Outlook emails using WorkIQ's built-in first-party authentication broker—
 //! without registering an Entra application in admin app.
 
+use std::collections::{HashSet, VecDeque};
 use std::env;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::RwLock;
 use std::time::Duration;
 
+use chrono::{DateTime, Duration as ChronoDuration, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -154,23 +157,64 @@ impl WorkIqClient {
 
         let mut samples = parse_workiq_fetch_bundle(&payload, self.account().as_deref());
 
-        // If chats were returned, also fetch the latest messages from the top 5 active chats
-        let chat_ids = extract_chat_ids(&payload);
-        if !chat_ids.is_empty() {
-            let chat_urls: Vec<String> = chat_ids
-                .into_iter()
-                .take(5)
-                .map(|id| format!("/me/chats/{id}/messages?$top=10"))
-                .collect();
-            let chat_payload = self.call_mcp_fetch(bin, &chat_urls).await?;
-            let my_email = extract_me_email(&payload).or_else(|| self.account());
-            samples.extend(parse_teams_chat_messages(
-                &chat_payload,
-                my_email.as_deref(),
-            ));
+        let me = extract_me_user_id(&payload)
+            .or_else(|| extract_me_email(&payload))
+            .or_else(|| self.account());
+        for id in extract_chat_ids(&payload).into_iter().take(5) {
+            let path = chat_messages_path(&id);
+            let chat_payload = self
+                .call_mcp_fetch(bin, &[format!("{path}?$top=10")])
+                .await?;
+            samples.extend(parse_chat_messages(&chat_payload, me.as_deref(), Some(&id)));
         }
 
         Ok(samples)
+    }
+
+    /// Fetch every page of non-draft mail and Teams chats in the last seven days.
+    ///
+    /// The window is fixed at request start. Historical edits and future-dated messages
+    /// are excluded using each message's creation/receive timestamp.
+    pub async fn poll_last_seven_days(&self) -> Result<Vec<MessageSample>, String> {
+        let Some(ref bin) = self.binary_path else {
+            return Err("WorkIQ binary not configured".to_string());
+        };
+        let until = Utc::now();
+        let since = until - ChronoDuration::days(7);
+        let cutoff = since.to_rfc3339_opts(SecondsFormat::Millis, true);
+        let identity = self
+            .call_mcp_fetch(
+                bin,
+                &["/me?$select=id,displayName,mail,userPrincipalName".to_string()],
+            )
+            .await?;
+        let me_email = extract_me_email(&identity).or_else(|| self.account());
+        let me = extract_me_user_id(&identity).or_else(|| me_email.clone());
+
+        let mail = self
+            .fetch_history_pages(bin, history_mail_query(&cutoff))
+            .await?;
+        let mut samples = parse_workiq_fetch_bundle(&mail, me_email.as_deref());
+        let chats = self
+            .fetch_history_pages(
+                bin,
+                "/me/chats?$select=id,topic,chatType&$top=50".to_string(),
+            )
+            .await?;
+        for id in extract_chat_ids(&chats) {
+            let messages = self
+                .fetch_history_pages(bin, history_chat_query(&id, &cutoff))
+                .await?;
+            samples.extend(parse_chat_messages(&messages, me.as_deref(), Some(&id)));
+        }
+        filter_history_samples(samples, since, until)
+    }
+
+    async fn fetch_history_pages(&self, bin: &Path, first: String) -> Result<Value, String> {
+        fetch_all_pages(first, |path| async move {
+            self.call_mcp_fetch(bin, &[path]).await
+        })
+        .await
     }
 
     async fn query_version(&self, bin: &Path) -> Option<String> {
@@ -318,6 +362,134 @@ pub fn build_mcp_fetch_call_request(entity_urls: &[String]) -> Value {
     })
 }
 
+fn relative_graph_url(url: &reqwest::Url) -> String {
+    let mut path = url.path().to_string();
+    if let Some(query) = url.query() {
+        path.push('?');
+        path.push_str(query);
+    }
+    path
+}
+
+fn chat_messages_path(chat_id: &str) -> String {
+    let mut url = reqwest::Url::parse("https://graph.microsoft.com/me/chats/")
+        .expect("fixed Microsoft Graph URL is valid");
+    url.path_segments_mut()
+        .expect("fixed Microsoft Graph URL has path segments")
+        .pop_if_empty()
+        .push(chat_id)
+        .push("messages");
+    relative_graph_url(&url)
+}
+
+fn history_mail_query(since: &str) -> String {
+    let mut url = reqwest::Url::parse("https://graph.microsoft.com/me/messages")
+        .expect("fixed Microsoft Graph URL is valid");
+    url.query_pairs_mut()
+        .append_pair(
+            "$select",
+            "id,subject,from,bodyPreview,body,receivedDateTime,sentDateTime,isDraft",
+        )
+        .append_pair("$top", "50")
+        .append_pair(
+            "$filter",
+            &format!(
+                "isDraft eq false and (receivedDateTime ge {since} or sentDateTime ge {since})"
+            ),
+        );
+    relative_graph_url(&url)
+}
+
+fn history_chat_query(chat_id: &str, since: &str) -> String {
+    let mut url = reqwest::Url::parse(&format!(
+        "https://graph.microsoft.com{}",
+        chat_messages_path(chat_id)
+    ))
+    .expect("encoded chat path forms a valid Microsoft Graph URL");
+    // Graph ignores a Teams date filter unless $orderby uses the same property.
+    url.query_pairs_mut()
+        .append_pair("$top", "50")
+        .append_pair("$orderby", "lastModifiedDateTime desc")
+        .append_pair("$filter", &format!("lastModifiedDateTime gt {since}"));
+    relative_graph_url(&url)
+}
+
+fn normalize_graph_page_url(path: &str) -> Result<String, String> {
+    if path.starts_with("//") {
+        return Err("WorkIQ returned an unsupported paging URL.".to_string());
+    }
+    let absolute = if path.starts_with('/') {
+        format!("https://graph.microsoft.com{path}")
+    } else {
+        path.to_string()
+    };
+    let mut url = reqwest::Url::parse(&absolute)
+        .map_err(|_| "WorkIQ returned an invalid paging URL.".to_string())?;
+    if url.scheme() != "https"
+        || url.host_str() != Some("graph.microsoft.com")
+        || url.port_or_known_default() != Some(443)
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.fragment().is_some()
+    {
+        return Err("WorkIQ returned an unsupported paging URL.".to_string());
+    }
+    if let Some(relative) = url.path().strip_prefix("/v1.0/") {
+        let relative = format!("/{relative}");
+        url.set_path(&relative);
+    }
+    Ok(relative_graph_url(&url))
+}
+
+async fn fetch_all_pages<F, Fut>(first: String, mut fetch: F) -> Result<Value, String>
+where
+    F: FnMut(String) -> Fut,
+    Fut: Future<Output = Result<Value, String>>,
+{
+    let mut pending = VecDeque::from([normalize_graph_page_url(&first)?]);
+    let mut visited = HashSet::new();
+    let mut pages = Vec::new();
+    while let Some(path) = pending.pop_front() {
+        if !visited.insert(path.clone()) {
+            return Err(
+                "WorkIQ repeated a paging URL; refresh stopped to avoid a loop.".to_string(),
+            );
+        }
+        let payload = fetch(path).await?;
+        for object in collect_entity_objects(&payload) {
+            if let Some(next) = object
+                .get("@odata.nextLink")
+                .filter(|value| !value.is_null())
+            {
+                let next = next
+                    .as_str()
+                    .ok_or_else(|| "WorkIQ returned an invalid next-page link.".to_string())?;
+                pending.push_back(normalize_graph_page_url(next)?);
+            }
+        }
+        pages.push(payload);
+    }
+    Ok(Value::Array(pages))
+}
+
+fn filter_history_samples(
+    samples: Vec<MessageSample>,
+    since: DateTime<Utc>,
+    until: DateTime<Utc>,
+) -> Result<Vec<MessageSample>, String> {
+    let mut filtered = Vec::new();
+    for mut sample in samples {
+        let timestamp = DateTime::parse_from_rfc3339(&sample.timestamp)
+            .map_err(|_| "WorkIQ returned a message with an invalid timestamp.".to_string())?
+            .with_timezone(&Utc);
+        if timestamp > since && timestamp <= until {
+            sample.timestamp = timestamp.to_rfc3339_opts(SecondsFormat::AutoSi, true);
+            filtered.push(sample);
+        }
+    }
+    Ok(filtered)
+}
+
 fn redact_user_path(path: &Path) -> String {
     let raw = path.display().to_string();
     if let Ok(home) = env::var("USERPROFILE").or_else(|_| env::var("HOME")) {
@@ -437,6 +609,9 @@ pub fn parse_workiq_fetch_bundle(
                 // Skip chat metadata objects here; messages are parsed separately
                 continue;
             }
+            if item.get("isDraft").and_then(Value::as_bool) == Some(true) {
+                continue;
+            }
             let subject = item
                 .get("subject")
                 .and_then(Value::as_str)
@@ -507,8 +682,16 @@ pub fn parse_teams_chat_messages(
     mcp_response: &Value,
     my_email_or_name: Option<&str>,
 ) -> Vec<MessageSample> {
+    parse_chat_messages(mcp_response, my_email_or_name, None)
+}
+
+fn parse_chat_messages(
+    mcp_response: &Value,
+    me: Option<&str>,
+    chat_id: Option<&str>,
+) -> Vec<MessageSample> {
     let inner_json = extract_inner_tool_json(mcp_response);
-    let me_lower = my_email_or_name.unwrap_or("").to_lowercase();
+    let me = me.unwrap_or("");
     let mut samples = Vec::new();
 
     for entry in collect_entity_objects(&inner_json) {
@@ -532,7 +715,16 @@ pub fn parse_teams_chat_messages(
                 .and_then(Value::as_str)
                 .unwrap_or("Teams Colleague")
                 .to_string();
-            let is_sent = !me_lower.is_empty() && sender_name.to_lowercase().contains(&me_lower);
+            let is_sent = !me.is_empty()
+                && [
+                    item.pointer("/from/user/id").and_then(Value::as_str),
+                    item.pointer("/from/user/userPrincipalName")
+                        .and_then(Value::as_str),
+                    Some(sender_name.as_str()),
+                ]
+                .into_iter()
+                .flatten()
+                .any(|identity| identity.eq_ignore_ascii_case(me));
             let timestamp = item
                 .get("createdDateTime")
                 .and_then(Value::as_str)
@@ -540,7 +732,10 @@ pub fn parse_teams_chat_messages(
                 .to_string();
 
             samples.push(MessageSample {
-                message_id: format!("teams-{id}"),
+                message_id: match chat_id {
+                    Some(chat) => format!("teams-{chat}-{id}"),
+                    None => format!("teams-{id}"),
+                },
                 app: M365App::Teams,
                 direction: if is_sent {
                     MessageDirection::Sent
@@ -654,6 +849,16 @@ fn extract_me_email(val: &Value) -> Option<String> {
     None
 }
 
+fn extract_me_user_id(val: &Value) -> Option<String> {
+    let inner = extract_inner_tool_json(val);
+    collect_entity_objects(&inner)
+        .into_iter()
+        .find(|object| object.get("mail").is_some() || object.get("userPrincipalName").is_some())
+        .and_then(|object| object.get("id"))
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+}
+
 fn extract_chat_ids(val: &Value) -> Vec<String> {
     let inner = extract_inner_tool_json(val);
     let mut ids = Vec::new();
@@ -674,6 +879,208 @@ fn extract_chat_ids(val: &Value) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::future::ready;
+
+    #[test]
+    fn history_queries_use_a_seven_day_mail_filter_and_supported_teams_filter() {
+        let since = "2026-10-17T12:00:00.000Z";
+        let mail = reqwest::Url::parse(&format!(
+            "https://graph.microsoft.com{}",
+            history_mail_query(since)
+        ))
+        .unwrap();
+        let mail_params: std::collections::HashMap<_, _> = mail.query_pairs().collect();
+        assert_eq!(mail.path(), "/me/messages");
+        assert_eq!(mail_params["$top"], "50");
+        assert_eq!(
+            mail_params["$filter"],
+            format!(
+                "isDraft eq false and (receivedDateTime ge {since} or sentDateTime ge {since})"
+            )
+        );
+
+        let chat = reqwest::Url::parse(&format!(
+            "https://graph.microsoft.com{}",
+            history_chat_query("chat/one?two", since)
+        ))
+        .unwrap();
+        let chat_params: std::collections::HashMap<_, _> = chat.query_pairs().collect();
+        assert!(chat.path().contains("chat%2Fone%3Ftwo"));
+        assert_eq!(chat_params["$orderby"], "lastModifiedDateTime desc");
+        assert_eq!(
+            chat_params["$filter"],
+            format!("lastModifiedDateTime gt {since}")
+        );
+    }
+
+    #[tokio::test]
+    async fn history_pagination_follows_every_opaque_next_link() {
+        let first = "/me/messages?$top=50".to_string();
+        let second = "/me/messages?$skiptoken=opaque%2Fpage%2Btwo".to_string();
+        let third = "/me/messages?$skiptoken=opaque%2Fpage%2Bthree".to_string();
+        let mut responses = VecDeque::from([
+            json!({
+                "results": [{
+                    "data": {
+                        "value": (0..50).map(|id| json!({"id": id})).collect::<Vec<_>>(),
+                        "@odata.nextLink": format!("https://graph.microsoft.com/v1.0{second}")
+                    }
+                }]
+            }),
+            json!({
+                "value": (50..100).map(|id| json!({"id": id})).collect::<Vec<_>>(),
+                "@odata.nextLink": third
+            }),
+            json!({ "value": [{ "id": 100 }] }),
+        ]);
+        let mut requests = Vec::new();
+        let payload = fetch_all_pages(first.clone(), |path| {
+            requests.push(path);
+            ready(Ok(responses.pop_front().unwrap()))
+        })
+        .await
+        .unwrap();
+        assert_eq!(requests, vec![first, second, third]);
+        let count: usize = collect_entity_objects(&payload)
+            .iter()
+            .filter_map(|value| value.get("value").and_then(Value::as_array))
+            .map(Vec::len)
+            .sum();
+        assert_eq!(count, 101);
+    }
+
+    #[tokio::test]
+    async fn history_pagination_includes_chats_beyond_the_old_five_chat_limit() {
+        let mut page = 0;
+        let payload = fetch_all_pages("/me/chats?$top=50".to_string(), |_| {
+            page += 1;
+            ready(Ok(if page == 1 {
+                json!({
+                    "value": (0..5).map(|id| json!({"id": format!("chat-{id}"), "chatType": "group"})).collect::<Vec<_>>(),
+                    "@odata.nextLink": "/me/chats?$skiptoken=more"
+                })
+            } else {
+                json!({ "value": [
+                    {"id": "chat-5", "chatType": "group"},
+                    {"id": "chat-6", "chatType": "group"}
+                ] })
+            }))
+        })
+        .await
+        .unwrap();
+        assert_eq!(extract_chat_ids(&payload).len(), 7);
+    }
+
+    #[tokio::test]
+    async fn history_pagination_rejects_cycles_and_propagates_page_failures() {
+        let cycle = fetch_all_pages("/me/messages".to_string(), |_| {
+            ready(Ok(
+                json!({ "@odata.nextLink": "/me/messages", "value": [] }),
+            ))
+        })
+        .await
+        .unwrap_err();
+        assert!(cycle.contains("repeated"));
+
+        let failure = fetch_all_pages("/me/messages".to_string(), |_| {
+            ready(Err("WorkIQ page failed.".to_string()))
+        })
+        .await
+        .unwrap_err();
+        assert_eq!(failure, "WorkIQ page failed.");
+    }
+
+    #[test]
+    fn history_next_links_cannot_change_the_graph_host_or_lose_the_paging_token() {
+        assert_eq!(
+            normalize_graph_page_url(
+                "https://graph.microsoft.com/v1.0/me/messages?$skiptoken=a%2Fb%2Bc"
+            )
+            .unwrap(),
+            "/me/messages?$skiptoken=a%2Fb%2Bc"
+        );
+        assert_eq!(
+            normalize_graph_page_url("https://graph.microsoft.com/v1.0/chats/19%3Aone%40thread.v2/messages?$skiptoken=a%2Fb").unwrap(),
+            "/chats/19%3Aone%40thread.v2/messages?$skiptoken=a%2Fb"
+        );
+        for invalid in [
+            "https://example.invalid/me/messages",
+            "//example.invalid/me/messages",
+            "http://graph.microsoft.com/v1.0/me/messages",
+            "https://user:password@graph.microsoft.com/v1.0/me/messages",
+        ] {
+            assert!(normalize_graph_page_url(invalid).is_err());
+        }
+    }
+
+    #[test]
+    fn history_window_excludes_old_boundary_and_future_messages() {
+        let until = DateTime::parse_from_rfc3339("2026-10-24T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let since = until - ChronoDuration::days(7);
+        let timestamps = [
+            "2026-10-17T11:59:59.999Z",
+            "2026-10-17T12:00:00.000Z",
+            "2026-10-17T12:00:00.001Z",
+            "2026-10-24T14:00:00+02:00",
+            "2026-10-24T12:00:00.001Z",
+        ];
+        let samples = timestamps
+            .iter()
+            .enumerate()
+            .map(|(index, timestamp)| MessageSample {
+                message_id: index.to_string(),
+                app: M365App::Outlook,
+                direction: MessageDirection::Received,
+                sender: "Fictional Colleague".to_string(),
+                subject_or_topic: "Synthetic range fixture".to_string(),
+                body: "Ready to review.".to_string(),
+                timestamp: timestamp.to_string(),
+            })
+            .collect();
+        let filtered = filter_history_samples(samples, since, until).unwrap();
+        assert_eq!(
+            filtered
+                .iter()
+                .map(|sample| sample.message_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["2", "3"]
+        );
+        assert_eq!(filtered[1].timestamp, "2026-10-24T12:00:00Z");
+    }
+
+    #[test]
+    fn history_window_reports_invalid_timestamps_without_echoing_them() {
+        let now = Utc::now();
+        let sample = MessageSample {
+            message_id: "invalid-time".to_string(),
+            app: M365App::Teams,
+            direction: MessageDirection::Received,
+            sender: "Fictional Colleague".to_string(),
+            subject_or_topic: "Synthetic fixture".to_string(),
+            body: "Ready.".to_string(),
+            timestamp: "private-invalid-value".to_string(),
+        };
+        let error =
+            filter_history_samples(vec![sample], now - ChronoDuration::days(7), now).unwrap_err();
+        assert!(error.contains("invalid timestamp"));
+        assert!(!error.contains("private-invalid-value"));
+    }
+
+    #[test]
+    fn teams_history_uses_account_ids_and_chat_scoped_message_ids() {
+        let payload = json!({ "value": [{
+            "id": "same-message-id",
+            "createdDateTime": "2026-10-24T10:00:00Z",
+            "from": { "user": { "id": "self-id", "displayName": "Fictional User" } },
+            "body": { "content": "Ready to ship." }
+        }] });
+        let first = parse_chat_messages(&payload, Some("self-id"), Some("chat-1"));
+        let second = parse_chat_messages(&payload, Some("self-id"), Some("chat-2"));
+        assert_eq!(first[0].direction, MessageDirection::Sent);
+        assert_ne!(first[0].message_id, second[0].message_id);
+    }
 
     #[test]
     fn strip_html_preserves_bold_bullets_for_slop_detection() {

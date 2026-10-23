@@ -14,6 +14,7 @@
   } from '$lib/dashboard';
   import type { AnimationEvent, AnimationTier, AwarenessScorecard } from '$lib/types';
   import { WebAudioSfx, type StageCue } from '$lib/engine';
+  import { refreshSevenDays } from '$lib/refresh';
   import BrassGauge from '$lib/components/BrassGauge.svelte';
   import ProvingGrounds from '$lib/components/ProvingGrounds.svelte';
   import OverlayStage from '$lib/components/OverlayStage.svelte';
@@ -37,6 +38,10 @@
   let cue = $state<StageCue | null>(null);
   /** The effects test range opens in a pop-up from the header icon. */
   let rangeOpen = $state(false);
+  let refreshing = $state(false);
+  let refreshNotice = $state('');
+  let refreshError = $state<string | null>(null);
+  let ledgerError = $state<string | null>(null);
 
   function readPref(key: string, fallback: string): string {
     try {
@@ -90,11 +95,35 @@
   async function loadLedger() {
     try {
       const res = await fetch('/api/v1/ledger');
-      if (res.ok) {
-        scorecard = (await res.json()) as AwarenessScorecard;
+      if (!res.ok) throw new Error(`Dashboard reload failed (HTTP ${res.status}).`);
+      scorecard = (await res.json()) as AwarenessScorecard;
+      ledgerError = null;
+      return true;
+    } catch (error) {
+      ledgerError = error instanceof Error ? error.message : 'Cannot reach the local daemon.';
+      return false;
+    }
+  }
+
+  async function refreshHistory() {
+    if (refreshing) return;
+    refreshing = true;
+    refreshError = null;
+    refreshNotice = 'Reading the last seven days from Outlook and Teams. This can take a few minutes.';
+    try {
+      const batch = await refreshSevenDays();
+      if (!(await loadLedger())) {
+        refreshNotice = '';
+        return;
       }
-    } catch {
-      // Background daemon unreachable
+      setTimeSpan('7d');
+      clearCrossFilters();
+      refreshNotice = `7 days refreshed: ${batch.newMessagesAnalyzed} added / ${batch.fetchedCount} scanned. History merged.`;
+    } catch (error) {
+      refreshNotice = '';
+      refreshError = error instanceof Error ? error.message : 'The seven-day refresh failed.';
+    } finally {
+      refreshing = false;
     }
   }
 
@@ -247,6 +276,18 @@
 
       <div class="header-tools">
         <button
+          class="brass small refresh-btn"
+          title="Merge the last seven days of Outlook and Teams without duplicates or replaying effects"
+          aria-busy={refreshing}
+          disabled={refreshing}
+          onclick={refreshHistory}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M20 7v5h-5M4 17v-5h5M5.5 7a7.5 7.5 0 0 1 12.4-2L20 8M4 16l2.1 3A7.5 7.5 0 0 0 18.5 17" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          {refreshing ? 'Refreshing…' : 'Refresh 7 days'}
+        </button>
+        <button
           class="brass icon-btn"
           title="Effects test range"
           aria-label="Open the effects test range"
@@ -270,6 +311,12 @@
         </div>
       </div>
     </header>
+
+    {#if refreshError || ledgerError}
+      <p class="refresh-feedback error" role="alert">Refresh unavailable: {refreshError ?? ledgerError}</p>
+    {:else if refreshNotice}
+      <p class="refresh-feedback" role="status" aria-live="polite">{refreshNotice}</p>
+    {/if}
 
     <nav class="filters" aria-label="Filters">
       <div class="filter-group" role="group" aria-label="Time span">
@@ -595,7 +642,52 @@
   .header-tools {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 10px;
+  }
+
+  .refresh-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    min-height: 36px;
+  }
+
+  .refresh-btn svg {
+    width: 17px;
+    height: 17px;
+  }
+
+  .refresh-btn:disabled {
+    cursor: progress;
+    opacity: 0.7;
+  }
+
+  .refresh-btn[aria-busy='true'] svg {
+    animation: refresh-spin 1.2s linear infinite;
+  }
+
+  .refresh-feedback {
+    margin: 0 0 16px;
+    padding: 10px 14px;
+    border: 2px solid var(--brass);
+    border-radius: 8px;
+    color: var(--parchment);
+    background: rgba(27, 20, 32, 0.7);
+  }
+
+  .refresh-feedback.error {
+    border-color: var(--hot);
+  }
+
+  @keyframes refresh-spin {
+    to { transform: rotate(360deg); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .refresh-btn[aria-busy='true'] svg {
+      animation: none;
+    }
   }
 
   .icon-btn {

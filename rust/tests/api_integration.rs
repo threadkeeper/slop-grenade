@@ -17,7 +17,8 @@ use slop_grenade::workiq_mcp::WorkIqClient;
 
 async fn spawn_test_server() -> String {
     let workiq = Arc::new(WorkIqClient::new(
-        None,
+        // An existing non-executable fixture prevents tests from using real M365 credentials.
+        Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml")),
         Some("test@contoso.com".to_string()),
     ));
     let luna = Arc::new(LunaClient::new(
@@ -118,6 +119,31 @@ async fn startup_demo_history_requires_explicit_opt_in() {
     for demo_data in ["1", "true", "yes"] {
         let ledger = startup_ledger(Some(demo_data)).await;
         assert!(!ledger["recentReports"].as_array().unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn rejects_invalid_history_windows_and_remote_scoring_for_backfills() {
+    let base = spawn_test_server().await;
+    let client = reqwest::Client::new();
+    for payload in [
+        json!({ "lookbackDays": 0 }),
+        json!({ "lookbackDays": 1 }),
+        json!({ "lookbackDays": 8 }),
+        json!({ "lookbackDays": 7, "useLuna": true }),
+    ] {
+        let response = client
+            .post(format!("{base}/api/v1/scan/now"))
+            .json(&payload)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(body["ok"], false);
+        assert!(body["error"]
+            .as_str()
+            .is_some_and(|error| !error.is_empty()));
     }
 }
 

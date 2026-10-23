@@ -8,14 +8,15 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::Mutex;
 
+use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::slop_detector::{
     AnimationTier, M365App, MessageDirection, MessageSample, SlopDetector, SlopReport,
 };
 
-/// Maximum number of sanitized reports kept in memory for time-span filtering and charts.
-const MAX_HISTORY_REPORTS: usize = 360;
+/// Older reports retained in addition to the complete seven-day refresh window.
+const MAX_OLDER_HISTORY_REPORTS: usize = 360;
 
 /// Leaderboard entry for Top 5 Sloppers and Top 5 P-Doomers (refuse to use AI).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -140,10 +141,24 @@ impl AwarenessLedger {
             apply_report_to_stats(d_stats, d_sum, &report);
         }
 
-        if inner.recent.len() >= MAX_HISTORY_REPORTS {
-            inner.recent.pop_back();
-        }
         inner.recent.push_front(report);
+        let cutoff_day = (Utc::now() - Duration::days(7))
+            .format("%Y-%m-%d")
+            .to_string();
+        let mut older_count = 0;
+        inner.recent.retain(|report| {
+            // Keep the full UTC day covering the rolling seven-day boundary.
+            if report
+                .timestamp
+                .get(..10)
+                .is_some_and(|day| day >= cutoff_day.as_str())
+            {
+                true
+            } else {
+                older_count += 1;
+                older_count <= MAX_OLDER_HISTORY_REPORTS
+            }
+        });
     }
 
     /// Seed baseline multi-day M365 history so time-span charts (`Today`, `7d`, `30d`) and
@@ -172,7 +187,10 @@ impl AwarenessLedger {
             };
         };
 
-        let recent_vec: Vec<SlopReport> = guard.recent.iter().cloned().collect();
+        let mut recent_vec: Vec<SlopReport> = guard.recent.iter().cloned().collect();
+        recent_vec.sort_by_cached_key(|report| {
+            std::cmp::Reverse(DateTime::parse_from_rfc3339(&report.timestamp).ok())
+        });
         let (top_sloppers, top_p_doomers) = compute_leaderboards(&recent_vec);
         let verdict = build_verdict(&guard.sent, &guard.received);
         AwarenessScorecard {
@@ -476,7 +494,7 @@ fn baseline_seed_samples() -> Vec<MessageSample> {
             app,
             direction,
             sender: sender.to_string(),
-            subject_or_topic: "M365 Communication".to_string(),
+            subject_or_topic: "Demo communication".to_string(),
             body: body.to_string(),
             timestamp: ts.to_string(),
         })
@@ -519,6 +537,66 @@ fn build_verdict(sent: &DirectionalStats, received: &DirectionalStats) -> String
 mod tests {
     use super::*;
     use crate::slop_detector::{M365App, MessageSample, SlopDetector};
+    use chrono::{Duration, SecondsFormat, Utc};
+
+    #[test]
+    fn retains_a_full_week_even_when_it_exceeds_the_old_report_cap() {
+        let ledger = AwarenessLedger::new();
+        let detector = SlopDetector::new();
+        let now = Utc::now();
+        for index in 0..420 {
+            ledger.record(detector.analyze(&MessageSample {
+                message_id: format!("week-{index}"),
+                app: M365App::Outlook,
+                direction: MessageDirection::Received,
+                sender: "Fictional Colleague".to_string(),
+                subject_or_topic: "Synthetic history".to_string(),
+                body: "The fix is ready for review.".to_string(),
+                timestamp:
+                    (now - Duration::minutes(index)).to_rfc3339_opts(SecondsFormat::Millis, true),
+            }));
+        }
+        let card = ledger.scorecard();
+        assert_eq!(card.recent_reports.len(), 420);
+        assert_eq!(card.received_by_me.total_messages, 420);
+        assert!(card
+            .recent_reports
+            .windows(2)
+            .all(|pair| pair[0].timestamp >= pair[1].timestamp));
+    }
+
+    #[test]
+    fn older_history_remains_bounded_without_evicting_the_refreshed_week() {
+        let ledger = AwarenessLedger::new();
+        let detector = SlopDetector::new();
+        let now = Utc::now();
+        for index in 0..400 {
+            for (prefix, age) in [("old", Duration::days(30)), ("week", Duration::zero())] {
+                ledger.record(
+                    detector.analyze(&MessageSample {
+                        message_id: format!("{prefix}-{index}"),
+                        app: M365App::Teams,
+                        direction: MessageDirection::Received,
+                        sender: "Fictional Colleague".to_string(),
+                        subject_or_topic: "Synthetic retention fixture".to_string(),
+                        body: "Ready for review.".to_string(),
+                        timestamp: (now - age - Duration::minutes(index))
+                            .to_rfc3339_opts(SecondsFormat::Millis, true),
+                    }),
+                );
+            }
+        }
+        let card = ledger.scorecard();
+        assert_eq!(card.received_by_me.total_messages, 800);
+        assert_eq!(card.recent_reports.len(), 400 + MAX_OLDER_HISTORY_REPORTS);
+        assert_eq!(
+            card.recent_reports
+                .iter()
+                .filter(|report| report.message_id.starts_with("week-"))
+                .count(),
+            400
+        );
+    }
 
     #[test]
     fn tracks_sent_and_received_stats_and_streaks_independently() {

@@ -1,116 +1,146 @@
-# Slop Grenade
+# Slop Grenade 💣
 
-**Slop Grenade** is a lightweight Windows desktop companion that helps you and your team notice—and break—the habit of sending unedited AI-generated fluff in Microsoft Teams and Outlook.
+### Your desktop has opinions about corporate word soup.
 
-It runs quietly in the background on your Windows PC, watches the messages you send and receive across Microsoft 365, and gives instant visual feedback right on the edges of your monitor.
+Someone pastes a wall of *"holistic, cross-functional synergy"* into chat.
+A tiny grenade lands on the edge of your screen. **Splat.**
 
----
+**Slop Grenade is a Windows desktop companion that turns communication habits into comic-book effects.** Incoming fluff lands in pink. Your own outgoing fluff lands in blue. Clean, human messages get a little sparkle instead.
 
-## The Philosophy: Why "Slop Grenade"?
+It is a mirror for your writing habits, not a courtroom for your colleagues.
 
-We have all been on the receiving end of a **Slop Grenade**:
-- Someone types a five-second prompt into an AI assistant (*"Write a comprehensive update on Q4 priorities"*).
-- Without editing, trimming, or adding any real human thought, they paste 500 words of bolded bullet points (`- **Strategic Alignment:** Fostering holistic synergy...`) into a Teams chat or email thread and hit **Send**.
-- It took the sender **10 seconds** to pull the pin and throw. It now takes everyone else on the team **20 minutes** to wade through the sludge and figure out what the sender actually wants.
+[![Windows](https://img.shields.io/badge/desktop-Windows-2f8fe0?style=flat-square)](#get-started)
+[![Rust + Svelte](https://img.shields.io/badge/built_with-Rust_%2B_Svelte_5-d9a441?style=flat-square)](./TECHNICAL.md)
+[![MIT](https://img.shields.io/badge/license-MIT-72b598?style=flat-square)](./LICENSE)
+[![GitHub stars](https://img.shields.io/github/stars/threadkeeper/slop-grenade?style=flat-square&color=ffd23f)](https://github.com/threadkeeper/slop-grenade/stargazers)
 
-Good workplace communication is short, human, and considerate of other people's attention. **Slop Grenade** exists to make invisible cognitive pollution visible—especially in **your own outgoing messages**—so you can build better communication habits day by day.
+**[Get started](#get-started)** · **[See the effects](#a-spectrum-of-splat)** · **[Connectors](#your-conversations-not-one-platform)** · **[Privacy](#your-messages-are-not-marketing-material)**
 
----
+![The Slop Grenade dashboard: brass gauges, a daily damage chart, and fictional communication leaderboards.](./docs/screenshots/dashboard.png)
 
-## What Happens on Your Screen
+> **Fictional demo data only.** Every name, message, subject, and score in these screenshots is synthetic. No real account data was used or blurred into the images.
 
-Slop Grenade overlays your main Windows desktop monitor without interrupting your work (you can click and type right through the effects in any app). Everything is drawn small and kept to the edges of the screen, in a comic, cel-shaded style with ink outlines:
+## The ten-second pitch
 
-- **`human` (0-19)**: A short, bright crystal twinkle near the edge.
-- **`polish` (20-39)**: A small puff of smoke rolls in from the edge of your monitor. It swirls when anything flies through it and fades away within about 15 seconds.
-- **`sprinkled` (40-59)**: One of **20 cel-shaded 3D fruits** is tossed across the screen, tumbling on a random axis. It sticks only if it hits slop on the edge; otherwise it sails off the screen.
-- **`ai-cannon` (60-79)**: A goo cannonball splats onto the edge of your screen and stays until squeegeed.
-- **`slop-grenade` (80-100)**: A small, cheeky grenade pulls its own pin and is thrown at the edge of your monitor. Time slows for a moment just before it hits, then it pops with a small blast and comic sound word and splatters slop on the edge:
-  - **Slop You Receive (Left Side of Monitor)**: Builds up in **Pink**.
-  - **Slop You Send (Right Side of Monitor)**: Builds up in **Blue**.
-  - **Ooze**: Slop keeps oozing slowly down the edge: drips stretch, a drop lets go and falls, and the drip starts again.
-  - **Flies**: Leave slop on the screen for a while (45 seconds by default) and flies start to gather and buzz around it.
-  - **Daily Buildup & Squeegee**: Fruit and slop stay stuck along the sides of your monitor until you squeegee that side clean from the tray icon. The squeegee also chases the flies away.
-- **Sound (optional)**: Switch on **Sound FX** in the tray panel for soft, retro sounds in the style of early Macintosh games: a light whee, a ticking fuse, plops, a quiet hum from the flies and a rounded "pomf" for the grenade. Sound is off by default.
+- **A tiny, click-through desktop overlay.** Keep typing, clicking, and working. The drama stays at the edges.
+- **Pink in, blue out.** Notice the fluff you receive *and* the fluff you send.
+- **A brass-and-parchment habit dashboard.** Pressure gauges, daily charts, filters, leaderboards, and message-level clues.
+- **Refresh the last seven days in one click.** Merge history without duplicate counts or replaying a week's worth of explosions.
+- **A squeegee for your desktop.** Clean the edges from the tray when enough is enough.
+- **Optional retro sound effects.** Off by default. Your meeting does not need a surprise *pomf*.
 
----
+## A spectrum of splat
 
-## Step-by-Step Setup Guide
+| Communication vibe | Score | Desktop consequence |
+| --- | --- | --- |
+| **Human** | 0–19 | A brief crystal twinkle. Nice. |
+| **Polish** | 20–39 | A small, drifting puff of smoke. |
+| **Sprinkled** | 40–59 | One of 20 tumbling, cel-shaded fruits. Because apparently your email is a pear now. |
+| **AI cannon** | 60–79 | A goo cannonball splats against the edge. |
+| **Slop grenade** | 80–100 | A tiny grenade, a slow-motion moment, and a comic-book pop. |
 
-### Step 1: Sign In to Microsoft 365 (WorkIQ MCP)
+Goop oozes. Fruit can stick to it. Leave the mess long enough and flies turn up.
+The tray's **Squeegee** buttons restore a little dignity.
 
-Slop Grenade reads your Microsoft Teams and Outlook activity through the **WorkIQ** command-line tool using your normal Microsoft 365 sign-in.
+![The Proving Grounds effects test range, with fictional demo content and cartoon effects.](./docs/screenshots/proving-grounds.png)
 
-Open PowerShell and run:
+**Try the effects without changing your stats:** open the target icon in the dashboard header, then hit **Slop Grenade!**, **Toss Fruit**, or **Barrage**.
+
+## Your conversations, not one platform
+
+Slop is not exclusive to one inbox. The goal is a consistent little habit mirror across the places you communicate.
+
+| Connector | Status |
+| --- | --- |
+| **Outlook + Teams** | Available today through the local WorkIQ CLI/MCP connection. |
+| **Google Workspace / Gmail** | Planned. Not implemented yet. |
+| **Slack** | Planned. Not implemented yet. |
+| **More chat and email platforms** | On the roadmap. Ideas and contributions welcome. |
+
+The current native overlay runs on **Windows**. The connector roadmap is not a claim that those integrations already work.
+
+## Get started
+
+### 1. Bring the tools
+
+You will need **Windows 10/11**, **Git**, **Rust stable**, a current **Node.js LTS** release, and **PowerShell**.
+The installer also uses the Windows .NET Framework C# compiler.
+
+For the currently available connectors, install the [official WorkIQ CLI](https://github.com/microsoft/work-iq) and use your work account with Outlook and Teams access.
+You do **not** need to register a custom Entra application for Slop Grenade.
+Your organization's normal account, licensing, and access policies still apply.
+
+### 2. Clone, connect, launch
 
 ```powershell
-# Accept the WorkIQ license agreement (first time only)
+git clone https://github.com/threadkeeper/slop-grenade.git
+Set-Location .\slop-grenade
+npm --prefix web install
+
+# First-time WorkIQ setup: review and accept its license.
 workiq accept-eula
 
-# Confirm access with a harmless request using your Microsoft 365 work account
+# Reuse your cached work login, or complete the normal sign-in prompt.
 workiq ask --question "Reply only with OK."
+
+# Build, install, create shortcuts, and open the dashboard.
+.\scripts\install-local.ps1 -OpenDashboard
 ```
 
-WorkIQ reuses your cached Microsoft 365 sign-in or opens the normal Microsoft sign-in flow when needed. Choose your own work account. Current WorkIQ versions do not have an `auth login` subcommand; the request above uses WorkIQ's first-party authentication broker.
+The installer puts the app in your Windows user profile, creates **Desktop** and **Start Menu** shortcuts, and enables **launch at Windows sign-in**. You can switch auto-start off from the tray.
+The first launch also test-fires a short effects showcase; it does not seed fake message history.
 
-Once signed in, Slop Grenade reads recent Teams and Outlook messages through your local WorkIQ MCP server. A successful MCP tools handshake only confirms that WorkIQ is installed; a successful live scan confirms access to your M365 data.
+**Open your dashboard:** [http://127.0.0.1:8090/](http://127.0.0.1:8090/).
+Normal monitoring polls recent activity every minute. The dashboard starts with real account data, not a pretend leaderboard.
 
----
+> Current WorkIQ versions use brokered sign-in through requests such as `workiq ask`; they do not have an `auth login` subcommand. Being able to list MCP tools is not the same as being able to read your account's messages.
 
-### Step 2: Sign In to GitHub Copilot (for LLM Slop Scoring)
+### 3. Load the last week
 
-To let Slop Grenade use **GitHub Copilot's LLM** alongside its built-in text analyzer, sign in with the GitHub CLI:
+Click **Refresh 7 days** in the dashboard header.
+
+It follows every result page for the seven-day window, merges newly discovered messages, and switches to the **7d** view. Existing messages are deduplicated. Historical messages are scored locally and **do not replay desktop effects**.
+
+The button stays disabled while working and shows a useful error if the refresh fails. Large accounts can take a few minutes.
+The ledger keeps the complete recent week plus up to 360 older reports in memory; restarting the daemon clears that history.
+
+### Optional: GitHub Copilot scoring
+
+If you want to request semantic scoring through the API, sign in with a GitHub account that has suitable Copilot access:
 
 ```powershell
 gh auth login
 ```
 
-Follow the on-screen prompt to sign in with your GitHub account that has GitHub Copilot access. Slop Grenade will automatically use your active GitHub session—no API keys or config files required.
+The optional client targets `gpt-5.6-luna` using your active GitHub credential. **Normal background monitoring and seven-day refreshes use local heuristic scoring**, not automatic LLM submissions.
 
----
+## Read the room. Then read your own draft.
 
-### Step 3: Install and Run on Windows
+![The fictional message ledger showing scores and the clues behind them.](./docs/screenshots/ledger.png)
 
-From the repository folder, run the one-step local installer:
+Filter by time, source, or message type. Click a chart bar or a leaderboard entry to inspect the matching messages.
+The ledger shows the score, linguistic clues, and a short redacted preview so you can ask the useful question:
 
-```powershell
-.\scripts\install-local.ps1
-```
+**"Could I have said this in three sentences?"**
 
-What this does automatically:
-1. Installs the app into your local Windows profile (`%LOCALAPPDATA%\SlopGrenade`).
-2. Adds **Slop Grenade** shortcuts to your **Desktop** and **Start Menu**.
-3. Configures Slop Grenade to **start automatically when you sign in to Windows** (you can toggle this on or off anytime from the System Tray icon).
-4. Starts the background scanner and the desktop screen overlay immediately.
+The scores are heuristic feedback, **not proof of AI authorship**. False positives happen. Use this for self-awareness and better writing, not accusations, employee assessment, or public shaming.
 
-Normal startup does not seed example messages or leaderboard entries. The dashboard starts empty and fills from your signed-in account as scans complete (normally every minute). Its history is held in memory and resets when the daemon restarts.
+## Your messages are not marketing material
 
----
+- **Local desktop app, local dashboard.** The default server listens only on your own machine.
+- **Your own sign-ins.** WorkIQ uses its first-party account flow; optional Copilot scoring uses your GitHub account.
+- **In-memory history.** Slop Grenade does not write a mailbox archive to disk. Dashboard metadata and redacted previews are still sensitive, so keep your live dashboard private.
+- **Explicit LLM requests only.** If you request optional Copilot scoring, the supplied text is sent to the configured GitHub Copilot endpoint. Local monitoring and history refresh do not do this.
+- **Safe screenshots.** The images here came from a separate fictional-data demo with live connectors and credential access blocked—not from someone's real inbox with a blur filter applied afterward.
 
-## Using the System Tray & Habit Dashboard
+## Build, tinker, contribute
 
-### 1. The System Tray Icon (Bright Pink Hand Grenade)
-Look for the **Bright Pink Hand Grenade** icon in your Windows System Tray (bottom-right taskbar near the clock):
-- Slop Grenade pings your **WorkIQ MCP** server every **1 minute** and triggers a desktop animation for each and every new message that comes through (automated and machine-generated system replies are always classified as the gentle `human` sparkle type).
-- **Left-click the Tray Icon** to open the brass control panel where you can:
-  - Read today's **Incoming** and **Outgoing** slop pressure gauges (they reset automatically at `00:00`).
-  - Click **Squeegee** (left or right) to wipe your monitor edges clean.
-  - Toggle **Launch at Windows sign-in**, **Teams / Outlook monitoring**, **Slop FX** and **Calm FX**.
-  - Switch **Sound FX** on or off and pick a volume (**Soft**, **Med**, **Loud**).
-  - Click **Test Fire!** to see every effect, or **Dashboard** to open the habit dashboard.
-- **Right-click the Tray Icon** for quick test shots (a grenade at either edge, some fruit) and the squeegees.
+The engine is **Rust + Svelte 5 + TypeScript**, with a native Windows overlay, procedurally generated effects and sound, and no bundled audio samples.
 
-### 2. The Habit Dashboard (`http://127.0.0.1:8090/`)
-Clicking **Dashboard** in the tray opens the habit tracker in your browser, styled to match (brass, ink and parchment), featuring:
-- **Incoming / Outgoing Slop Pressure Gauges** (0-100%) that vent steam when you are in the red.
-- **Effects test range**: click the target icon in the header to open a small monitor where you can test fire every effect (test shots are not recorded in your stats). The **Sound** switch and volume slider sit next to it.
-- **Per-Day Stacked Bar Chart** broken down by type (`slop-grenade` in pink, `ai-cannon` in orange, `sprinkled` in yellow, `polish` in smoke grey, and `human` in cream).
-- **Filters** for time span (`Today`, `7d`, `30d`, `All`), source (`Teams` vs. `Outlook`), and message type (`All`, `slop-grenade`, `ai-cannon`, `sprinkled`, `polish`, `human`).
-- **Top 5 Sloppers** and **Top 5 P-Doomers** (the colleagues who refuse to touch AI).
-- **Interactive Drill-Down Grid** at the bottom ranked by highest slop score, showing the score, type, source, core metrics, sender, recipient, subject, and a short preview of each message.
+See the [technical guide](./TECHNICAL.md) for architecture, API contracts, test commands, and deployment details.
+Have a connector idea or found a spectacular false positive? [Open an issue](https://github.com/threadkeeper/slop-grenade/issues). **Please use invented or carefully sanitized examples, never real private messages or credentials.**
 
----
+If this made you laugh, [give the repo a star](https://github.com/threadkeeper/slop-grenade).
+If it made you delete three unnecessary paragraphs, even better.
 
-## Technical Documentation
-
-For architecture details, API endpoints, build/test commands, and container deployment templates, see [TECHNICAL.md](./TECHNICAL.md).
+[MIT licensed](./LICENSE). Less synergy. More signal.

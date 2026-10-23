@@ -25,7 +25,7 @@ pub struct ScanBatchResult {
     pub fetched_count: usize,
     /// Number of newly discovered (previously unseen) messages analyzed.
     pub new_messages_analyzed: usize,
-    /// Number of Slop Grenades (`score >= 80`) triggered in this batch.
+    /// Number of Slop Grenade animations triggered (zero for quiet history backfills).
     pub grenades_triggered: usize,
     /// Reports generated for the newly discovered messages.
     pub reports: Vec<SlopReport>,
@@ -95,16 +95,37 @@ impl ScannerDaemon {
         self.ingest_samples(fetched, use_luna).await
     }
 
+    /// Merge a complete seven-day WorkIQ backfill using local scoring without replaying animations.
+    pub async fn refresh_last_seven_days(&self) -> Result<ScanBatchResult, String> {
+        let fetched = self.workiq.poll_last_seven_days().await?;
+        self.ingest_samples_with_animation(fetched, false, false)
+            .await
+    }
+
     /// Ingest a batch of [`MessageSample`] items with deduplication (used by both live WorkIQ polling and tests).
     pub async fn ingest_samples(
         &self,
         samples: Vec<MessageSample>,
         use_luna: bool,
     ) -> Result<ScanBatchResult, String> {
+        self.ingest_samples_with_animation(samples, use_luna, true)
+            .await
+    }
+
+    async fn ingest_samples_with_animation(
+        &self,
+        samples: Vec<MessageSample>,
+        use_luna: bool,
+        trigger_animation: bool,
+    ) -> Result<ScanBatchResult, String> {
         let fetched_count = samples.len();
         let mut new_samples = Vec::new();
 
-        if let Ok(mut guard) = self.seen_ids.lock() {
+        {
+            let mut guard = self
+                .seen_ids
+                .lock()
+                .map_err(|_| "Scanner deduplication state is unavailable.".to_string())?;
             for s in samples {
                 if guard.insert(s.message_id.clone()) {
                     new_samples.push(s);
@@ -117,9 +138,9 @@ impl ScannerDaemon {
 
         for sample in &new_samples {
             let (report, _) = self
-                .analyze_and_dispatch(sample, use_luna, true, true)
+                .analyze_and_dispatch(sample, use_luna, true, trigger_animation)
                 .await;
-            if report.is_slop_grenade {
+            if trigger_animation && report.is_slop_grenade {
                 grenades_triggered += 1;
             }
             reports.push(report);
@@ -220,6 +241,39 @@ pub fn build_preset_sample(preset: &str, sequence_hint: u64) -> MessageSample {
 mod tests {
     use super::*;
     use crate::slop_detector::AnimationTier;
+
+    #[tokio::test]
+    async fn history_backfills_merge_without_duplicates_or_replaying_effects() {
+        let workiq = Arc::new(WorkIqClient::new(None, None));
+        let luna = Arc::new(LunaClient::new(
+            "https://api.githubcopilot.com/responses".to_string(),
+            "gpt-5.6-luna".to_string(),
+            false,
+        ));
+        let ledger = Arc::new(AwarenessLedger::new());
+        let bus = Arc::new(AnimationEventBus::new());
+        let daemon = ScannerDaemon::new(workiq, luna, ledger.clone(), bus.clone());
+        let existing = build_preset_sample("human_sparkle", 1);
+        let historical = build_preset_sample("slop_grenade", 2);
+        daemon
+            .ingest_samples(vec![existing.clone()], false)
+            .await
+            .unwrap();
+        let batch = daemon
+            .ingest_samples_with_animation(vec![existing.clone(), historical.clone()], false, false)
+            .await
+            .unwrap();
+        assert_eq!(batch.new_messages_analyzed, 1);
+        assert_eq!(batch.grenades_triggered, 0);
+        assert_eq!(bus.recent_events().len(), 1);
+        assert_eq!(ledger.scorecard().received_by_me.total_messages, 2);
+        let again = daemon
+            .ingest_samples_with_animation(vec![existing, historical], false, false)
+            .await
+            .unwrap();
+        assert_eq!(again.new_messages_analyzed, 0);
+        assert_eq!(ledger.scorecard().received_by_me.total_messages, 2);
+    }
 
     #[tokio::test]
     async fn deduplicates_ingested_messages_and_triggers_expected_tiers() {

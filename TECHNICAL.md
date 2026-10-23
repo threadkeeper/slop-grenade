@@ -41,9 +41,9 @@ Slop Grenade consists of three coordinated components:
    - Built with stable Rust (`axum` + `tokio`), enforcing `unsafe_code = "forbid"` and `missing_docs = "deny"`.
    - **Modules**:
      - `slop_detector.rs`: Deterministic linguistic, structural, burstiness, and passive-handoff analyzer + 5-tier animation classifier (`HumanSparkle`, `PeacefulCloud`, `InnocentFruit`, `SlopSplat`, `SlopGrenade`).
-     - `workiq_mcp.rs`: JSON-RPC 2.0 stdio client for the local Microsoft 365 `workiq mcp` server (`/me/mailFolders/inbox/messages`, `/me/mailFolders/sentitems/messages`, `/me/chats/{id}/messages`).
+     - `workiq_mcp.rs`: JSON-RPC 2.0 stdio client for the local Microsoft 365 `workiq mcp` server. Recent polling reads inbox/sent items and recent chats; a seven-day refresh pages through non-draft mailbox messages, all chats, and their date-filtered message collections.
      - `llm_luna.rs`: GitHub Copilot Responses API client (`POST https://api.githubcopilot.com/responses` with `model: "gpt-5.6-luna"`).
-     - `ledger.rs`: In-memory directional habit ledger tracking daily midnight-resetting gauges, historical reports, **Top 5 Sloppers**, and **Top 5 P-Doomers**.
+     - `ledger.rs`: In-memory directional habit ledger tracking daily midnight-resetting gauges, historical reports, **Top 5 Sloppers**, and **Top 5 P-Doomers**. Retains the full UTC days covering the rolling seven-day window plus up to 360 older reports, and returns reports newest first.
      - `event_bus.rs`: Broadcast channel for real-time desktop overlay animations and squeegee wipes.
      - `scanner_daemon.rs`: Background M365 polling and deduplication loop.
      - `server.rs` & `static_files.rs`: REST API, SSE stream, and static asset server.
@@ -54,6 +54,7 @@ Slop Grenade consists of three coordinated components:
    - Built with Svelte 5 runes (`$state`, `$derived`), SvelteKit (`@sveltejs/adapter-static`), strict TypeScript, and Vite. Theme in `web/src/app.css` (brass, ink and parchment).
    - Displays the incoming and outgoing daily slop pressure gauges, the stacked daily breakdown by type, time span / channel / type filters, the Top 5 Sloppers and Top 5 P-Doomers, and the drill-down ledger.
    - **Effects test range**: opened from the target icon in the header, a pop-up monitor running the effects engine (`web/src/lib/engine/`). Live messages replay there while it is open, and the buttons fire test effects without calling the API, so test shots do not change your stats.
+   - **Refresh 7 days**: merges a paginated seven-day Outlook/Teams backfill, then reloads the ledger, clears chart/person cross-filters, and selects `7d`. The button is disabled while pending; HTTP, protocol, application, and reload failures are shown visibly. Backfills always use local scoring and do not publish historical animation events.
    - **Sound**: optional WebAudio output of the same synthesised effects (`engine/audio.ts`), switched on from the header and remembered per browser.
    - **Overlay mode**: `/?mode=overlay` renders only a transparent full-window effects layer driven by the SSE stream (for example as an OBS browser source). Add `&sound=1` for sound.
 
@@ -71,8 +72,21 @@ Slop Grenade consists of three coordinated components:
 | `POST` | `/api/v1/analyze` | Evaluates a communication sample and broadcasts the resulting animation |
 | `POST` | `/api/v1/simulate` | Triggers a preset animation (`human_sparkle`, `peaceful_cloud`, `innocent_fruit`, `slop_splat`, `slop_grenade`, `my_outgoing_grenade`) |
 | `POST` | `/api/v1/squeegee` | Broadcasts a left or right bezel squeegee wipe to all connected overlays |
-| `POST` | `/api/v1/scan/now` | Triggers an immediate WorkIQ MCP scan of Teams and Outlook |
+| `POST` | `/api/v1/scan/now` | Recent poll by default; `{"lookbackDays":7,"useLuna":false}` performs a complete quiet seven-day merge |
 | `GET` | `/api/v1/events/stream` | Server-Sent Events stream for real-time desktop overlay animations |
+
+---
+
+### Seven-day refresh contract
+
+`POST /api/v1/scan/now` accepts optional `lookbackDays: 7`. Other provided window values, or combining a history refresh with `useLuna: true`, return HTTP 400 with `ok: false`.
+A successful history response includes `ok: true`, `lookbackDays: 7`, and `batch` counts/reports. Clients must inspect `ok`, not merely HTTP status; WorkIQ scan failures retain the existing HTTP-200 error envelope.
+
+The UTC window is fixed when fetching starts: `start < message timestamp <= end`, with `start = end - 7 days`.
+Mailbox queries exclude drafts. Teams uses matched `$orderby=lastModifiedDateTime desc` and `$filter=lastModifiedDateTime gt ...`, then filters actual creation timestamps locally so edits to older messages are not imported as new history.
+Every collection follows opaque Graph `@odata.nextLink` values, without rebuilding skip tokens. Unexpected hosts and repeated paging URLs fail explicitly. Teams IDs are scoped to their chat, and account IDs identify outgoing messages.
+
+History ingestion shares the normal deduplication state but records without animation broadcasts or LLM calls. Repeating a refresh does not increase counts for already observed message IDs.
 
 ---
 
@@ -92,7 +106,7 @@ npm --prefix web run test
 npm --prefix web run check
 npm --prefix web run build
 ```
-Unit tests: `web/src/lib/dashboard.test.ts` (filters, gauges, leaderboards) and `web/src/lib/engine.test.ts` (grenade slow-motion moment and edge splat, cannon side, fruit sticks only on slop, squeegee clears one side, flies arrive and leave, smoke and twinkles fade, 20 fruit models with no labels, sound bank levels).
+Unit tests: `web/src/lib/dashboard.test.ts` (filters, gauges, leaderboards), `web/src/lib/refresh.test.ts` (seven-day request/response contracts and visible failure paths), and `web/src/lib/engine.test.ts` (grenade slow-motion moment and edge splat, cannon side, fruit sticks only on slop, squeegee clears one side, flies arrive and leave, smoke and twinkles fade, 20 fruit models with no labels, sound bank levels).
 
 ### Native Windows Desktop Overlay (`desktop/`)
 ```powershell
