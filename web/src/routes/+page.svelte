@@ -265,6 +265,8 @@
     }
   }
 
+  let isLoggingInWorkIq = $state(false);
+
   async function saveWorkIqAccount() {
     const res = await fetch('/api/v1/auth/workiq-account', {
       method: 'POST',
@@ -274,6 +276,26 @@
     if (res.ok) {
       authStatus = (await res.json()) as CombinedAuthStatus;
       authActionMessage = 'Updated WorkIQ M365 account hint.';
+    }
+  }
+
+  async function triggerWorkIqLogin() {
+    isLoggingInWorkIq = true;
+    authActionMessage = 'Launching WorkIQ M365 interactive broker sign-in (workiq auth login)…';
+    try {
+      const res = await fetch('/api/v1/auth/workiq-login', { method: 'POST' });
+      const data = await res.json();
+      if (data.ok && data.status) {
+        authStatus = data.status as CombinedAuthStatus;
+        authActionMessage = data.message || 'WorkIQ M365 authentication completed!';
+      } else {
+        authActionMessage = data.error || 'WorkIQ login finished—click Re-Check Auth Status.';
+        await refreshDashboardState();
+      }
+    } catch (e) {
+      authActionMessage = `WorkIQ sign-in error: ${e instanceof Error ? e.message : String(e)}`;
+    } finally {
+      isLoggingInWorkIq = false;
     }
   }
 
@@ -857,6 +879,9 @@
               bind:value={workiqAccountInput}
             />
             <button onclick={saveWorkIqAccount}>Set Account</button>
+            <button onclick={triggerWorkIqLogin} disabled={isLoggingInWorkIq}>
+              {isLoggingInWorkIq ? 'Signing In…' : '🔑 Sign In (workiq auth login)'}
+            </button>
           </div>
         </div>
 
@@ -870,6 +895,7 @@
               bind:value={githubTokenInput}
             />
             <button onclick={saveGithubToken}>Apply Token</button>
+            <button onclick={refreshDashboardState}>🔄 Re-Check Auth</button>
           </div>
         </div>
 
