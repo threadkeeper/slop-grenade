@@ -134,7 +134,7 @@ async fn simulate_and_analyze_endpoints_populate_ledger_and_recent_events() {
         .json(&json!({
             "app": "teams",
             "direction": "sent",
-            "sender": "Jean",
+            "sender": "Alex",
             "subjectOrTopic": "Sprint Demo",
             "body": "Hey team, demo link is ready—join when you have 5 mins!",
             "useLuna": false

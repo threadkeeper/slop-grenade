@@ -366,7 +366,7 @@ mod tests {
             message_id: "m1".to_string(),
             app: crate::slop_detector::M365App::Teams,
             direction: MessageDirection::Sent,
-            sender: "Jean".to_string(),
+            sender: "Alex".to_string(),
             subject_or_topic: "Design Sync".to_string(),
             body: "Quick update on the build.".to_string(),
             timestamp: "2026-10-23T14:00:00Z".to_string(),

@@ -85,10 +85,11 @@ impl WorkIqClient {
         };
 
         let version = self.query_version(bin).await;
+        let display_bin = redact_user_path(bin);
         match self.probe_mcp_tools(bin).await {
             Ok(tool_count) => WorkIqStatus {
                 binary_found: true,
-                binary_path: Some(bin.display().to_string()),
+                binary_path: Some(display_bin),
                 version,
                 mcp_ready: tool_count > 0,
                 mcp_tool_count: tool_count,
@@ -99,7 +100,7 @@ impl WorkIqClient {
             },
             Err(err) => WorkIqStatus {
                 binary_found: true,
-                binary_path: Some(bin.display().to_string()),
+                binary_path: Some(display_bin),
                 version,
                 mcp_ready: false,
                 mcp_tool_count: 0,
@@ -322,6 +323,16 @@ pub fn build_mcp_fetch_call_request(entity_urls: &[String]) -> Value {
             }
         }
     })
+}
+
+fn redact_user_path(path: &Path) -> String {
+    let raw = path.display().to_string();
+    if let Ok(home) = env::var("USERPROFILE").or_else(|_| env::var("HOME")) {
+        if !home.is_empty() && raw.starts_with(&home) {
+            return format!("~{}", &raw[home.len()..]);
+        }
+    }
+    raw
 }
 
 /// Resolve the `workiq` binary path from explicit configuration, `PATH`, or standard Windows locations.
@@ -641,8 +652,8 @@ mod tests {
                     "type": "text",
                     "text": serde_json::to_string(&json!([
                         {
-                            "mail": "jeanva@microsoft.com",
-                            "displayName": "Jean Van Iddekinge"
+                            "mail": "alex.taylor@contoso.com",
+                            "displayName": "Alex Taylor"
                         },
                         {
                             "value": [
@@ -656,7 +667,7 @@ mod tests {
                                 {
                                     "id": "m-out-1",
                                     "subject": "Re: AI Strategy Sync",
-                                    "from": { "emailAddress": { "name": "Jean Van Iddekinge", "address": "jeanva@microsoft.com" } },
+                                    "from": { "emailAddress": { "name": "Alex Taylor", "address": "alex.taylor@contoso.com" } },
                                     "body": { "content": "<p>Sounds good, let's ship it at 2pm.</p>" },
                                     "sentDateTime": "2026-10-23T12:05:00Z"
                                 }
@@ -682,19 +693,19 @@ mod tests {
                 {
                     "id": "t-101",
                     "createdDateTime": "2026-10-23T13:10:00Z",
-                    "from": { "user": { "displayName": "Jean Van Iddekinge" } },
+                    "from": { "user": { "displayName": "Alex Taylor" } },
                     "body": { "content": "Quick human check-in on the PR!" }
                 },
                 {
                     "id": "t-102",
                     "createdDateTime": "2026-10-23T13:12:00Z",
-                    "from": { "user": { "displayName": "Alex Example" } },
+                    "from": { "user": { "displayName": "Jordan Example" } },
                     "body": { "content": "<ul><li><strong>Synergy:</strong> Delving into holistic alignment.</li></ul>" }
                 }
             ]
         });
 
-        let messages = parse_teams_chat_messages(&payload, Some("Jean Van Iddekinge"));
+        let messages = parse_teams_chat_messages(&payload, Some("Alex Taylor"));
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0].app, M365App::Teams);
         assert_eq!(messages[0].direction, MessageDirection::Sent);

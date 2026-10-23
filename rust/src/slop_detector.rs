@@ -720,7 +720,7 @@ mod tests {
         let msg = sample(
             M365App::Teams,
             MessageDirection::Received,
-            "Hey Jean, I fixed the Cosmos partition key bug in PR #48. Can you sanity check line 92 before standup?",
+            "Hey Sam, I fixed the Cosmos partition key bug in PR #48. Can you sanity check line 92 before standup?",
         );
         let report = detector.analyze(&msg);
 

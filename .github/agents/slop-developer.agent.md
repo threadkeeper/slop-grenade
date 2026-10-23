@@ -9,7 +9,7 @@ You are the developer specialist for **Slop Grenade**. Read [`.github/copilot-in
 
 ## Constraints
 
-- Edit only the files granted in the task packet under `C:\Repos\slop-grenade`.
+- Edit only the files granted in the task packet within the repository root.
 - Follow Test-Driven Development: write or update unit/integration tests alongside every module (`#[cfg(test)] mod tests` in Rust, `*.test.ts` in Vitest) and run the smallest covering test commands to verify they pass.
 - Enforce `unsafe_code = "forbid"` and `missing_docs = "deny"` in Rust (`//!` module docs and `///` public item docs).
 - DO NOT stage, commit, push, switch branches, or log/commit any real user tokens or M365 message payloads.

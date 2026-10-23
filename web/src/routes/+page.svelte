@@ -853,7 +853,7 @@
           <div class="inline-input">
             <input
               type="email"
-              placeholder="Optional M365 email (e.g. user@microsoft.com)"
+              placeholder="Optional M365 email (e.g. user@contoso.com)"
               bind:value={workiqAccountInput}
             />
             <button onclick={saveWorkIqAccount}>Set Account</button>
