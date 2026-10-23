@@ -240,9 +240,11 @@ export function createAnimationInstance(params: {
   const bubbles: GoopBubble[] = [];
   const sparkles: SparkleParticle[] = [];
 
-  // Every animation type sticks to the monitor edge until squeegeed!
-  let duration = 3.2;
-  const persistentSlop = true;
+  // Only fruit (sprinkled) and grenades/slop (slop-grenade & ai-cannon) stick to the monitor edge;
+  // clouds (polish) and sparkles (human) shine, twinkle, and fade into nothing!
+  let duration = 4.2;
+  const persistentSlop =
+    tier === 'slop_grenade' || tier === 'slop_splat' || tier === 'innocent_fruit';
   let maxSlideDistance = 0;
 
   if (tier === 'slop_grenade') {
@@ -505,25 +507,13 @@ export function stepAnimation(anim: ActiveAnimation, dtSeconds: number): ActiveA
     }
   } else if (anim.tier === 'peaceful_cloud') {
     const inward = anim.side === 'left' ? 1 : -1;
-    if (anim.elapsed < anim.duration) {
-      anim.phase = 'sliding_goop';
-      const t = anim.elapsed / anim.duration;
-      anim.currentX = anim.impactX + inward * (64 * (1 - t * 0.75));
-      anim.currentY = anim.impactY + Math.sin(anim.elapsed * 2.2) * 5 * (1 - t);
-    } else {
-      anim.phase = 'accumulated';
-      anim.currentX = anim.impactX + inward * 16;
-    }
+    anim.currentX = anim.impactX + inward * (24 + anim.elapsed * 14);
+    anim.currentY = anim.impactY + Math.sin(anim.elapsed * 2.0) * 6;
   } else {
-    // 'human_sparkle': gentle rising sparkle plume that sticks to the slop on the bezel
-    if (anim.elapsed < anim.duration) {
-      anim.phase = 'sliding_goop';
-      for (const sp of anim.sparkles) {
-        sp.x += sp.vx * dt * 0.4 + Math.sin(anim.elapsed * 3 + sp.twinklePhase) * 0.2;
-        sp.y += sp.vy * dt * 0.4;
-      }
-    } else {
-      anim.phase = 'accumulated';
+    // 'human_sparkle': shines, twinkles, rises gently, and fades into nothing
+    for (const sp of anim.sparkles) {
+      sp.x += sp.vx * dt + Math.sin(anim.elapsed * 4.5 + sp.twinklePhase) * 0.3;
+      sp.y += sp.vy * dt;
     }
   }
 

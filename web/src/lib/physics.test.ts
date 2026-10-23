@@ -158,24 +158,39 @@ describe('Slop Grenade & 5-Tier Monitor Physics Engine', () => {
     expect(anim.sparkles[0].y).toBeLessThan(startSparkleY);
   });
 
-  it('sticks sprinkled (fruit), polish (cloud), and human (sparkles) to the monitor edge until squeegeed', () => {
-    for (const tier of ['peaceful_cloud', 'innocent_fruit', 'human_sparkle'] as const) {
+  it('sticks sprinkled (fruit) and grenades/slop to the monitor edge while polish (cloud) and human (sparkles) twinkle and fade out', () => {
+    const fruitAnim = createAnimationInstance({
+      id: 3,
+      tier: 'innocent_fruit',
+      side: 'left',
+      score: 45,
+      sender: 'Tester',
+      subject: 'Check',
+      viewportWidth: 1440,
+      viewportHeight: 900
+    });
+    expect(fruitAnim.persistentSlop).toBe(true);
+    for (let i = 0; i < 20; i++) {
+      stepAnimation(fruitAnim, 0.2);
+    }
+    expect(fruitAnim.phase).toBe('accumulated');
+
+    for (const transientTier of ['peaceful_cloud', 'human_sparkle'] as const) {
       const anim = createAnimationInstance({
-        id: 3,
-        tier,
+        id: 4,
+        tier: transientTier,
         side: 'left',
-        score: 45,
+        score: 15,
         sender: 'Tester',
         subject: 'Check',
         viewportWidth: 1440,
         viewportHeight: 900
       });
-
-      expect(anim.persistentSlop).toBe(true);
-      for (let i = 0; i < 20; i++) {
+      expect(anim.persistentSlop).toBe(false);
+      for (let i = 0; i < 30; i++) {
         stepAnimation(anim, 0.2);
       }
-      expect(anim.phase).toBe('accumulated');
+      expect(anim.phase).toBe('done');
     }
 
     expect(tierDisplayName('slop_grenade')).toBe('slop-grenade');

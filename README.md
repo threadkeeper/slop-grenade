@@ -21,14 +21,14 @@ Good workplace communication is short, human, and considerate of other people's 
 
 Slop Grenade overlays your main Windows desktop monitor without interrupting your work (you can click and type right through the animations in any app):
 
-- **`human` (0–19)**: Barely visible, delicate plumes of warm sparkles drift gently and stick to the edge of your screen.
-- **`polish` (20–39)**: A small, calm cloud drifts to the edge of your monitor and stays perched on the bezel.
-- **`sprinkled` (40–59)**: One of **20 realistic, hand-illustrated fruits** (such as a Honeycrisp Apple, Bartlett Pear, Ruby Strawberry, Emerald Kiwi, or Alphonso Mango) bounces in and sticks to the edge buildup.
-- **`ai-cannon` (60–79)**: A compact lump of glossy vinyl slop splats onto the edge of your screen.
+- **`human` (0–19)**: Barely visible, delicate plumes of warm sparkles shine, twinkle, and fade smoothly into nothing.
+- **`polish` (20–39)**: A small, calm cloud drifts softly from the edge of your monitor and fades into nothing.
+- **`sprinkled` (40–59)**: One of **20 realistic, hand-illustrated fruits** (such as a Honeycrisp Apple, Bartlett Pear, Ruby Strawberry, Emerald Kiwi, or Alphonso Mango) bounces in and sticks to the edge buildup until squeegeed.
+- **`ai-cannon` (60–79)**: A compact lump of glossy vinyl slop splats onto the edge of your screen and stays until squeegeed.
 - **`slop-grenade` (80–100)**: A **dull metallic blue hand grenade** arcs across your desktop, impacts the side of your monitor, and drips glossy vinyl slop down the bezel:
   - **Slop You Receive (Left Side of Monitor)**: Drips and builds up in **Plastic Pink**.
   - **Slop You Send (Right Side of Monitor)**: Drips and builds up in **Plastic Blue**.
-  - **Daily Buildup & Squeegee**: Every item (`slop-grenade`, `ai-cannon`, `sprinkled`, `polish`, and `human`) stays stuck along the sides of your monitor as the day progresses—sized compactly so even 500 emails and 500 Teams messages fit along the bezel—until you click **Squeegee Left** or **Squeegee Right** to wipe that side clean.
+  - **Daily Buildup & Squeegee**: Fruit (`sprinkled`) and grenades/slop (`slop-grenade` and `ai-cannon`) stay stuck along the sides of your monitor as the day progresses—sized compactly so even 500 emails and 500 Teams messages fit along the bezel—until you click **Squeegee Left** or **Squeegee Right** in the System Tray icon to wipe that side clean.
 
 ---
 

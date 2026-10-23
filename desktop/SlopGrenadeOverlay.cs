@@ -343,8 +343,14 @@ namespace SlopGrenadeDesktop
                     Sender = sender ?? "M365 Colleague",
                     Subject = subject ?? "M365 Message",
                     Elapsed = 0f,
-                    Duration = tier == AnimationTier.SlopGrenade ? 6f : (tier == AnimationTier.SlopSplat ? 4.5f : 2.4f),
-                    PersistentSlop = true,
+                    Duration = tier == AnimationTier.SlopGrenade
+                        ? 6f
+                        : (tier == AnimationTier.SlopSplat
+                            ? 4.5f
+                            : (tier == AnimationTier.InnocentFruit ? 2.4f : 4.5f)),
+                    PersistentSlop = (tier == AnimationTier.SlopGrenade
+                        || tier == AnimationTier.SlopSplat
+                        || tier == AnimationTier.InnocentFruit),
                     StartX = startX,
                     StartY = startY,
                     ImpactX = impactX,
@@ -656,33 +662,15 @@ namespace SlopGrenadeDesktop
             else if (anim.Tier == AnimationTier.PeacefulCloud)
             {
                 float inward = anim.Side == MonitorSide.Left ? 1f : -1f;
-                if (anim.Elapsed < anim.Duration)
-                {
-                    anim.Phase = GrenadePhase.SlidingGoop;
-                    float t = anim.Elapsed / anim.Duration;
-                    anim.CurrentX = anim.ImpactX + inward * (64f * (1f - t * 0.75f));
-                    anim.CurrentY = anim.ImpactY + (float)Math.Sin(anim.Elapsed * 2.2) * 5f * (1f - t);
-                }
-                else
-                {
-                    anim.Phase = GrenadePhase.Accumulated;
-                    anim.CurrentX = anim.ImpactX + inward * 16f;
-                }
+                anim.CurrentX = anim.ImpactX + inward * (24f + anim.Elapsed * 14f);
+                anim.CurrentY = anim.ImpactY + (float)Math.Sin(anim.Elapsed * 2.0) * 6f;
             }
             else
             {
-                if (anim.Elapsed < anim.Duration)
+                foreach (SparkleParticle sp in anim.Sparkles)
                 {
-                    anim.Phase = GrenadePhase.SlidingGoop;
-                    foreach (SparkleParticle sp in anim.Sparkles)
-                    {
-                        sp.X += sp.Vx * dt * 0.4f + (float)Math.Sin(anim.Elapsed * 3.0 + sp.TwinklePhase) * 0.2f;
-                        sp.Y += sp.Vy * dt * 0.4f;
-                    }
-                }
-                else
-                {
-                    anim.Phase = GrenadePhase.Accumulated;
+                    sp.X += sp.Vx * dt + (float)Math.Sin(anim.Elapsed * 4.5 + sp.TwinklePhase) * 0.35f;
+                    sp.Y += sp.Vy * dt;
                 }
             }
         }
@@ -692,7 +680,7 @@ namespace SlopGrenadeDesktop
             float progress = anim.Elapsed / anim.Duration;
             float fadeOut = anim.PersistentSlop
                 ? 1f
-                : (progress > 0.78f ? Math.Max(0f, 1f - (progress - 0.78f) / 0.22f) : 1f);
+                : (progress > 0.35f ? Math.Max(0f, 1f - (progress - 0.35f) / 0.65f) : 1f);
 
             GraphicsState state = g.Save();
             if (anim.ShakeIntensity > 0f)
@@ -1114,24 +1102,26 @@ namespace SlopGrenadeDesktop
         {
             foreach (SparkleParticle sp in anim.Sparkles)
             {
-                float twinkle = 0.65f + 0.35f * (float)Math.Sin(anim.Elapsed * 6.0 + sp.TwinklePhase);
+                float twinkle = 0.45f + 0.55f * (float)Math.Abs(Math.Sin(anim.Elapsed * 9.5 + sp.TwinklePhase));
                 int alpha = Math.Max(0, Math.Min(255, (int)(sp.Alpha * twinkle * fadeOut * 255f)));
                 if (alpha <= 4) continue;
                 using (SolidBrush sb = new SolidBrush(Color.FromArgb(alpha, 253, 230, 138)))
+                using (SolidBrush core = new SolidBrush(Color.FromArgb(Math.Min(255, alpha + 35), 255, 255, 255)))
                 {
-                    float s = sp.Size;
+                    float s = sp.Size * (0.85f + 0.35f * twinkle);
                     PointF[] star = new PointF[]
                     {
-                        new PointF(sp.X, sp.Y - s * 2.2f),
-                        new PointF(sp.X + s * 0.6f, sp.Y - s * 0.6f),
-                        new PointF(sp.X + s * 2.2f, sp.Y),
-                        new PointF(sp.X + s * 0.6f, sp.Y + s * 0.6f),
-                        new PointF(sp.X, sp.Y + s * 2.2f),
-                        new PointF(sp.X - s * 0.6f, sp.Y + s * 0.6f),
-                        new PointF(sp.X - s * 2.2f, sp.Y),
-                        new PointF(sp.X - s * 0.6f, sp.Y - s * 0.6f)
+                        new PointF(sp.X, sp.Y - s * 2.4f),
+                        new PointF(sp.X + s * 0.55f, sp.Y - s * 0.55f),
+                        new PointF(sp.X + s * 2.4f, sp.Y),
+                        new PointF(sp.X + s * 0.55f, sp.Y + s * 0.55f),
+                        new PointF(sp.X, sp.Y + s * 2.4f),
+                        new PointF(sp.X - s * 0.55f, sp.Y + s * 0.55f),
+                        new PointF(sp.X - s * 2.4f, sp.Y),
+                        new PointF(sp.X - s * 0.55f, sp.Y - s * 0.55f)
                     };
                     g.FillPolygon(sb, star);
+                    g.FillEllipse(core, sp.X - s * 0.45f, sp.Y - s * 0.45f, s * 0.9f, s * 0.9f);
                 }
             }
         }
