@@ -145,9 +145,9 @@ impl WorkIqClient {
 
         let entity_urls = vec![
             "/me?$select=id,displayName,mail,userPrincipalName".to_string(),
-            "/me/mailFolders/inbox/messages?$select=id,subject,from,bodyPreview,body,receivedDateTime&$top=5".to_string(),
-            "/me/mailFolders/sentitems/messages?$select=id,subject,from,bodyPreview,body,sentDateTime&$top=5".to_string(),
-            "/me/chats?$select=id,topic,chatType&$top=4".to_string(),
+            "/me/mailFolders/inbox/messages?$select=id,subject,from,bodyPreview,body,receivedDateTime&$top=15".to_string(),
+            "/me/mailFolders/sentitems/messages?$select=id,subject,from,bodyPreview,body,sentDateTime&$top=15".to_string(),
+            "/me/chats?$select=id,topic,chatType&$top=5".to_string(),
         ];
 
         let payload = self
@@ -157,13 +157,13 @@ impl WorkIqClient {
 
         let mut samples = parse_workiq_fetch_bundle(&payload, self.account().as_deref());
 
-        // If chats were returned, also fetch the latest messages from the top 2 active chats
+        // If chats were returned, also fetch the latest messages from the top 5 active chats
         let chat_ids = extract_chat_ids(&payload);
         if !chat_ids.is_empty() {
             let chat_urls: Vec<String> = chat_ids
                 .into_iter()
-                .take(2)
-                .map(|id| format!("/me/chats/{id}/messages?$top=5"))
+                .take(5)
+                .map(|id| format!("/me/chats/{id}/messages?$top=10"))
                 .collect();
             if let Ok(chat_payload) = self.call_mcp_fetch(bin, &chat_urls).await {
                 let my_email = extract_me_email(&payload).or_else(|| self.account());

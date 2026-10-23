@@ -1183,73 +1183,6 @@ namespace SlopGrenadeDesktop
     }
 
     /// <summary>
-    /// Small topmost floating Squeegee button docked on the Left or Right edge of the desktop monitor.
-    /// </summary>
-    internal sealed class SqueegeeEdgeButtonForm : Form
-    {
-        private readonly MonitorSide _side;
-        private readonly Button _btn;
-        private readonly Action _onClick;
-
-        public SqueegeeEdgeButtonForm(MonitorSide side, Action onClick)
-        {
-            _side = side;
-            _onClick = onClick;
-
-            FormBorderStyle = FormBorderStyle.None;
-            ShowInTaskbar = false;
-            StartPosition = FormStartPosition.Manual;
-            TopMost = true;
-            Width = 148;
-            Height = 32;
-            BackColor = side == MonitorSide.Left ? Color.FromArgb(68, 24, 16) : Color.FromArgb(30, 44, 62);
-
-            Rectangle screen = Screen.PrimaryScreen.WorkingArea;
-            Left = side == MonitorSide.Left ? screen.Left + 10 : (screen.Right - Width - 10);
-            Top = screen.Top + 10;
-
-            _btn = new Button
-            {
-                Dock = DockStyle.Fill,
-                FlatStyle = FlatStyle.Flat,
-                ForeColor = Color.FromArgb(248, 250, 252),
-                BackColor = BackColor,
-                Font = new Font("Segoe UI", 8.5f, FontStyle.Bold),
-                Text = side == MonitorSide.Left ? "Squeegee Left" : "Squeegee Right",
-                Cursor = Cursors.Hand
-            };
-            _btn.FlatAppearance.BorderColor = side == MonitorSide.Left
-                ? Color.FromArgb(255, 66, 158)
-                : Color.FromArgb(0, 150, 255);
-            _btn.FlatAppearance.BorderSize = 1;
-            _btn.Click += (s, e) => _onClick();
-            Controls.Add(_btn);
-        }
-
-        protected override CreateParams CreateParams
-        {
-            get
-            {
-                CreateParams cp = base.CreateParams;
-                cp.ExStyle |= NativeWin32.WS_EX_TOPMOST
-                            | NativeWin32.WS_EX_TOOLWINDOW
-                            | NativeWin32.WS_EX_NOACTIVATE;
-                return cp;
-            }
-        }
-
-        protected override bool ShowWithoutActivation
-        {
-            get { return true; }
-        }
-
-        public void UpdateCount(int count)
-        {
-            // Keep clean label without numeric count suffix
-        }
-    }
-
-    /// <summary>
     /// Native Windows System Tray Flyout displaying two daily gauges (Received vs Sent Slop,
     /// resetting at midnight daily), settings toggles, squeegee buttons, and Dashboard launcher.
     /// </summary>
@@ -1462,8 +1395,6 @@ namespace SlopGrenadeDesktop
         private const string RunRegistryValueName = "SlopGrenade";
 
         private static DesktopOverlayForm _overlay;
-        private static SqueegeeEdgeButtonForm _leftSqueegeeBtn;
-        private static SqueegeeEdgeButtonForm _rightSqueegeeBtn;
         private static TrayGaugeFlyoutForm _trayFlyout;
         private static NotifyIcon _trayIcon;
         private static Process _daemonProcess;
@@ -1494,14 +1425,6 @@ namespace SlopGrenadeDesktop
             EnsureRustDaemonRunning();
 
             _overlay = new DesktopOverlayForm();
-            _leftSqueegeeBtn = new SqueegeeEdgeButtonForm(MonitorSide.Left, () => TriggerSqueegee(MonitorSide.Left));
-            _rightSqueegeeBtn = new SqueegeeEdgeButtonForm(MonitorSide.Right, () => TriggerSqueegee(MonitorSide.Right));
-
-            _overlay.SlopCountsChanged += (l, r) =>
-            {
-                _leftSqueegeeBtn.UpdateCount(l);
-                _rightSqueegeeBtn.UpdateCount(r);
-            };
 
             _trayFlyout = new TrayGaugeFlyoutForm(
                 IsRunAtStartupEnabled(),
@@ -1517,8 +1440,6 @@ namespace SlopGrenadeDesktop
                 });
 
             _overlay.Show();
-            _leftSqueegeeBtn.Show();
-            _rightSqueegeeBtn.Show();
 
             SetupSystemTrayIcon();
             RefreshDailyTrayMetrics();
@@ -1531,6 +1452,12 @@ namespace SlopGrenadeDesktop
                 _overlay.StepAndRender();
             };
             renderTimer.Start();
+
+            // Ping WorkIQ MCP every 1 minute (60,000 ms) so each new message triggers an animation
+            System.Windows.Forms.Timer workiqPollTimer = new System.Windows.Forms.Timer { Interval = 60000 };
+            workiqPollTimer.Tick += (s, e) => TriggerPostAsync("/api/v1/scan/now", "{\"useLuna\":false}");
+            workiqPollTimer.Start();
+            TriggerPostAsync("/api/v1/scan/now", "{\"useLuna\":false}");
 
             // Start SSE subscriber thread listening to the background Rust daemon
             Thread sseThread = new Thread(SseListenerLoop) { IsBackground = true };
@@ -1589,8 +1516,7 @@ namespace SlopGrenadeDesktop
             }
             if (_trayIcon != null)
             {
-                _trayIcon.Icon = CreateDualGaugeTrayIcon(recAvg, sentAvg);
-                _trayIcon.Text = string.Format("Slop Grenade — Today In: {0}/100 ({1}) | Out: {2}/100 ({3})",
+                _trayIcon.Text = string.Format("Slop Grenade — Today In: {0}% ({1}) | Out: {2}% ({3})",
                     recAvg, _dailyRecCount, sentAvg, _dailySentCount);
             }
         }
@@ -1653,20 +1579,20 @@ namespace SlopGrenadeDesktop
             startupItem.CheckedChanged += (s, e) => SetRunAtStartup(startupItem.Checked);
             menu.Items.Add(startupItem);
             menu.Items.Add(new ToolStripSeparator());
-            menu.Items.Add("Throw Incoming Slop Grenade (Brown-Red, Left)", null, (s, e) =>
+            menu.Items.Add("Throw Incoming slop-grenade (Plastic Pink, Left)", null, (s, e) =>
             {
                 RecordDailyMessageMetric(MonitorSide.Left, 96);
-                _overlay.SpawnAnimation(AnimationTier.SlopGrenade, MonitorSide.Left, 96, "Colleague (Teams)", "Incoming Slop Grenade");
+                _overlay.SpawnAnimation(AnimationTier.SlopGrenade, MonitorSide.Left, 96, "Colleague (Teams)", "Incoming slop-grenade");
             });
-            menu.Items.Add("Throw Outgoing Slop Grenade (Brown-Blue, Right)", null, (s, e) =>
+            menu.Items.Add("Throw Outgoing slop-grenade (Plastic Blue, Right)", null, (s, e) =>
             {
                 RecordDailyMessageMetric(MonitorSide.Right, 98);
-                _overlay.SpawnAnimation(AnimationTier.SlopGrenade, MonitorSide.Right, 98, "You (Outgoing)", "My Outgoing Slop Grenade");
+                _overlay.SpawnAnimation(AnimationTier.SlopGrenade, MonitorSide.Right, 98, "You (Outgoing)", "My Outgoing slop-grenade");
             });
-            menu.Items.Add("Burst 5 Random Fruits (20 Varieties)", null, (s, e) => BurstDesktopFruits(5));
+            menu.Items.Add("Burst 5 sprinkled Fruits (20 Varieties)", null, (s, e) => BurstDesktopFruits(5));
             menu.Items.Add(new ToolStripSeparator());
-            menu.Items.Add("Squeegee Left Monitor Edge (Brown-Red)", null, (s, e) => TriggerSqueegee(MonitorSide.Left));
-            menu.Items.Add("Squeegee Right Monitor Edge (Brown-Blue)", null, (s, e) => TriggerSqueegee(MonitorSide.Right));
+            menu.Items.Add("Squeegee Left", null, (s, e) => TriggerSqueegee(MonitorSide.Left));
+            menu.Items.Add("Squeegee Right", null, (s, e) => TriggerSqueegee(MonitorSide.Right));
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add("Quit Slop Grenade", null, (s, e) =>
             {
@@ -1676,8 +1602,8 @@ namespace SlopGrenadeDesktop
 
             _trayIcon = new NotifyIcon
             {
-                Icon = CreateDualGaugeTrayIcon(87, 48),
-                Text = "Slop Grenade — Click for Daily In/Out Gauges & Settings",
+                Icon = CreateBrightPinkGrenadeTrayIcon(),
+                Text = "Slop Grenade — Click for Daily In/Out Gauges & Squeegee",
                 ContextMenuStrip = menu,
                 Visible = true
             };
@@ -1692,33 +1618,37 @@ namespace SlopGrenadeDesktop
         }
 
         /// <summary>
-        /// Renders two vertical gauges directly inside the 32x32 System Tray icon:
-        /// Left bar = Received Slop Today (Brown-Red), Right bar = Sent Slop Today (Brown-Blue).
+        /// Renders a crisp Bright Pink Hand Grenade icon for the Windows System Tray.
         /// </summary>
-        private static Icon CreateDualGaugeTrayIcon(int inAvg, int outAvg)
+        private static Icon CreateBrightPinkGrenadeTrayIcon()
         {
             using (Bitmap bmp = new Bitmap(32, 32, PixelFormat.Format32bppArgb))
             using (Graphics g = Graphics.FromImage(bmp))
             {
                 g.SmoothingMode = SmoothingMode.AntiAlias;
-                using (SolidBrush bg = new SolidBrush(Color.FromArgb(245, 20, 23, 28)))
-                using (Pen border = new Pen(Color.FromArgb(255, 55, 65, 81), 1.5f))
-                using (SolidBrush track = new SolidBrush(Color.FromArgb(255, 38, 42, 51)))
-                using (SolidBrush inBrush = new SolidBrush(Color.FromArgb(255, 168, 66, 48)))
-                using (SolidBrush outBrush = new SolidBrush(Color.FromArgb(255, 68, 108, 148)))
+
+                // Bright pink pineapple grenade body
+                using (SolidBrush body = new SolidBrush(Color.FromArgb(255, 255, 46, 147)))
+                using (SolidBrush highlight = new SolidBrush(Color.FromArgb(255, 255, 133, 194)))
+                using (Pen outline = new Pen(Color.FromArgb(255, 158, 12, 82), 2f))
+                using (Pen groove = new Pen(Color.FromArgb(200, 143, 8, 71), 1.4f))
+                using (SolidBrush neck = new SolidBrush(Color.FromArgb(255, 203, 213, 225)))
+                using (Pen lever = new Pen(Color.FromArgb(255, 226, 232, 240), 2f))
+                using (SolidBrush spark = new SolidBrush(Color.FromArgb(255, 250, 204, 21)))
                 {
-                    g.FillRectangle(bg, 1, 1, 30, 30);
-                    g.DrawRectangle(border, 1, 1, 29, 29);
+                    g.FillEllipse(body, 6, 8, 20, 22);
+                    g.FillEllipse(highlight, 9, 11, 6, 8);
+                    g.DrawEllipse(outline, 6, 8, 20, 22);
 
-                    // Left gauge track & fill (Received In)
-                    g.FillRectangle(track, 5, 5, 9, 22);
-                    int inH = Math.Max(2, Math.Min(22, (int)Math.Round((inAvg / 100.0) * 22.0)));
-                    g.FillRectangle(inBrush, 5, 27 - inH, 9, inH);
+                    // Pineapple waffle grooves
+                    g.DrawLine(groove, 7, 15, 25, 15);
+                    g.DrawLine(groove, 7, 22, 25, 22);
+                    g.DrawLine(groove, 16, 9, 16, 29);
 
-                    // Right gauge track & fill (Sent Out)
-                    g.FillRectangle(track, 18, 5, 9, 22);
-                    int outH = Math.Max(2, Math.Min(22, (int)Math.Round((outAvg / 100.0) * 22.0)));
-                    g.FillRectangle(outBrush, 18, 27 - outH, 9, outH);
+                    // Fuse neck, lever, and top spark
+                    g.FillRectangle(neck, 12, 4, 8, 5);
+                    g.DrawLine(lever, 20, 5, 26, 18);
+                    g.FillEllipse(spark, 13, 0, 6, 5);
                 }
                 return Icon.FromHandle(bmp.GetHicon());
             }

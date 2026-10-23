@@ -35,7 +35,7 @@ impl Default for AppConfig {
         Self {
             http_bind: "127.0.0.1:8090".to_string(),
             web_asset_dir: PathBuf::from("../web/build"),
-            poll_interval_secs: 30,
+            poll_interval_secs: 60,
             auto_poll_enabled: true,
             luna_enabled: true,
             luna_model: "gpt-5.6-luna".to_string(),

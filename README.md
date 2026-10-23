@@ -82,15 +82,13 @@ What this does automatically:
 
 ## Using the System Tray & Habit Dashboard
 
-### 1. The System Tray Icon (Daily Midnight-Resetting Gauges)
-Look for the **Slop Grenade** icon in your Windows System Tray (bottom-right taskbar near the clock):
-- The icon itself displays **two live vertical gauges** that reset automatically at midnight (`00:00`) every day:
-  - **Left Bar (Brown-Red)**: How much AI slop you have **received** today.
-  - **Right Bar (Brown-Blue)**: How much AI slop you have **sent** today.
-- **Left-click the Tray Icon** to open the compact popup where you can:
-  - View today's **Received (In)** and **Sent (Out)** slop gauges.
-  - Toggle **Run at Windows startup**, **Teams / Outlook monitoring**, and **Slop / Non-Slop animations**.
+### 1. The System Tray Icon (Bright Pink Hand Grenade)
+Look for the **Bright Pink Hand Grenade** icon in your Windows System Tray (bottom-right taskbar near the clock):
+- Slop Grenade pings your **WorkIQ MCP** server every **1 minute** and triggers a desktop animation for each and every new message that comes through (automated and machine-generated system replies are always classified as the gentle `human` sparkle type).
+- **Left-click the Tray Icon** to open the compact tray popup where you can:
+  - View today's **Received (In)** and **Sent (Out)** slop gauges (which reset automatically at `00:00` midnight daily and progress from **White at 0% to Fully Purple at 100%**).
   - Click **Squeegee Left** or **Squeegee Right** to wipe your monitor edges clean.
+  - Toggle **Run at Windows startup**, **Teams / Outlook monitoring**, and **Slop / Non-Slop animations**.
   - Click **Open Dashboard**.
 
 ### 2. The Habit Dashboard (`http://127.0.0.1:8090/`)

@@ -323,9 +323,46 @@ impl SlopDetector {
 
     /// Analyze a [`MessageSample`] deterministically and produce a [`SlopReport`].
     pub fn analyze(&self, sample: &MessageSample) -> SlopReport {
-        let lower = sample.body.to_lowercase();
         let words: Vec<&str> = sample.body.split_whitespace().collect();
         let word_count = words.len();
+        let monitor_side = match sample.direction {
+            MessageDirection::Received => MonitorSide::Left,
+            MessageDirection::Sent => MonitorSide::Right,
+        };
+
+        // Machine-generated and automated responses are always classified as the Sparkle (`human`) tier.
+        if is_automated_or_machine_generated(sample) {
+            return SlopReport {
+                message_id: sample.message_id.clone(),
+                app: sample.app,
+                direction: sample.direction,
+                sender: sample.sender.clone(),
+                subject_or_topic: sample.subject_or_topic.clone(),
+                timestamp: sample.timestamp.clone(),
+                word_count,
+                slop_score: 4,
+                heuristic_score: 4,
+                luna_score: None,
+                tier: AnimationTier::HumanSparkle,
+                is_slop_grenade: false,
+                monitor_side,
+                breakdown: SignalBreakdown {
+                    lexical_score: 0,
+                    structural_score: 0,
+                    burstiness_score: 0,
+                    handoff_score: 0,
+                    luna_score: None,
+                },
+                signals: Vec::new(),
+                summary: "Automated / machine-generated response classified as sparkle (human)."
+                    .to_string(),
+                self_awareness_tip:
+                    "Automated system or calendar response — classified as sparkle.".to_string(),
+                redacted_preview: redact_preview(&sample.body),
+            };
+        }
+
+        let lower = sample.body.to_lowercase();
         let mut signals = Vec::new();
 
         // 1. Lexical clichés & AI vocabulary
@@ -526,6 +563,12 @@ impl SlopDetector {
         mut report: SlopReport,
         judgment: &LunaJudgment,
     ) -> SlopReport {
+        if report
+            .summary
+            .starts_with("Automated / machine-generated response")
+        {
+            return report;
+        }
         let clamped_luna = judgment.slop_score.min(100);
         // Blend heuristic and GPT Luna scores (55% GPT Luna + 45% deterministic heuristics,
         // while preserving high-confidence grenade detections from either source).
@@ -559,6 +602,66 @@ impl SlopDetector {
         }
         report
     }
+}
+
+/// Determine whether a communication is an automated system notification or machine-generated
+/// auto-response (which must always be classified as [`AnimationTier::HumanSparkle`]).
+pub fn is_automated_or_machine_generated(sample: &MessageSample) -> bool {
+    let sender = sample.sender.to_lowercase();
+    let subject = sample.subject_or_topic.to_lowercase();
+    let body = sample.body.to_lowercase();
+
+    let automated_sender_markers = [
+        "no-reply",
+        "noreply",
+        "do-not-reply",
+        "donotreply",
+        "mailer-daemon",
+        "postmaster",
+        "microsoft viva",
+        "viva-noreply",
+        "sharepoint online",
+        "azuredevops",
+        "azure monitor",
+        "servicenow",
+        "[bot]",
+        "automated",
+        "notification@",
+        "alerts@",
+    ];
+    if automated_sender_markers.iter().any(|m| sender.contains(m)) {
+        return true;
+    }
+
+    let automated_subject_prefixes = [
+        "automatic reply:",
+        "auto-reply:",
+        "autoreply:",
+        "out of office",
+        "accepted:",
+        "declined:",
+        "tentative:",
+        "canceled:",
+        "cancelled:",
+        "undeliverable:",
+    ];
+    if automated_subject_prefixes
+        .iter()
+        .any(|p| subject.starts_with(p) || subject.contains(p))
+    {
+        return true;
+    }
+
+    let automated_body_markers = [
+        "this is an automated message",
+        "this is an automatically generated",
+        "please do not reply to this email",
+        "do not reply to this message",
+        "unsubscribe from these notifications",
+        "generated automatically by",
+        "microsoft viva briefing",
+    ];
+    automated_body_markers.iter().any(|m| body.contains(m))
 }
 
 fn compute_low_burstiness_score(
@@ -865,5 +968,24 @@ mod tests {
         assert!(merged.slop_score >= 80);
         assert_eq!(merged.tier, AnimationTier::SlopGrenade);
         assert!(merged.is_slop_grenade);
+    }
+
+    #[test]
+    fn machine_generated_and_automated_responses_always_classify_as_sparkle() {
+        let detector = SlopDetector::new();
+        let auto_reply = MessageSample {
+            message_id: "auto-1".to_string(),
+            app: M365App::Outlook,
+            direction: MessageDirection::Received,
+            sender: "no-reply@contoso.com".to_string(),
+            subject_or_topic: "Automatic reply: Q4 Strategy".to_string(),
+            body: "This is an automated message. I am currently Out of Office:\n- **Key Takeaways:** Fostering holistic synergy.\n- **Strategic Alignment:** Delving into our evolving landscape.".to_string(),
+            timestamp: "2026-10-23T15:00:00Z".to_string(),
+        };
+
+        let report = detector.analyze(&auto_reply);
+        assert_eq!(report.tier, AnimationTier::HumanSparkle);
+        assert!(!report.is_slop_grenade);
+        assert!(report.slop_score <= 19);
     }
 }
