@@ -1,6 +1,6 @@
 [package]
 name = "slop-grenade"
-version = "0.1.0"
+version = "0.2.1"
 edition = "2021"
 description = "Real-time M365 AI Slop & Slop Grenade detector via WorkIQ MCP and GitHub GPT Luna with physics monitor overlay."
 license-file = "../LICENSE"
