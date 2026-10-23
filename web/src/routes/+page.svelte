@@ -251,68 +251,66 @@
     <div class="main-col">
       <!-- Daily In / Out Slop Gauges (0–100% Marker, White -> Fully Purple) -->
       <section class="gauges-row" aria-label="In and Out Slop Gauges">
+        {#snippet gaugeVisual(score: number, gradId: string)}
+          {@const marker = gaugeMarkerCoords(score)}
+          {@const markerColor = gaugeWhiteToPurpleColor(score)}
+          <svg viewBox="0 0 180 104" class="gauge-svg" aria-label="Slop gauge">
+            <defs>
+              <linearGradient id={gradId} x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stop-color="#ffffff" />
+                <stop offset="45%" stop-color="#d8b4fe" />
+                <stop offset="100%" stop-color="#9333ea" />
+              </linearGradient>
+            </defs>
+            <path
+              d="M 26 84 A 64 64 0 0 1 154 84"
+              fill="none"
+              stroke="#262930"
+              stroke-width="14"
+              stroke-linecap="butt"
+            />
+            {#if score > 0}
+              <path
+                d={gaugeArcPath(score)}
+                fill="none"
+                stroke="url(#{gradId})"
+                stroke-width="14"
+                stroke-linecap="butt"
+              />
+            {/if}
+            <text x="16" y="98" text-anchor="middle" class="scale-txt">0%</text>
+            <text x="90" y="13" text-anchor="middle" class="scale-txt">50%</text>
+            <text x="164" y="98" text-anchor="middle" class="scale-txt">100%</text>
+
+            <line
+              x1={marker.innerX}
+              y1={marker.innerY}
+              x2={marker.x}
+              y2={marker.y}
+              stroke={markerColor}
+              stroke-width="3"
+            />
+            <circle
+              cx={marker.x}
+              cy={marker.y}
+              r="6"
+              fill={markerColor}
+              stroke="#111317"
+              stroke-width="2"
+            />
+            <text x="90" y="70" text-anchor="middle" class="gauge-num" fill={markerColor}>
+              {score}%
+            </text>
+            <text x="90" y="86" text-anchor="middle" class="gauge-unit">SLOP LEVEL</text>
+          </svg>
+        {/snippet}
+
         <div class="panel gauge-panel">
           <div class="panel-head">
             <h2>Received Slop (In)</h2>
             <span class="meta">0% White → 100% Purple • Resets 00:00</span>
           </div>
           <div class="gauge-body">
-            {#snippet gaugeVisual(score: number, gradId: string)}
-              {@const marker = gaugeMarkerCoords(score)}
-              {@const markerColor = gaugeWhiteToPurpleColor(score)}
-              <svg viewBox="0 0 180 104" class="gauge-svg" aria-label="Slop gauge">
-                <defs>
-                  <linearGradient id={gradId} x1="0%" y1="0%" x2="100%" y2="0%">
-                    <stop offset="0%" stop-color="#ffffff" />
-                    <stop offset="45%" stop-color="#d8b4fe" />
-                    <stop offset="100%" stop-color="#9333ea" />
-                  </linearGradient>
-                </defs>
-                <path
-                  d="M 26 84 A 64 64 0 0 1 154 84"
-                  fill="none"
-                  stroke="#262930"
-                  stroke-width="14"
-                  stroke-linecap="butt"
-                />
-                {#if score > 0}
-                  <path
-                    d={gaugeArcPath(score)}
-                    fill="none"
-                    stroke="url(#{gradId})"
-                    stroke-width="14"
-                    stroke-linecap="butt"
-                  />
-                {/if}
-                <!-- 0%, 50%, 100% scale labels -->
-                <text x="16" y="98" text-anchor="middle" class="scale-txt">0%</text>
-                <text x="90" y="13" text-anchor="middle" class="scale-txt">50%</text>
-                <text x="164" y="98" text-anchor="middle" class="scale-txt">100%</text>
-
-                <!-- Gauge Marker showing exact 0–100% position -->
-                <line
-                  x1={marker.innerX}
-                  y1={marker.innerY}
-                  x2={marker.x}
-                  y2={marker.y}
-                  stroke={markerColor}
-                  stroke-width="3"
-                />
-                <circle
-                  cx={marker.x}
-                  cy={marker.y}
-                  r="6"
-                  fill={markerColor}
-                  stroke="#111317"
-                  stroke-width="2"
-                />
-                <text x="90" y="70" text-anchor="middle" class="gauge-num" fill={markerColor}>
-                  {score}%
-                </text>
-                <text x="90" y="86" text-anchor="middle" class="gauge-unit">SLOP LEVEL</text>
-              </svg>
-            {/snippet}
-
             {@render gaugeVisual(gauges.received.averageScore, 'grad-in')}
             <div class="gauge-stats">
               <div>
