@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite dev",
-    "build": "vite build",
+    "build": "node -e \"const{spawnSync}=require('node:child_process');process.exit(spawnSync(process.execPath,['./node_modules/vite/bin/vite.js','build'],{cwd:process.cwd().replace(/^[a-z]:/,m=>m.toUpperCase()),stdio:'inherit'}).status??1)\"",
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "test": "node -e \"const{spawnSync}=require('node:child_process');process.exit(spawnSync(process.execPath,['./node_modules/vitest/vitest.mjs','run'],{cwd:process.cwd().replace(/^[a-z]:/,m=>m.toUpperCase()),stdio:'inherit'}).status??1)\""
