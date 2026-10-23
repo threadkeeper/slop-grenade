@@ -41,7 +41,7 @@ Slop Grenade consists of three coordinated components:
    - Built with stable Rust (`axum` + `tokio`), enforcing `unsafe_code = "forbid"` and `missing_docs = "deny"`.
    - **Modules**:
      - `slop_detector.rs`: Deterministic linguistic, structural, burstiness, and passive-handoff analyzer + 5-tier animation classifier (`HumanSparkle`, `PeacefulCloud`, `InnocentFruit`, `SlopSplat`, `SlopGrenade`).
-     - `workiq_mcp.rs`: JSON-RPC 2.0 stdio client for the local Microsoft 365 `workiq mcp` server. Recent polling reads inbox/sent items and recent chats; a seven-day refresh pages through non-draft mailbox messages, all chats, and their date-filtered message collections.
+     - `workiq_mcp.rs`: JSON-RPC 2.0 stdio client for the local Microsoft 365 `workiq mcp` server. Recent polling reads inbox/sent items and recent chats; a seven-day refresh pages through non-draft mailbox messages, chats active in the week, and their date-filtered message collections.
      - `llm_luna.rs`: GitHub Copilot Responses API client (`POST https://api.githubcopilot.com/responses` with `model: "gpt-5.6-luna"`).
      - `ledger.rs`: In-memory directional habit ledger tracking daily midnight-resetting gauges, historical reports, **Top 5 Sloppers**, and **Top 5 P-Doomers**. Retains the full UTC days covering the rolling seven-day window plus up to 360 older reports, and returns reports newest first.
      - `event_bus.rs`: Broadcast channel for real-time desktop overlay animations and squeegee wipes.
@@ -84,6 +84,7 @@ A successful history response includes `ok: true`, `lookbackDays: 7`, and `batch
 
 The UTC window is fixed when fetching starts: `start < message timestamp <= end`, with `start = end - 7 days`.
 Mailbox queries exclude drafts. Teams uses matched `$orderby=lastModifiedDateTime desc` and `$filter=lastModifiedDateTime gt ...`, then filters actual creation timestamps locally so edits to older messages are not imported as new history.
+Chat discovery expands `lastMessagePreview`, orders it newest first, and filters `lastMessagePreview/createdDateTime` to the week. It does not use `lastUpdatedDateTime`, which tracks renames and membership changes, or the unsupported chat-list `$select` option. All next links are still followed, including empty filtered pages that have a continuation, without a chat-count cap.
 Every collection follows opaque Graph `@odata.nextLink` values, without rebuilding skip tokens. Unexpected hosts and repeated paging URLs fail explicitly. Teams IDs are scoped to their chat, and account IDs identify outgoing messages.
 
 History ingestion shares the normal deduplication state but records without animation broadcasts or LLM calls. Repeating a refresh does not increase counts for already observed message IDs.

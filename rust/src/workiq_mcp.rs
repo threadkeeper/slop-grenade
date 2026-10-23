@@ -187,24 +187,25 @@ impl WorkIqClient {
                 bin,
                 &["/me?$select=id,displayName,mail,userPrincipalName".to_string()],
             )
-            .await?;
+            .await
+            .map_err(|error| format!("WorkIQ identity lookup failed: {error}"))?;
         let me_email = extract_me_email(&identity).or_else(|| self.account());
         let me = extract_me_user_id(&identity).or_else(|| me_email.clone());
 
         let mail = self
             .fetch_history_pages(bin, history_mail_query(&cutoff))
-            .await?;
+            .await
+            .map_err(|error| format!("Outlook history fetch failed: {error}"))?;
         let mut samples = parse_workiq_fetch_bundle(&mail, me_email.as_deref());
         let chats = self
-            .fetch_history_pages(
-                bin,
-                "/me/chats?$select=id,topic,chatType&$top=50".to_string(),
-            )
-            .await?;
+            .fetch_history_pages(bin, history_chat_list_query(&cutoff))
+            .await
+            .map_err(|error| format!("Teams chat list fetch failed: {error}"))?;
         for id in extract_chat_ids(&chats) {
             let messages = self
                 .fetch_history_pages(bin, history_chat_query(&id, &cutoff))
-                .await?;
+                .await
+                .map_err(|error| format!("Teams message history fetch failed: {error}"))?;
             samples.extend(parse_chat_messages(&messages, me.as_deref(), Some(&id)));
         }
         filter_history_samples(samples, since, until)
@@ -396,6 +397,21 @@ fn history_mail_query(since: &str) -> String {
             &format!(
                 "isDraft eq false and (receivedDateTime ge {since} or sentDateTime ge {since})"
             ),
+        );
+    relative_graph_url(&url)
+}
+
+fn history_chat_list_query(since: &str) -> String {
+    let mut url = reqwest::Url::parse("https://graph.microsoft.com/me/chats")
+        .expect("fixed Microsoft Graph URL is valid");
+    // Membership updates are not message activity; filter on the latest message.
+    url.query_pairs_mut()
+        .append_pair("$expand", "lastMessagePreview")
+        .append_pair("$orderby", "lastMessagePreview/createdDateTime desc")
+        .append_pair("$top", "50")
+        .append_pair(
+            "$filter",
+            &format!("lastMessagePreview/createdDateTime gt {since}"),
         );
     relative_graph_url(&url)
 }
@@ -882,6 +898,30 @@ mod tests {
     use std::future::ready;
 
     #[test]
+    fn history_chat_list_filters_message_activity_not_membership_updates() {
+        let since = "2026-10-17T12:00:00.000Z";
+        let query = reqwest::Url::parse(&format!(
+            "https://graph.microsoft.com{}",
+            history_chat_list_query(since)
+        ))
+        .unwrap();
+        let params: std::collections::HashMap<_, _> = query.query_pairs().collect();
+        assert_eq!(query.path(), "/me/chats");
+        assert_eq!(
+            params.get("$filter").map(|value| value.as_ref()),
+            Some(format!("lastMessagePreview/createdDateTime gt {since}").as_str())
+        );
+        assert_eq!(params["$expand"], "lastMessagePreview");
+        assert_eq!(
+            params["$orderby"],
+            "lastMessagePreview/createdDateTime desc"
+        );
+        assert_eq!(params["$top"], "50");
+        assert!(!params.contains_key("$select"));
+        assert!(!query.as_str().contains("lastUpdatedDateTime"));
+    }
+
+    #[test]
     fn history_queries_use_a_seven_day_mail_filter_and_supported_teams_filter() {
         let since = "2026-10-17T12:00:00.000Z";
         let mail = reqwest::Url::parse(&format!(
@@ -947,6 +987,28 @@ mod tests {
             .map(Vec::len)
             .sum();
         assert_eq!(count, 101);
+    }
+
+    #[tokio::test]
+    async fn filtered_chat_pagination_follows_empty_pages_with_continuations() {
+        let first = history_chat_list_query("2026-10-17T12:00:00.000Z");
+        let second = format!("{first}&$skiptoken=opaque%2Fpage%2Btwo");
+        let mut responses = VecDeque::from([
+            json!({
+                "value": [],
+                "@odata.nextLink": format!("https://graph.microsoft.com/v1.0{second}")
+            }),
+            json!({ "value": [{ "id": "active-chat", "chatType": "group" }] }),
+        ]);
+        let mut requests = Vec::new();
+        let payload = fetch_all_pages(first.clone(), |path| {
+            requests.push(path);
+            ready(Ok(responses.pop_front().unwrap()))
+        })
+        .await
+        .unwrap();
+        assert_eq!(requests, vec![first, second]);
+        assert_eq!(extract_chat_ids(&payload), vec!["active-chat".to_string()]);
     }
 
     #[tokio::test]
