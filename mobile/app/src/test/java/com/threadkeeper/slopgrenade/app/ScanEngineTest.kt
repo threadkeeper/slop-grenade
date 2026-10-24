@@ -253,6 +253,38 @@ class ScanEngineTest {
         assertEquals("noreply@example.invalid", firstSample.getString("sender"))
         assertEquals("Automatic reply: fixture", firstSample.getString("subjectOrTopic"))
     }
+    @Test fun realGmailPositiveSizeMissingTextNeverIngestsOrAdvancesCheckpoint() {
+        for (full in listOf(true, false)) {
+            for (body in listOf("""{"size":100}""", """{"size":100,"data":""}""")) {
+                val store = Store(account.copy(session = "new"))
+                val calls = mutableListOf<JSONObject>()
+                val client = GmailClient { path ->
+                    when {
+                        path == "/profile" -> JSONObject("""{"historyId":"10"}""")
+                        path.startsWith(GmailClient.FULL) -> JSONObject("""{"messages":[{"id":"broken"}]}""")
+                        path.startsWith("/history?startHistoryId=9") ->
+                            JSONObject("""{"historyId":"10","history":[{"messagesAdded":[{"message":{"id":"broken"}}]}]}""")
+                        path == "/messages/broken?format=full" -> JSONObject()
+                            .put("id", "broken").put("internalDate", (System.currentTimeMillis() - 1000).toString())
+                            .put("payload", JSONObject().put("mimeType", "text/plain").put("body", JSONObject(body)))
+                        else -> error("Unexpected synthetic transport path")
+                    }
+                }
+                val engine = ScanEngine(store, api(calls), { "ephemeral" }, { a, _, cp -> client.scan(a.id, cp) })
+                if (full) {
+                    val result = engine.refreshAllSevenDays()
+                    assertFalse(result.ok)
+                    assertTrue(result.retry)
+                    assertEquals(0L, result.fetchedCount)
+                } else {
+                    assertTrue(engine.scanAll())
+                }
+                assertEquals(account.copy(session = "new"), store.all().single())
+                assertEquals(listOf("/internal/session"), calls.map { it.getString("path") })
+                assertTrue(engine.status.contains("MIME body unavailable"))
+            }
+        }
+    }
     @Test fun disconnectForwardsRetentionAcknowledgementAndReconnectUsesSameDedupIdentity() {
         val email = "synthetic@example.invalid"
         val id = AccountState.identity(email)

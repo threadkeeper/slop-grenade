@@ -5,7 +5,7 @@ const account = {
   id: 'local-account', label: 'Test mailbox', connected: true,
   lastSuccessfulScan: '2026-10-24T06:00:00Z', reconnectRequired: false
 };
-const status = { accounts: [account], backgroundStatus: 'Ready', overlayGranted: false, overlayActive: false };
+const status = { accounts: [account], backgroundStatus: 'Ready', overlayGranted: false, overlayActive: false, notificationsGranted: true };
 const json = (body: unknown, code = 200) => new Response(JSON.stringify(body), { status: code });
 const controllers: ReturnType<typeof createMailbox>[] = [];
 let host: EventTarget;
@@ -60,6 +60,7 @@ describe('native mailbox controller', () => {
       active = path === '/api/v1/overlay/permission';
       return json({ ok: true });
     });
+
     const { controller, state } = setup(fetcher);
     await controller.requestOverlay();
     expect(state().overlayActive).toBe(true);
@@ -71,6 +72,16 @@ describe('native mailbox controller', () => {
       '/api/v1/overlay/permission', '/api/v1/overlay/stop', '/api/v1/overlay/permission'
     ]);
     expect(state().accounts).toEqual([account]);
+  });
+
+  it('reports blocked effect notifications without disconnecting accounts or hiding scan status', async () => {
+    const { controller, state } = setup(vi.fn<typeof fetch>().mockResolvedValue(
+      json({ ...status, notificationsGranted: false })));
+    await controller.refresh();
+    expect(state().notificationsGranted).toBe(false);
+    expect(state().accounts).toEqual([account]);
+    expect(state().backgroundStatus).toBe('Ready');
+    expect(state().error).toBeNull();
   });
 
   it('supports repeated Add Gmail account and refreshes only after native OAuth completion', async () => {
@@ -127,7 +138,7 @@ describe('native mailbox controller', () => {
   });
 
   it.each([{}, { ...status, accounts: [{}] }, { ...status, overlayGranted: 'true' },
-    { ...status, overlayActive: 'true' }])(
+    { ...status, overlayActive: 'true' }, { ...status, notificationsGranted: 'true' }])(
     'rejects malformed account status: %j', async (body) => {
       const { controller, state } = setup(vi.fn<typeof fetch>().mockResolvedValue(json(body)));
       await controller.refresh();

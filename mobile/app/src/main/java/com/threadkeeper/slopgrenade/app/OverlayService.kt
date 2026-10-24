@@ -7,8 +7,10 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
@@ -33,6 +35,13 @@ class OverlayService : Service() {
     private lateinit var windows: WindowManager
     private val main = Handler(Looper.getMainLooper())
     private var permissionWatcher: AppOpsManager.OnOpChangedListener? = null
+    private var notificationReceiverRegistered = false
+    private val notificationPermissionReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            // Android broadcasts app/channel blocking changes; no polling or scanner coupling.
+            if (!notificationsAllowed(this@OverlayService)) stopOverlay()
+        }
+    }
     override fun onBind(intent: Intent?): IBinder? = null
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
@@ -69,6 +78,14 @@ class OverlayService : Service() {
         }
         if (view == null) {
             try {
+                if (!notificationReceiverRegistered) {
+                    val filter = IntentFilter(NotificationManager.ACTION_NOTIFICATION_CHANNEL_BLOCK_STATE_CHANGED)
+                        .apply { addAction(NotificationManager.ACTION_APP_BLOCK_STATE_CHANGED) }
+                    if (Build.VERSION.SDK_INT >= 33)
+                        registerReceiver(notificationPermissionReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+                    else registerReceiver(notificationPermissionReceiver, filter)
+                    notificationReceiverRegistered = true
+                }
                 if (permissionWatcher == null) {
                     val watcher = AppOpsManager.OnOpChangedListener { op, changedPackage ->
                         if (op == AppOpsManager.OPSTR_SYSTEM_ALERT_WINDOW && changedPackage == packageName)
@@ -101,7 +118,7 @@ class OverlayService : Service() {
                 view = webView
                 windows.addView(webView, params)
                 // Recheck after attaching in case consent changed during startup.
-                if (Settings.canDrawOverlays(this)) active = true else stopOverlay()
+                if (Settings.canDrawOverlays(this) && notificationsAllowed(this)) active = true else stopOverlay()
             } catch (_: Exception) { stopOverlay() }
         }
         return START_NOT_STICKY
@@ -137,6 +154,11 @@ class OverlayService : Service() {
 
     private fun releaseOverlay() {
         active = false
+        if (notificationReceiverRegistered) {
+            try { unregisterReceiver(notificationPermissionReceiver) }
+            catch (_: Exception) { /* Receiver may already be detached during system teardown. */ }
+            notificationReceiverRegistered = false
+        }
         permissionWatcher?.let {
             try { getSystemService(AppOpsManager::class.java).stopWatchingMode(it) }
             catch (_: Exception) { /* Still release the window if the system service is unavailable. */ }
@@ -170,10 +192,14 @@ class OverlayService : Service() {
         @Volatile var active = false
             private set
 
-        /** Denial never prevents dashboard use or independent Gmail scheduling. */
-        fun notificationsAllowed(context: Context): Boolean =
-            (Build.VERSION.SDK_INT < 33 ||
-                context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) &&
-                context.getSystemService(NotificationManager::class.java).areNotificationsEnabled()
+        /** Both app and effects-channel consent are required; an absent channel is created on start. */
+        fun notificationsAllowed(context: Context): Boolean {
+            if (Build.VERSION.SDK_INT >= 33 &&
+                context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
+                return false
+            val notifications = context.getSystemService(NotificationManager::class.java)
+            return notifications.areNotificationsEnabled() &&
+                notifications.getNotificationChannel(CHANNEL_ID)?.importance != NotificationManager.IMPORTANCE_NONE
+        }
     }
 }

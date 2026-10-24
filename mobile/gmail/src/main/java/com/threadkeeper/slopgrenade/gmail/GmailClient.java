@@ -237,6 +237,9 @@ public final class GmailClient {
             throw new Failure(422,0);
         try {
             byte[] decoded=Base64.getUrlDecoder().decode(body.optString("data",""));
+            // A declared nonempty text part cannot silently become an empty sample.
+            // Check bytes before HTML cleanup; do not require an exact declared-size match.
+            if (body.optLong("size",0) > 0 && decoded.length == 0) throw new Failure(422,0);
             String text=charset(part).newDecoder().onMalformedInput(CodingErrorAction.REPORT)
                 .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(decoded)).toString();
             if (type.equals("text/html")) text=text.replaceAll("(?is)<(script|style)\\b[^>]*>.*?</\\1>","")

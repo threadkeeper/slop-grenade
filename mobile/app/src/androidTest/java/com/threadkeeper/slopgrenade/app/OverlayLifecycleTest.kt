@@ -148,6 +148,42 @@ class OverlayLifecycleTest {
         } finally { instrumentation.runOnMainSync { activity.finish() } }
     }
 
+    /**
+     * Preconfigure only a dedicated test device: allow app notifications/overlay, then block the
+     * screen-edge-effects channel in system settings. Read-only: never creates, blocks, deletes,
+     * or recreates a channel, since Android may retain user blocks even after channel deletion.
+     */
+    @Test fun globallyEnabledNotificationsWithBlockedEffectsChannelCannotStartOverlay() {
+        val notifications = context.getSystemService(NotificationManager::class.java)
+        org.junit.Assume.assumeTrue("Enable app notifications", notifications.areNotificationsEnabled())
+        if (Build.VERSION.SDK_INT >= 33)
+            org.junit.Assume.assumeTrue("Grant notification permission",
+                context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED)
+        org.junit.Assume.assumeTrue("Grant overlay permission", Settings.canDrawOverlays(context))
+        val channel = notifications.getNotificationChannel("screen-edge-effects")
+        org.junit.Assume.assumeTrue("Preconfigure the blocked effects channel on a test device",
+            channel?.importance == NotificationManager.IMPORTANCE_NONE)
+        assertFalse(OverlayService.notificationsAllowed(context))
+        val activity = openDashboard()
+        try {
+            val router = RequestRouter(activity, MobileRuntime.get(context))
+            val accounts = router.dispatch("GET", "/api/v1/accounts", JSONObject()).get(5, TimeUnit.SECONDS)
+            assertFalse(accounts.getJSONObject("body").getBoolean("notificationsGranted"))
+            val requested = router.dispatch("POST", "/api/v1/overlay/permission", JSONObject()).get(5, TimeUnit.SECONDS)
+            assertFalse(requested.getJSONObject("body").getBoolean("notificationsGranted"))
+            instrumentation.runOnMainSync {
+                context.startService(Intent(context, OverlayService::class.java).setAction(OverlayService.ACTION_START))
+            }
+            waitUntilStopped()
+            assertFalse(OverlayService.active)
+            assertFalse(activity.isFinishing)
+            val stopped = router.dispatch("POST", "/api/v1/overlay/stop", JSONObject()).get(5, TimeUnit.SECONDS)
+            assertTrue(stopped.getJSONObject("body").getBoolean("ok"))
+            assertEquals(NotificationManager.IMPORTANCE_NONE,
+                notifications.getNotificationChannel("screen-edge-effects").importance)
+        } finally { instrumentation.runOnMainSync { activity.finish() } }
+    }
+
     @Test fun dashboardStopRouteIsIdempotentWithoutOverlayConsent() {
         val activity = openDashboard()
         try {

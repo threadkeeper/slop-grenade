@@ -45,8 +45,11 @@
       <button class="brass small" disabled={state.busy} onclick={() => mailbox?.requestOverlay()}>Allow overlay</button>
     {/if}
   </div>
-  <p>Allow notifications to enable effects; if blocked, enable them in Android app settings.
-    Effects can run over other apps with an ongoing notification. Stop them here or from the notification.
+  {#if !state.notificationsGranted}
+    <p role="status">Effects need notifications. Allow the Screen-edge effects channel in Android app settings
+      if notifications are blocked. Mailbox scanning is unaffected.</p>
+  {/if}
+  <p>Effects can run over other apps with an ongoing notification. Stop them here or from the notification.
     Android may stop effects; background mailbox scans continue independently.</p>
 </section>
 

@@ -55,4 +55,11 @@ describe('native Mailbox panel', () => {
     expect(body).toContain('notification');
     expect(body).not.toContain('Start effects');
   });
+
+  it('explains how to restore a blocked effects notification channel', () => {
+    const { body } = render(Mailbox);
+    expect(body).toContain('Screen-edge effects');
+    expect(body).toContain('Android app settings');
+    expect(body).toContain('Mailbox scanning is unaffected');
+  });
 });

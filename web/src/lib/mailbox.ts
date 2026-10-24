@@ -16,13 +16,14 @@ export interface MailboxState {
   backgroundStatus: string;
   overlayGranted: boolean;
   overlayActive: boolean;
+  notificationsGranted: boolean;
   busy: boolean;
   error: string | null;
 }
 
 /** Empty panel state before the first native response. */
 export function emptyMailbox(): MailboxState {
-  return { accounts: [], backgroundStatus: 'Loading…', overlayGranted: false, overlayActive: false, busy: false, error: null };
+  return { accounts: [], backgroundStatus: 'Loading…', overlayGranted: false, overlayActive: false, notificationsGranted: false, busy: false, error: null };
 }
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -60,12 +61,13 @@ export function createMailbox(
       const value: unknown = await response.json();
       if (!record(value) || !Array.isArray(value.accounts) || !value.accounts.every(account) ||
           typeof value.backgroundStatus !== 'string' || typeof value.overlayGranted !== 'boolean' ||
-          typeof value.overlayActive !== 'boolean') {
+          typeof value.overlayActive !== 'boolean' || typeof value.notificationsGranted !== 'boolean') {
         throw new Error('Invalid mailbox response.');
       }
       if (request === generation) publish({
         accounts: value.accounts, backgroundStatus: value.backgroundStatus,
-        overlayGranted: value.overlayGranted, overlayActive: value.overlayActive, error: null
+        overlayGranted: value.overlayGranted, overlayActive: value.overlayActive,
+        notificationsGranted: value.notificationsGranted, error: null
       });
     } catch (error) {
       if (request === generation) publish({

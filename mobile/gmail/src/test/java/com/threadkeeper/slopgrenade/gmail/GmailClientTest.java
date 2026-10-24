@@ -156,6 +156,8 @@ public class GmailClientTest {
         for (JSONObject payload : List.of(json("{}"), json("{\"mimeType\":\"multipart/mixed\",\"parts\":["
                 +"{\"mimeType\":\"application/pdf\",\"filename\":\"document.pdf\",\"body\":{\"attachmentId\":\"binary\"}}]}"),
                 json("{\"mimeType\":\"text/plain\",\"body\":{}}"),
+                json("{\"mimeType\":\"text/plain\",\"body\":{\"size\":0}}"),
+                json("{\"mimeType\":\"text/plain\",\"body\":{\"size\":0,\"data\":\"\"}}"),
                 json("{\"mimeType\":\"text/plain\",\"body\":{\"data\":\"\"}}"),
                 json("{\"mimeType\":\"text/html\",\"body\":{\"data\":\"PHA-PC9wPg\"}}"))) {
             JSONObject m=message("a","[]").put("payload",payload);
@@ -168,6 +170,46 @@ public class GmailClientTest {
             assertEquals("",batch.samples().getJSONObject(0).getString("body"));
             assertEquals("one:a",batch.samples().getJSONObject(0).getString("messageId"));
         }
+    }
+    @Test public void positiveSizeTextWithoutBytesFailsFullAndHistoryScans() throws Exception {
+        for (String type : List.of("text/plain","text/html")) {
+            for (String body : List.of("{\"size\":100}", "{\"size\":100,\"data\":\"\"}",
+                    "{\"size\":100,\"data\":null}", "{\"size\":100,\"attachmentId\":\"\"}")) {
+                for (boolean full : List.of(true,false)) {
+                    Fake f=new Fake().at("/profile",json("{\"historyId\":\"10\"}"))
+                        .at(GmailClient.FULL,json("{\"messages\":[{\"id\":\"a\"}]}"))
+                        .at("/history?startHistoryId=9&maxResults=500",
+                            json("{\"historyId\":\"10\",\"history\":[{\"messagesAdded\":[{\"message\":{\"id\":\"a\"}}]}]}"))
+                        .at("/messages/a?format=full",message("a","[]").put("payload",
+                            new JSONObject().put("mimeType",type).put("body",json(body))));
+                    try { new GmailClient(f).scan("one",full ? null : "9"); fail("Missing declared text was scored"); }
+                    catch (GmailClient.Failure e) { assertEquals(422,e.status); }
+                }
+            }
+        }
+    }
+    @Test public void positiveSizeInlineTextMustResolveToNonemptyBytes() throws Exception {
+        for (String data : List.of("", "SGVsbG8")) {
+            Fake f=new Fake().at("/profile",json("{\"historyId\":\"10\"}"))
+                .at(GmailClient.FULL,json("{\"messages\":[{\"id\":\"a\"}]}"))
+                .at("/messages/a?format=full",message("a","[]").put("payload",
+                    json("{\"mimeType\":\"text/plain\",\"body\":{\"size\":100,\"attachmentId\":\"text\"}}")))
+                .at("/messages/a/attachments/text",new JSONObject().put("data",data));
+            if (data.isEmpty()) {
+                try { new GmailClient(f).scan("one",null); fail("Missing declared attachment text was scored"); }
+                catch (GmailClient.Failure e) { assertEquals(422,e.status); }
+            } else {
+                assertEquals("Hello",new GmailClient(f).scan("one",null).samples().getJSONObject(0).getString("body"));
+            }
+        }
+    }
+    @Test public void positiveSizeValidationPrecedesTextCleanupAndDoesNotRequireExactSize() throws Exception {
+        assertEquals(" ",GmailClient.mimeText(json(
+            "{\"mimeType\":\"text/plain\",\"body\":{\"size\":100,\"data\":\"IA\"}}")));
+        assertEquals("",GmailClient.mimeText(json(
+            "{\"mimeType\":\"text/html\",\"body\":{\"size\":100,\"data\":\"PHA-PC9wPg\"}}")));
+        assertEquals("",GmailClient.mimeText(json(
+            "{\"mimeType\":\"application/pdf\",\"filename\":\"fixture.pdf\",\"body\":{\"size\":100}}")));
     }
     @Test public void emptyInlineTextAttachmentIsValidWhenDataIsPresent() throws Exception {
         JSONObject m=message("a","[]").put("payload",json("{\"mimeType\":\"text/plain\",\"body\":{\"attachmentId\":\"text\"}}"));
