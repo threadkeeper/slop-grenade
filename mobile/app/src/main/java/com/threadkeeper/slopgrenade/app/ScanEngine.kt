@@ -65,8 +65,9 @@ class ScanEngine(
                 val batch = fetch(account, token(account), checkpoint)
                 if (Thread.currentThread().isInterrupted) throw InterruptedException()
                 val quiet = forceFull || checkpoint == null || batch.resynced()
-                val privateSamples = GmailPrivacy.redact(account.id, batch.samples())
-                val ingest = core.checked("POST", "/internal/ingest", JSONObject().put("samples", privateSamples)
+                // Sender, subject, and body remain transient scoring input. NativeCore sanitizes
+                // reports after detection, before ledger storage, events, or response output.
+                val ingest = core.checked("POST", "/internal/ingest", JSONObject().put("samples", batch.samples())
                     .put("quiet", quiet)) as JSONObject
                 check(ingest.getBoolean("ok")) { "Native ingest failed" }
                 val counts = ingest.getJSONObject("batch")

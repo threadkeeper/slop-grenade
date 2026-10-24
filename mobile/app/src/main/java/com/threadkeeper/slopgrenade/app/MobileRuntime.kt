@@ -21,7 +21,7 @@ class MobileRuntime private constructor(context: Context) {
         try { google.token(account.label) }
         catch (_: GoogleAccounts.Transient) { throw GmailClient.Failure(503, 0) }
     }, { account, token, checkpoint ->
-        // ScanEngine enforces sender pseudonyms + generic subjects immediately before every JNI ingest.
+        // NativeCore scores transient original metadata, then sanitizes reports before storage, events, or output.
         GmailClient(GmailClient.https(token)).scan(account.id, checkpoint)
     })
 

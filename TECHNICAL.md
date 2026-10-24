@@ -139,7 +139,7 @@ The Android application lives separately under `mobile/`. It reuses the platform
 | `mobile/core/` | Kotlin facade for the native core |
 | `mobile/accounts/` | Google account authorization and encrypted configuration |
 | `mobile/gmail/` | Read-only Gmail REST connector and MIME decoding |
-| `mobile/app/` | Android lifecycle, WorkManager, restricted WebView and overlay prototype |
+| `mobile/app/` | Android lifecycle, WorkManager, restricted WebView and user-started effects overlay |
 | `web/` | Existing dashboard/effects with a separate native transport; desktop HTTP/SSE remains supported |
 
 Build prerequisites are Bash, Python 3 (available as `python`), JDK 17, Android SDK platform 35, NDK `27.3.13750724` (or `ANDROID_NDK_HOME`), Rust, Node.js and the two Rust targets:
@@ -153,6 +153,8 @@ bash /home/runner/work/slop-grenade/slop-grenade/mobile/scripts/build-android.sh
 
 Set `ANDROID_SDK_ROOT` to the local SDK directory. The supplied native-build scripts support Linux and macOS hosts; on Windows, use a Linux build environment with its own SDK/NDK installation. The build packages the web assets and compiles native libraries for ARM64 phones and x86-64 emulators. The minimum supported Android version is 11 (API 30). Generated assets, native libraries, APKs, SDK configuration and signing material are not committed.
 
+The build environment must be able to resolve and download from Google's Maven repository (`dl.google.com`) as well as Maven Central, the Gradle distribution service, npm and crates.io. An Android Gradle plugin resolution failure is not evidence that an APK was produced; do not distribute a shell without its bundled dashboard and native libraries.
+
 For a release, supply `SLOP_ANDROID_KEYSTORE` (an absolute private keystore path), `SLOP_ANDROID_STORE_PASSWORD`, `SLOP_ANDROID_KEY_ALIAS` and `SLOP_ANDROID_KEY_PASSWORD` through a secure environment, then run:
 
 ```sh
@@ -160,6 +162,8 @@ bash /home/runner/work/slop-grenade/slop-grenade/mobile/scripts/build-android.sh
 ```
 
 Release packaging fails without signing configuration; a debug APK is not a release artifact. Never paste credentials into a checked-in script or shell command history.
+
+Successful builds write the APK and adjacent `.sha256` file under `/home/runner/work/slop-grenade/slop-grenade/mobile/app/build/outputs/apk/debug/` or `/home/runner/work/slop-grenade/slop-grenade/mobile/app/build/outputs/apk/release/`. The build verifies the APK signature, packaged ARM64/x86-64 native bridge exports and 16-KB ZIP alignment before producing that checksum.
 
 Run the existing Rust and web gates in section 3, plus shared-core/bridge formatting, Clippy and tests using their respective manifests. Android-focused gates are:
 
@@ -192,6 +196,7 @@ References: [Android authorization](https://developer.android.com/identity/autho
 - Disconnect removes an account's local connection and stops future scans. Already-scored in-memory history and deduplication identifiers remain until normal process clear, so reconnecting does not double-count messages or reset another account's statistics. Disconnect is not a historical-data deletion operation.
 - Message bodies, reports and previews remain in memory. Only account configuration and minimal synchronization state are stored, with sensitive account state encrypted using Android Keystore-backed keys and excluded from backup. Process death clears the ledger; recovery rebuilds recent history quietly.
 - Gmail sender pseudonyms and generic subjects are applied **after** scoring, so automated-message detection still sees the original transient metadata. Reports retain signal labels and scores, not verbatim body fragments; sender pseudonyms are stable only within the process.
+- Successfully decoded empty or attachment-only messages do not block a mailbox's synchronization. Attachment contents and Gmail snippets are not substituted for missing message text; malformed encodings and failed inline-body retrieval still fail the scan without advancing its checkpoint.
 - The WebView serves bundled assets only. Native capabilities must not be exposed to arbitrary websites, email HTML or remote scripts.
 
 ### Background execution and effects
@@ -200,9 +205,11 @@ Periodic WorkManager scheduling has a **15-minute minimum**, and actual executio
 
 Do not disable Android's protections globally or promise uninterrupted scanning. Check the per-account last-success status and the phone's app battery settings when diagnosing delays.
 
-Cross-app effects require explicit **Display over other apps** permission. Denying it must leave mailbox scanning and the dashboard usable. Protected screens and Android lifecycle restrictions can prevent overlays; a WebView alone cannot provide the Windows click-through overlay behavior. The prototype is activity-bound and stops when the application is no longer visible; it does **not** provide always-on cross-app effects. Background mailbox scanning is independent of that prototype.
+Cross-app effects require explicit **Display over other apps** permission. Use **Allow overlay**, then **Start effects** in the mailbox panel. The user-started foreground service displays a generic ongoing notification and keeps the touch-through effects layer available when the dashboard is closed. Stop it using **Stop effects** or the notification's **Stop** action; stopping effects never disconnects mailboxes or cancels scheduled scans.
 
-Android foreground services are not an unlimited-execution workaround. In particular, Android 15's data-sync service limits apply when targeting the relevant API level. See [background work](https://developer.android.com/develop/background-work/background-tasks/persistent-work) and [foreground service timeouts](https://developer.android.com/develop/background-work/services/fgs/timeout).
+The overlay uses the declared `specialUse` foreground-service type on Android 14+ for user-requested screen-edge rendering, not `dataSync`. It does not poll Gmail or change WorkManager's scan frequency. Allow notifications on Android 13+ to keep its status and Stop action visible in the notification drawer; notification denial must not disable mailbox scanning.
+
+Protected screens, revoked overlay permission, Android process management and manufacturer restrictions may interrupt effects. The overlay does not automatically restart after reboot or process termination: reopen the dashboard and choose **Start effects**. Do not promise an uninterrupted service or use foreground rendering to evade background data-sync restrictions. See [background work](https://developer.android.com/develop/background-work/background-tasks/persistent-work), [special-use foreground services](https://developer.android.com/develop/background-work/services/fgs/service-types#special-use) and [foreground service timeouts](https://developer.android.com/develop/background-work/services/fgs/timeout).
 
 ### APK distribution and acceptance
 
@@ -214,6 +221,6 @@ Distribute the signed APK and its SHA-256 checksum through a trusted release cha
 2. Temporarily allow **Install unknown apps** for the browser or file manager opening the APK.
 3. Install it, then turn that permission off again.
 4. Open Slop Grenade, add each Gmail account and complete Google's consent flow.
-5. Review monitoring status and, if desired, grant overlay permission.
+5. Review monitoring status and, if desired, grant overlay permission, allow notifications and start effects.
 
 Release acceptance requires real-device checks for account consent/reconnection, multiple mailboxes, Doze, offline recovery, reboot, process recreation, force-stop, denied overlay permission, battery usage, clean installation and an in-place signed upgrade. Synthetic unit tests and a successful APK build cannot prove these device/OAuth conditions. No Play Store or cloud push backend is required.

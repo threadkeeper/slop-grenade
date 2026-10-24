@@ -347,6 +347,10 @@ fn default_true() -> bool {
 
 #[cfg(test)]
 mod tests {
+    //! Native routing regressions using synthetic, in-memory message fixtures.
+    #![forbid(unsafe_code)]
+    #![deny(missing_docs)]
+
     use super::*;
     use serde_json::{json, Value};
     use slop_grenade_core::presets::build_preset_sample;
@@ -871,6 +875,59 @@ mod tests {
     }
 
     #[test]
+    fn empty_gmail_ingest_allows_followups_and_account_scoped_dedup_without_raw_output() {
+        let mut core = NativeCore::new();
+        let mut empty = sample("a:empty", "human_sparkle");
+        empty["body"] = json!("");
+        empty["sender"] = json!("noreply@empty-private-fixture.invalid");
+        empty["subjectOrTopic"] = json!("EMPTY_PRIVATE_TOPIC");
+        let first = call(
+            &mut core,
+            "POST",
+            "/internal/ingest",
+            json!({"samples":[empty.clone()],"quiet":true}),
+        );
+        assert_eq!(first["status"], 200);
+        assert_eq!(first["body"]["batch"]["newMessagesAnalyzed"], 1);
+        assert_eq!(
+            call(&mut core, "GET", "/api/v1/events", Value::Null)["body"],
+            json!([])
+        );
+        let mut other = empty.clone();
+        other["messageId"] = json!("b:empty");
+        let next = call(
+            &mut core,
+            "POST",
+            "/internal/ingest",
+            json!({"samples":[empty.clone(), sample("a:normal","slop_grenade"), other.clone(), other],"quiet":false}),
+        );
+        assert_eq!(next["status"], 200);
+        assert_eq!(next["body"]["batch"]["fetchedCount"], 4);
+        assert_eq!(next["body"]["batch"]["newMessagesAnalyzed"], 2);
+        assert_eq!(next["body"]["batch"]["grenadesTriggered"], 1);
+        assert_eq!(
+            first["body"]["batch"]["reports"][0]["sender"],
+            next["body"]["batch"]["reports"][1]["sender"]
+        );
+        let repeated = call(
+            &mut core,
+            "POST",
+            "/internal/ingest",
+            json!({"samples":[empty],"quiet":false}),
+        );
+        assert_eq!(repeated["body"]["batch"]["newMessagesAnalyzed"], 0);
+        let ledger = call(&mut core, "GET", "/api/v1/ledger", Value::Null);
+        assert_eq!(ledger["body"]["receivedByMe"]["totalMessages"], 3);
+        let events = call(&mut core, "GET", "/api/v1/events", Value::Null);
+        assert_eq!(events["body"].as_array().unwrap().len(), 2);
+        for result in [first, next, repeated, ledger, events] {
+            let output = result.to_string();
+            assert!(!output.contains("empty-private-fixture"));
+            assert!(!output.contains("EMPTY_PRIVATE_TOPIC"));
+        }
+    }
+
+    #[test]
     fn gmail_automated_metadata_is_scored_before_report_redaction() {
         for (sender, subject) in [
             (
@@ -884,6 +941,10 @@ mod tests {
         ] {
             let mut core = NativeCore::new();
             let mut message = sample("account:automated", "slop_grenade");
+            message["body"] = json!(format!(
+                "PRIVATE_AUTOMATED_BODY_SENTINEL {}",
+                message["body"].as_str().unwrap()
+            ));
             message["sender"] = json!(sender);
             message["subjectOrTopic"] = json!(subject);
             let raw: MessageSample = serde_json::from_value(message.clone()).unwrap();
@@ -897,6 +958,7 @@ mod tests {
             let report = &response["body"]["batch"]["reports"][0];
             assert_eq!(report["slopScore"], 4);
             assert_eq!(report["tier"], "human_sparkle");
+            assert_eq!(response["body"]["batch"]["grenadesTriggered"], 0);
             assert_eq!(report["subjectOrTopic"], "Gmail message");
             assert!(report["sender"]
                 .as_str()
@@ -911,6 +973,7 @@ mod tests {
                 assert!(!json.contains(sender));
                 assert!(!json.contains(subject));
                 assert!(!json.contains("PRIVATE_TOPIC_SENTINEL"));
+                assert!(!json.contains("PRIVATE_AUTOMATED_BODY_SENTINEL"));
             }
         }
     }

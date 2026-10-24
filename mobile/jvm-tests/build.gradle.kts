@@ -7,7 +7,7 @@ kotlin {
             kotlin.include("**/AccountState.kt", "**/AccountRepository.kt", "**/CoreApi.kt",
                 "**/NativeCore.kt", "**/ScanEngine.kt", "**/BridgePolicy.kt",
                 "**/LunaClient.kt", "**/ManualAnalysis.kt", "**/AuthorizationRequired.kt",
-                "**/ContentSecurityPolicy.kt", "**/GmailPrivacy.kt", "**/OverlaySoundPreferences.kt")
+                "**/ContentSecurityPolicy.kt", "**/OverlaySoundPreferences.kt")
         }
         test {
             kotlin.srcDirs("../accounts/src/test/java", "../core/src/test/java", "../app/src/test/java")

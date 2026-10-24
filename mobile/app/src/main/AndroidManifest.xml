@@ -3,6 +3,9 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <application
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
@@ -18,7 +21,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <!-- Visible-app-only overlay, never a boot receiver or indefinite foreground service. -->
-        <service android:name=".app.OverlayService" android:exported="false" android:stopWithTask="true" />
+        <!-- Explicit visual effects only. Gmail scheduling remains independent WorkManager work. -->
+        <service android:name=".app.OverlayService" android:exported="false"
+            android:stopWithTask="false" android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="User-started continuous screen-edge visual effects, touch-through across apps until stopped by the user or Android. No email polling." />
+        </service>
     </application>
 </manifest>

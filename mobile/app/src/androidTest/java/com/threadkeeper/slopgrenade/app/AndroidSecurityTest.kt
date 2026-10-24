@@ -58,7 +58,7 @@ class AndroidSecurityTest {
         }
     }
 
-    @Test fun dashboardCanFinishAndDeniedOverlayDoesNotRequestForegroundService() {
+    @Test fun dashboardCanFinishWithoutOwningOverlayLifetime() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
         val activity = instrumentation.startActivitySync(Intent(context, MainActivity::class.java)
@@ -66,9 +66,5 @@ class AndroidSecurityTest {
         instrumentation.runOnMainSync { activity.finish() }
         instrumentation.waitForIdleSync()
         assertFalse(MainActivity.visible)
-        // Permission denial is independent of Gmail scan scheduling; no service permission is needed.
-        assertFalse(context.packageManager.getPackageInfo(context.packageName,
-            android.content.pm.PackageManager.GET_PERMISSIONS).requestedPermissions.orEmpty()
-            .contains("android.permission.FOREGROUND_SERVICE"))
     }
 }

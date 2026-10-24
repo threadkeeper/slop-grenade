@@ -167,27 +167,91 @@ class ScanEngineTest {
         assertTrue(engine.status.contains("Reconnect required"))
         assertFalse(engine.scanAll())
     }
-    @Test fun everyIngestPathRedactsRawSenderAndSubjectBeforeCrossingJni() {
-        var ingested = false
+    @Test fun everyIngestPathPreservesTransientMetadataForNativeScoringAndGrouping() {
+        val inputs = mutableListOf<JSONObject>()
         val core = CoreApi {
             val request = JSONObject(it)
             if (request.getString("path") == "/internal/session") """{"status":200,"body":{"sessionId":"new"}}"""
             else {
                 val sample = request.getJSONObject("body").getJSONArray("samples").getJSONObject(0)
-                assertTrue(sample.getString("sender").startsWith("Gmail correspondent "))
-                assertEquals("Gmail message", sample.getString("subjectOrTopic"))
+                assertEquals("noreply@example.invalid", sample.getString("sender"))
+                assertEquals("Automatic reply: Synthetic private topic", sample.getString("subjectOrTopic"))
                 assertEquals("Ephemeral synthetic body", sample.getString("body"))
-                ingested = true
+                inputs.add(request.getJSONObject("body"))
                 """{"status":200,"body":{"ok":true,"batch":{"fetchedCount":1,"newMessagesAnalyzed":1,"grenadesTriggered":0}}}"""
             }
         }
         val engine = ScanEngine(Store(account), core, { "token" }, { _, _, _ ->
-            GmailClient.Batch(JSONArray().put(JSONObject().put("sender", "synthetic@example.invalid")
-                .put("subjectOrTopic", "Synthetic private topic").put("body", "Ephemeral synthetic body")
-                .put("direction", "received")), "20", true)
+            GmailClient.Batch(JSONArray().put(JSONObject().put("sender", "noreply@example.invalid")
+                .put("subjectOrTopic", "Automatic reply: Synthetic private topic").put("body", "Ephemeral synthetic body")
+                .put("direction", "received")), "20", false)
         })
         assertTrue(engine.refreshAllSevenDays().ok)
-        assertTrue(ingested)
+        assertFalse(engine.scanAll())
+        assertEquals(2, inputs.size)
+        assertTrue(inputs[0].getBoolean("quiet"))
+        assertFalse(inputs[1].getBoolean("quiet"))
+    }
+    @Test fun realGmailEmptyAndNormalBatchesAdvanceCheckpointsAndKeepAccountsIndependent() {
+        val store = Store(account, account.copy(id = "two"))
+        val seen = mutableSetOf<String>()
+        val inputs = mutableListOf<JSONObject>()
+        val core = CoreApi {
+            val request = JSONObject(it)
+            if (request.getString("path") == "/internal/session") """{"status":200,"body":{"sessionId":"new"}}"""
+            else {
+                val input = request.getJSONObject("body")
+                inputs.add(input)
+                val samples = input.getJSONArray("samples")
+                var added = 0
+                for (i in 0 until samples.length()) {
+                    if (seen.add(samples.getJSONObject(i).getString("messageId"))) added++
+                }
+                """{"status":200,"body":{"ok":true,"batch":{"fetchedCount":${samples.length()},"newMessagesAnalyzed":$added,"grenadesTriggered":0}}}"""
+            }
+        }
+        val client = GmailClient { path ->
+            when {
+                path == "/profile" -> JSONObject().put("historyId", "10")
+                path.startsWith(GmailClient.FULL) ->
+                    JSONObject("""{"messages":[{"id":"empty"}]}""")
+                path.startsWith("/history?startHistoryId=10") ->
+                    JSONObject("""{"historyId":"11","history":[{"messagesAdded":[{"message":{"id":"empty"}},{"message":{"id":"normal"}}],"labelsAdded":[{"message":{"id":"empty"}}]}]}""")
+                path.startsWith("/history?startHistoryId=11") -> JSONObject("""{"historyId":"12"}""")
+                path.startsWith("/messages/") -> {
+                    val empty = path.contains("/empty?")
+                    JSONObject().put("id", if (empty) "empty" else "normal")
+                        .put("internalDate", (System.currentTimeMillis() - 1000).toString())
+                        .put("labelIds", JSONArray().put("INBOX"))
+                        .put("payload", JSONObject().put("mimeType", if (empty) "application/pdf" else "text/plain")
+                            .put("filename", if (empty) "fixture.pdf" else "")
+                            .put("headers", JSONArray()
+                                .put(JSONObject().put("name", "From").put("value", "noreply@example.invalid"))
+                                .put(JSONObject().put("name", "Subject").put("value", "Automatic reply: fixture")))
+                            .put("body", if (empty) JSONObject().put("attachmentId", "not-fetched")
+                                else JSONObject().put("data", "SGVsbG8")))
+                }
+                else -> error("Unexpected synthetic transport path")
+            }
+        }
+        val engine = ScanEngine(store, core, { "ephemeral" }, { a, _, cp -> client.scan(a.id, cp) })
+        val first = engine.refreshAllSevenDays()
+        assertTrue(first.ok)
+        assertEquals(2L, first.newMessagesAnalyzed)
+        assertTrue(store.all().all { it.checkpoint == "10" })
+        assertFalse(engine.scanAll())
+        assertTrue(store.all().all { it.checkpoint == "11" })
+        assertEquals(setOf("one:empty", "two:empty", "one:normal", "two:normal"), seen)
+        assertFalse(engine.scanAll())
+        assertTrue(store.all().all { it.checkpoint == "12" })
+        assertEquals(4, seen.size)
+        assertEquals(6, inputs.size)
+        assertTrue(inputs.take(2).all { it.getBoolean("quiet") })
+        assertTrue(inputs.drop(2).all { !it.getBoolean("quiet") })
+        val firstSample = inputs[0].getJSONArray("samples").getJSONObject(0)
+        assertEquals("", firstSample.getString("body"))
+        assertEquals("noreply@example.invalid", firstSample.getString("sender"))
+        assertEquals("Automatic reply: fixture", firstSample.getString("subjectOrTopic"))
     }
     @Test fun disconnectForwardsRetentionAcknowledgementAndReconnectUsesSameDedupIdentity() {
         val email = "synthetic@example.invalid"

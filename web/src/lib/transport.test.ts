@@ -32,6 +32,15 @@ afterEach(() => {
 });
 
 describe('local API transport', () => {
+  it.each(['/api/v1/overlay/permission', '/api/v1/overlay/stop'])(
+    'forwards explicit overlay lifecycle operations without payloads: %s', async (path) => {
+      const pending = requestApi(path, { method: 'POST' });
+      expect(sent()).toMatchObject({ method: 'POST', path, body: null });
+      reply(sent().id, { ok: true });
+      expect((await pending).ok).toBe(true);
+    }
+  );
+
   it('correlates concurrent, out-of-order replies and preserves HTTP errors as Responses', async () => {
     const first = requestApi('/api/v1/ledger');
     const second = requestApi('/api/v1/accounts');

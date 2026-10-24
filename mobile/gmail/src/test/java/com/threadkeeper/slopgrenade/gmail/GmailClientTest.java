@@ -152,15 +152,63 @@ public class GmailClientTest {
         assertTrue(GmailClient.httpFailure(403,json(
             "{\"error\":{\"errors\":[{\"reason\":\"insufficientPermissions\"}]}}"),0).requiresReconnect());
     }
-    @Test public void missingAndAttachmentOnlyBodiesFailWithoutReturningCheckpoint() throws Exception {
+    @Test public void emptyAndAttachmentOnlyBodiesReturnSamplesAndCheckpoint() throws Exception {
         for (JSONObject payload : List.of(json("{}"), json("{\"mimeType\":\"multipart/mixed\",\"parts\":["
                 +"{\"mimeType\":\"application/pdf\",\"filename\":\"document.pdf\",\"body\":{\"attachmentId\":\"binary\"}}]}"),
-                json("{\"mimeType\":\"text/plain\",\"body\":{}}"))) {
+                json("{\"mimeType\":\"text/plain\",\"body\":{}}"),
+                json("{\"mimeType\":\"text/plain\",\"body\":{\"data\":\"\"}}"),
+                json("{\"mimeType\":\"text/html\",\"body\":{\"data\":\"PHA-PC9wPg\"}}"))) {
             JSONObject m=message("a","[]").put("payload",payload);
             Fake f=new Fake().at("/profile",json("{\"historyId\":\"10\"}"))
                 .at(GmailClient.FULL,json("{\"messages\":[{\"id\":\"a\"}]}"))
                 .at("/messages/a?format=full",m);
-            try { new GmailClient(f).scan("one",null); fail("Empty MIME content was scored"); }
+            GmailClient.Batch batch=new GmailClient(f).scan("one",null);
+            assertEquals("10",batch.historyId());
+            assertEquals(1,batch.samples().length());
+            assertEquals("",batch.samples().getJSONObject(0).getString("body"));
+            assertEquals("one:a",batch.samples().getJSONObject(0).getString("messageId"));
+        }
+    }
+    @Test public void emptyInlineTextAttachmentIsValidWhenDataIsPresent() throws Exception {
+        JSONObject m=message("a","[]").put("payload",json("{\"mimeType\":\"text/plain\",\"body\":{\"attachmentId\":\"text\"}}"));
+        Fake f=new Fake().at("/profile",json("{\"historyId\":\"10\"}"))
+            .at(GmailClient.FULL,json("{\"messages\":[{\"id\":\"a\"}]}"))
+            .at("/messages/a?format=full",m)
+            .at("/messages/a/attachments/text",json("{\"data\":\"\"}"));
+        GmailClient.Batch batch=new GmailClient(f).scan("one",null);
+        assertEquals("10",batch.historyId());
+        assertEquals("",batch.samples().getJSONObject(0).getString("body"));
+    }
+    @Test public void emptyMailDoesNotBlockNormalHistoryFollowupAndIdsStayAccountScoped() throws Exception {
+        JSONObject empty=message("empty","[]").put("payload",json("{\"mimeType\":\"multipart/mixed\",\"parts\":["
+            +"{\"mimeType\":\"application/pdf\",\"filename\":\"fixture.pdf\",\"body\":{\"attachmentId\":\"binary\"}}]}"));
+        JSONObject history=json("{\"historyId\":\"11\",\"history\":[{\"messagesAdded\":["
+            +"{\"message\":{\"id\":\"empty\"}},{\"message\":{\"id\":\"normal\"}}],"
+            +"\"labelsAdded\":[{\"message\":{\"id\":\"empty\"}}]}]}");
+        Fake f=new Fake().at("/profile",json("{\"historyId\":\"10\"}"))
+            .at(GmailClient.FULL,json("{\"messages\":[{\"id\":\"empty\"}]}"))
+            .at("/messages/empty?format=full",empty,empty,empty)
+            .at("/messages/normal?format=full",message("normal","[]"),message("normal","[]"))
+            .at("/history?startHistoryId=10&maxResults=500",history,history);
+        GmailClient client=new GmailClient(f);
+        GmailClient.Batch first=client.scan("one",null);
+        GmailClient.Batch next=client.scan("one",first.historyId());
+        GmailClient.Batch other=client.scan("two","10");
+        assertEquals("11",next.historyId());
+        assertEquals(2,next.samples().length());
+        assertEquals("one:empty",next.samples().getJSONObject(0).getString("messageId"));
+        assertEquals("",next.samples().getJSONObject(0).getString("body"));
+        assertEquals("Hello",next.samples().getJSONObject(1).getString("body"));
+        assertEquals("two:empty",other.samples().getJSONObject(0).getString("messageId"));
+        assertEquals(3,Collections.frequency(f.calls,"/messages/empty?format=full"));
+    }
+    @Test public void malformedTimestampStillFailsForEmptyMail() throws Exception {
+        for (String timestamp : List.of("", "not-a-timestamp", "9223372036854775808")) {
+            Fake f=new Fake().at("/profile",json("{\"historyId\":\"10\"}"))
+                .at(GmailClient.FULL,json("{\"messages\":[{\"id\":\"a\"}]}"))
+                .at("/messages/a?format=full",message("a","[]").put("internalDate",timestamp)
+                    .put("payload",json("{\"mimeType\":\"text/plain\",\"body\":{\"data\":\"\"}}")));
+            try { new GmailClient(f).scan("one",null); fail("Invalid timestamp was scored"); }
             catch (GmailClient.Failure e) { assertEquals(422,e.status); }
         }
     }
@@ -177,7 +225,8 @@ public class GmailClientTest {
         assertEquals("Hi",new GmailClient(f).scan("one",null).samples().getJSONObject(0).getString("body"));
     }
     @Test public void missingTextAttachmentDataFailsExplicitly() throws Exception {
-        for (Object response : List.of(json("{}"),new GmailClient.Failure(404,0))) {
+        for (Object response : List.of(json("{}"),json("{\"data\":null}"),json("{\"data\":42}"),
+                new GmailClient.Failure(404,0))) {
             JSONObject m=message("a","[]").put("payload",json("{\"mimeType\":\"text/plain\",\"body\":{\"attachmentId\":\"text\"}}"));
             Fake f=new Fake().at("/profile",json("{\"historyId\":\"10\"}"))
                 .at(GmailClient.FULL,json("{\"messages\":[{\"id\":\"a\"}]}"))
@@ -186,6 +235,13 @@ public class GmailClientTest {
             try { new GmailClient(f).scan("one",null); fail("Missing attachment text was scored"); }
             catch (GmailClient.Failure e) { assertEquals(422,e.status); }
         }
+    }
+    @Test public void unresolvedInlineTextAttachmentCannotMasqueradeAsEmptyBody() throws Exception {
+        try {
+            GmailClient.sample("one",message("a","[]").put("payload",
+                json("{\"mimeType\":\"text/plain\",\"body\":{\"attachmentId\":\"unresolved\"}}")));
+            fail("Unresolved inline text was scored");
+        } catch (GmailClient.Failure e) { assertEquals(422,e.status); }
     }
     @Test public void spoofedFromDoesNotTurnReceivedMailIntoSent() throws Exception {
         JSONObject m=message("external","[\"INBOX\"]");

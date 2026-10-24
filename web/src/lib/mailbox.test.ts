@@ -5,7 +5,7 @@ const account = {
   id: 'local-account', label: 'Test mailbox', connected: true,
   lastSuccessfulScan: '2026-10-24T06:00:00Z', reconnectRequired: false
 };
-const status = { accounts: [account], backgroundStatus: 'Ready', overlayGranted: false };
+const status = { accounts: [account], backgroundStatus: 'Ready', overlayGranted: false, overlayActive: false };
 const json = (body: unknown, code = 200) => new Response(JSON.stringify(body), { status: code });
 const controllers: ReturnType<typeof createMailbox>[] = [];
 let host: EventTarget;
@@ -51,6 +51,26 @@ describe('native mailbox controller', () => {
     await controller.refresh();
     expect(state()).toMatchObject({ ...status, error: null, busy: false });
     expect(fetcher.mock.calls[0][0]).toBe('/api/v1/accounts');
+  });
+
+  it('can restart permitted effects and stop them without disconnecting mailboxes', async () => {
+    let active = false;
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async (path) => {
+      if (path === '/api/v1/accounts') return json({ ...status, overlayGranted: true, overlayActive: active });
+      active = path === '/api/v1/overlay/permission';
+      return json({ ok: true });
+    });
+    const { controller, state } = setup(fetcher);
+    await controller.requestOverlay();
+    expect(state().overlayActive).toBe(true);
+    await controller.stopOverlay();
+    expect(state().overlayActive).toBe(false);
+    await controller.requestOverlay();
+    expect(state().overlayActive).toBe(true);
+    expect(fetcher.mock.calls.filter(([, init]) => init?.method).map(([path]) => path)).toEqual([
+      '/api/v1/overlay/permission', '/api/v1/overlay/stop', '/api/v1/overlay/permission'
+    ]);
+    expect(state().accounts).toEqual([account]);
   });
 
   it('supports repeated Add Gmail account and refreshes only after native OAuth completion', async () => {
@@ -106,7 +126,8 @@ describe('native mailbox controller', () => {
     expect(fetcher.mock.calls[0][1]?.signal?.aborted).toBe(true);
   });
 
-  it.each([{}, { ...status, accounts: [{}] }, { ...status, overlayGranted: 'true' }])(
+  it.each([{}, { ...status, accounts: [{}] }, { ...status, overlayGranted: 'true' },
+    { ...status, overlayActive: 'true' }])(
     'rejects malformed account status: %j', async (body) => {
       const { controller, state } = setup(vi.fn<typeof fetch>().mockResolvedValue(json(body)));
       await controller.refresh();

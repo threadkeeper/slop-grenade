@@ -161,7 +161,9 @@ public final class GmailClient {
             if (e.status == 404) throw new Failure(422,0);
             throw e;
         }
-        body.put("data",fetched.optString("data",""));
+        // An explicitly empty body is valid; absent attachment data is not.
+        if (!(fetched.opt("data") instanceof String)) throw new Failure(422,0);
+        body.put("data",fetched.getString("data"));
     }
     private static void collect(JSONArray values, Set<String> ids, boolean nested) {
         if (values == null) return;
@@ -184,7 +186,8 @@ public final class GmailClient {
     public static JSONObject sample(String accountId, JSONObject message) throws Failure {
         JSONObject payload = message.optJSONObject("payload");
         String text = payload == null ? "" : mimeText(payload);
-        if (text.trim().isEmpty()) throw new Failure(422,0);
+        // Empty and attachment-only mail are valid samples. Do not block the mailbox cursor
+        // just because there is no text; MIME decoding and attachment failures still propagate.
         String sender="", subject="";
         if (payload != null) {
             JSONArray headers=payload.optJSONArray("headers");
@@ -230,6 +233,8 @@ public final class GmailClient {
         if (!type.equals("text/plain") && !type.equals("text/html")) return "";
         JSONObject body=part.optJSONObject("body");
         if (body == null) return "";
+        if (!body.has("data") && !body.optString("attachmentId","").isEmpty())
+            throw new Failure(422,0);
         try {
             byte[] decoded=Base64.getUrlDecoder().decode(body.optString("data",""));
             String text=charset(part).newDecoder().onMalformedInput(CodingErrorAction.REPORT)

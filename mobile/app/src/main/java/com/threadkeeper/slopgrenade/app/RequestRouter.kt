@@ -52,12 +52,18 @@ class RequestRouter(private val activity: MainActivity, private val runtime: Mob
         if (method == "POST" && path == "/api/v1/overlay/permission") {
             return onMain { response(200, activity.requestOverlay()) }
         }
+        if (method == "POST" && path == "/api/v1/overlay/stop") {
+            return onMain { response(200, activity.stopOverlay()) }
+        }
         return CompletableFuture.supplyAsync({
             when {
                 method == "GET" && path == "/api/v1/accounts" -> response(200, JSONObject()
                     .put("accounts", JSONArray().also { array -> runtime.accounts.all().forEach { array.put(accountJson(it)) } })
                     .put("backgroundStatus", "Network-constrained 15-minute minimum, best effort. ${runtime.engine.status}")
-                    .put("overlayGranted", Settings.canDrawOverlays(activity)))
+                    .put("overlayGranted", Settings.canDrawOverlays(activity))
+                    .put("overlayActive", OverlayService.active)
+                    .put("overlayScope", "user-started-foreground-service")
+                    .put("notificationsGranted", OverlayService.notificationsAllowed(activity)))
                 method == "DELETE" && path.matches(Regex("""/api/v1/accounts/[a-f0-9]{64}""")) -> {
                     if (runtime.consentActive.get()) error(409, "Finish account authorization first")
                     else {

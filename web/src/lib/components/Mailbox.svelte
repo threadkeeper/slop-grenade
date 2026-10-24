@@ -36,11 +36,18 @@
     <p>No Gmail accounts connected.</p>
   {/each}
   <div class="permission">
-    <span>Overlay: {state.overlayGranted ? 'Allowed' : 'Permission needed'}</span>
-    {#if !state.overlayGranted}
+    <span>Overlay: {state.overlayActive ? 'Running' : state.overlayGranted ? 'Stopped' : 'Permission needed'}</span>
+    {#if state.overlayActive}
+      <button class="brass small" disabled={state.busy} onclick={() => mailbox?.stopOverlay()}>Stop effects</button>
+    {:else if state.overlayGranted}
+      <button class="brass small" disabled={state.busy} onclick={() => mailbox?.requestOverlay()}>Start effects</button>
+    {:else}
       <button class="brass small" disabled={state.busy} onclick={() => mailbox?.requestOverlay()}>Allow overlay</button>
     {/if}
   </div>
+  <p>Allow notifications to enable effects; if blocked, enable them in Android app settings.
+    Effects can run over other apps with an ongoing notification. Stop them here or from the notification.
+    Android may stop effects; background mailbox scans continue independently.</p>
 </section>
 
 <style>

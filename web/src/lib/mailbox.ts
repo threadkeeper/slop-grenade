@@ -15,13 +15,14 @@ export interface MailboxState {
   accounts: MailboxAccount[];
   backgroundStatus: string;
   overlayGranted: boolean;
+  overlayActive: boolean;
   busy: boolean;
   error: string | null;
 }
 
 /** Empty panel state before the first native response. */
 export function emptyMailbox(): MailboxState {
-  return { accounts: [], backgroundStatus: 'Loading…', overlayGranted: false, busy: false, error: null };
+  return { accounts: [], backgroundStatus: 'Loading…', overlayGranted: false, overlayActive: false, busy: false, error: null };
 }
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -58,12 +59,13 @@ export function createMailbox(
       if (!response.ok) throw new Error(`Mailbox unavailable (HTTP ${response.status}).`);
       const value: unknown = await response.json();
       if (!record(value) || !Array.isArray(value.accounts) || !value.accounts.every(account) ||
-          typeof value.backgroundStatus !== 'string' || typeof value.overlayGranted !== 'boolean') {
+          typeof value.backgroundStatus !== 'string' || typeof value.overlayGranted !== 'boolean' ||
+          typeof value.overlayActive !== 'boolean') {
         throw new Error('Invalid mailbox response.');
       }
       if (request === generation) publish({
         accounts: value.accounts, backgroundStatus: value.backgroundStatus,
-        overlayGranted: value.overlayGranted, error: null
+        overlayGranted: value.overlayGranted, overlayActive: value.overlayActive, error: null
       });
     } catch (error) {
       if (request === generation) publish({
@@ -106,6 +108,7 @@ export function createMailbox(
     reconnect: (id: string) => change(`/api/v1/accounts/${encodeURIComponent(id)}/reconnect`, 'POST'),
     disconnect: (id: string) => change(`/api/v1/accounts/${encodeURIComponent(id)}`, 'DELETE'),
     requestOverlay: () => change('/api/v1/overlay/permission', 'POST'),
+    stopOverlay: () => change('/api/v1/overlay/stop', 'POST'),
     dispose: () => {
       disposed = true;
       abort.abort();

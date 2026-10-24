@@ -82,7 +82,7 @@ function nativeBody(path: string, init: RequestInit): unknown {
       /^\/api\/v1\/events\?after=\d+$/.test(path)
     )) ||
     (method === 'POST' && (
-      ['/api/v1/accounts/add', '/api/v1/overlay/permission', '/api/v1/scan/now', ...manualRoutes].includes(path) ||
+      ['/api/v1/accounts/add', '/api/v1/overlay/permission', '/api/v1/overlay/stop', '/api/v1/scan/now', ...manualRoutes].includes(path) ||
       /^\/api\/v1\/accounts\/[A-Za-z0-9_~%.-]+\/reconnect$/.test(path)
     )) ||
     (method === 'DELETE' && /^\/api\/v1\/accounts\/[A-Za-z0-9_~%.-]+$/.test(path));
