@@ -18,7 +18,7 @@ import java.util.concurrent.TimeUnit
 
 /** Supported Google account chooser + AuthorizationClient; tokens are never stored. */
 class GoogleAccounts(private val context: Context) {
-    class Reconnect : Exception("Google authorization required")
+    class Reconnect : AuthorizationRequired()
     class Transient : Exception("Google authorization temporarily unavailable")
     private val scope = Scope("https://www.googleapis.com/auth/gmail.readonly")
     private var pending: CompletableFuture<Pair<String, String>>? = null

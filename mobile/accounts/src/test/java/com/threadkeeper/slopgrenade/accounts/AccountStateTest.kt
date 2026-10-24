@@ -18,4 +18,8 @@ class AccountStateTest {
         assertNull(account.copy(reconnectRequired = true).checkpointFor("old"))
         assertNull(account.copy(checkpoint = null).checkpointFor("old"))
     }
+    @Test fun authorizationFailureIsTypedAndDoesNotContainCredentials() {
+        val failure = AuthorizationRequired()
+        assertEquals("Account authorization required", failure.message)
+    }
 }

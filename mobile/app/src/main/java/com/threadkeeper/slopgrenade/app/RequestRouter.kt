@@ -61,19 +61,17 @@ class RequestRouter(private val activity: MainActivity, private val runtime: Mob
                 method == "DELETE" && path.matches(Regex("""/api/v1/accounts/[a-f0-9]{64}""")) -> {
                     if (runtime.consentActive.get()) error(409, "Finish account authorization first")
                     else {
-                        runtime.engine.disconnect(path.substringAfterLast('/'))
+                        val disconnected = runtime.engine.disconnect(path.substringAfterLast('/'))
                         if (runtime.accounts.all().isEmpty()) GmailWorker.cancel(activity.applicationContext)
-                        response(200, JSONObject().put("ok", true))
+                        response(200, disconnected)
                     }
                 }
                 method == "POST" && path == "/api/v1/scan/now" -> {
                     if (body.optInt("lookbackDays", 7) != 7 || body.optBoolean("useLuna", false))
                         error(422, "Android scans support seven days and deterministic scoring only")
                     else {
-                        val retry = runtime.engine.scanAll()
-                        val result = JSONObject().put("ok", !retry).put("useLuna", false)
-                        if (retry) result.put("error", runtime.engine.status)
-                        response(if (retry) 503 else 200, result)
+                        val summary = runtime.engine.refreshAllSevenDays()
+                        response(if (summary.ok) 200 else 503, summary.toJson())
                     }
                 }
                 (method == "POST" && path in setOf("/api/v1/auth/github-token", "/api/v1/analyze", "/api/v1/simulate")) ||

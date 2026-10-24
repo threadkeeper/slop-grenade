@@ -7,9 +7,18 @@ import java.util.*;
 import static org.junit.Assert.*;
 
 public class GmailClientTest {
+    @Test public void batchNeedsNoJavaRecordRuntimeAndDoesNotExposeContentInToString() {
+        JSONArray samples=new JSONArray().put(new JSONObject().put("body","synthetic-private-body"));
+        GmailClient.Batch batch=new GmailClient.Batch(samples,"42",true);
+        assertEquals(Object.class,GmailClient.Batch.class.getSuperclass());
+        assertSame(samples,batch.samples());
+        assertEquals("42",batch.historyId());
+        assertTrue(batch.resynced());
+        assertFalse(batch.toString().contains("synthetic-private-body"));
+    }
     private static JSONObject json(String value) { return new JSONObject(value); }
     private static JSONObject message(String id, String labels) {
-        return json("{\"id\":\""+id+"\",\"labelIds\":"+labels+",\"internalDate\":\"1000\","
+        return json("{\"id\":\""+id+"\",\"labelIds\":"+labels+",\"internalDate\":\""+(System.currentTimeMillis()-1000)+"\","
             +"\"payload\":{\"mimeType\":\"text/plain\",\"headers\":[{\"name\":\"From\",\"value\":\"synthetic@example.invalid\"}],"
             +"\"body\":{\"data\":\"SGVsbG8\"}}}");
     }
@@ -22,6 +31,10 @@ public class GmailClientTest {
         public JSONObject get(String path) throws GmailClient.Failure {
             calls.add(path);
             Queue<Object> queue = responses.get(path);
+            if (queue == null && path.startsWith(GmailClient.FULL)) {
+                int paging=path.indexOf("&pageToken=");
+                queue=responses.get(GmailClient.FULL+(paging < 0 ? "" : path.substring(paging)));
+            }
             if (queue == null || queue.isEmpty()) throw new AssertionError("Unexpected request: "+path);
             Object value = queue.remove();
             if (value instanceof GmailClient.Failure) throw (GmailClient.Failure)value;
@@ -85,7 +98,7 @@ public class GmailClientTest {
         try { new GmailClient(f).scan("a",null); fail(); }
         catch (GmailClient.Failure e) { assertEquals(403,e.status); }
     }
-    @Test public void mimePrefersPlainAndSkipsAttachments() {
+    @Test public void mimePrefersPlainAndSkipsAttachments() throws Exception {
         JSONObject payload=json("{\"mimeType\":\"multipart/mixed\",\"parts\":["
             +"{\"mimeType\":\"multipart/alternative\",\"parts\":["
             +"{\"mimeType\":\"text/html\",\"body\":{\"data\":\"PGI-SGk8L2I-\"}},"
@@ -95,7 +108,8 @@ public class GmailClientTest {
     }
     @Test public void htmlFallbackMalformedAndAccountIsolation() throws Exception {
         assertEquals("Hello & bye",GmailClient.mimeText(json("{\"mimeType\":\"text/html\",\"body\":{\"data\":\"PHA-SGVsbG8gJmFtcDsgYnllPC9wPg\"}}")));
-        assertEquals("",GmailClient.mimeText(json("{\"mimeType\":\"text/plain\",\"body\":{\"data\":\"!\"}}")));
+        try { GmailClient.mimeText(json("{\"mimeType\":\"text/plain\",\"body\":{\"data\":\"!\"}}")); fail(); }
+        catch (GmailClient.Failure e) { assertEquals(422,e.status); }
         assertNotEquals(GmailClient.sample("one",message("a","[]")).getString("messageId"),
             GmailClient.sample("two",message("a","[]")).getString("messageId"));
     }
@@ -110,7 +124,7 @@ public class GmailClientTest {
             .at("/messages/a/attachments/text",json("{\"data\":\"SGVsbG8\"}"));
         assertEquals("Hello",new GmailClient(f).scan("one",null).samples().getJSONObject(0).getString("body"));
     }
-    @Test public void honorsDeclaredCharsetAndStripsExecutableHtml() {
+    @Test public void honorsDeclaredCharsetAndStripsExecutableHtml() throws Exception {
         assertEquals("café", GmailClient.mimeText(json("{\"mimeType\":\"text/plain\","
             +"\"headers\":[{\"name\":\"Content-Type\",\"value\":\"text/plain; charset=ISO-8859-1\"}],"
             +"\"body\":{\"data\":\"Y2Fm6Q\"}}")));
@@ -189,5 +203,81 @@ public class GmailClientTest {
             .at(GmailClient.FULL,json("{\"messages\":[{\"id\":\"a\"}]}"))
             .at("/messages/a?format=full",m);
         assertEquals("Hello",new GmailClient(f).scan("one",null).samples().getJSONObject(0).getString("body"));
+    }
+    @Test public void capturesFixedEpochWindowOnceAcrossPagesAndFiltersExactMilliseconds() throws Exception {
+        long end=1_700_604_800_999L, start=end-7L*24*60*60*1000;
+        int[] clockReads={0};
+        java.time.Clock clock=new java.time.Clock() {
+            public java.time.ZoneId getZone() { return java.time.ZoneOffset.UTC; }
+            public java.time.Clock withZone(java.time.ZoneId ignored) { return this; }
+            public java.time.Instant instant() { return java.time.Instant.ofEpochMilli(end+clockReads[0]++*86400000L); }
+        };
+        Fake f=new Fake().at("/profile",json("{\"historyId\":\"10\"}"))
+            .at(GmailClient.FULL,json("{\"messages\":[{\"id\":\"start\"},{\"id\":\"inside\"}],\"nextPageToken\":\"p\"}"))
+            .at(GmailClient.FULL+"&pageToken=p",json("{\"messages\":[{\"id\":\"end\"},{\"id\":\"future\"}]}"))
+            .at("/messages/start?format=full",message("start","[]").put("internalDate",Long.toString(start)))
+            .at("/messages/inside?format=full",message("inside","[]").put("internalDate",Long.toString(start+1)))
+            .at("/messages/end?format=full",message("end","[]").put("internalDate",Long.toString(end)))
+            .at("/messages/future?format=full",message("future","[]").put("internalDate",Long.toString(end+1)));
+        GmailClient.Batch batch=new GmailClient(f,ignored -> {},clock).scan("one",null);
+        assertEquals(1,clockReads[0]);
+        assertEquals(2,batch.samples().length());
+        assertEquals("one:inside",batch.samples().getJSONObject(0).getString("messageId"));
+        assertEquals("one:end",batch.samples().getJSONObject(1).getString("messageId"));
+        assertEquals("/profile",f.calls.get(0));
+        String query=java.net.URLDecoder.decode(f.calls.get(1).substring(GmailClient.FULL.length()),"UTF-8");
+        assertTrue(query.contains("after:"+(Math.floorDiv(start,1000)-1)));
+        assertTrue(query.contains("before:"+(Math.floorDiv(end,1000)+1)));
+        assertFalse(query.contains("newer_than"));
+        assertEquals(f.calls.get(1)+"&pageToken=p",f.calls.get(2));
+    }
+    @Test public void oldUnreadAndSentHistoryDoNotScoreOrFetchOldMimeAttachments() throws Exception {
+        long end=1_700_604_800_999L, start=end-7L*24*60*60*1000;
+        Fake f=new Fake().at("/history?startHistoryId=10&maxResults=500",json("{\"historyId\":\"11\",\"history\":["
+            +"{\"labelsRemoved\":[{\"message\":{\"id\":\"old\"},\"labelIds\":[\"UNREAD\"]}],"
+            +"\"labelsAdded\":[{\"message\":{\"id\":\"old-sent\"},\"labelIds\":[\"SENT\"]}]},"
+            +"{\"messagesAdded\":[{\"message\":{\"id\":\"recent\"}}]}]}"))
+            .at("/messages/old?format=full",message("old","[]").put("internalDate",Long.toString(start-3650L*86400000L))
+                .put("payload",json("{\"mimeType\":\"text/plain\",\"body\":{\"attachmentId\":\"must-not-fetch\"}}")))
+            .at("/messages/old-sent?format=full",message("old-sent","[\"SENT\"]").put("internalDate",Long.toString(start-1)))
+            .at("/messages/recent?format=full",message("recent","[]").put("internalDate",Long.toString(end)));
+        GmailClient.Batch batch=new GmailClient(f,ignored -> {},java.time.Clock.fixed(
+            java.time.Instant.ofEpochMilli(end),java.time.ZoneOffset.UTC)).scan("one","10");
+        assertEquals("11",batch.historyId());
+        assertEquals(1,batch.samples().length());
+        assertEquals("one:recent",batch.samples().getJSONObject(0).getString("messageId"));
+    }
+    @Test public void malformedBase64InvalidUtf8AndUnknownCharsetNeverProduceSamples() throws Exception {
+        for (String payload : List.of(
+            "{\"mimeType\":\"text/plain\",\"body\":{\"data\":\"!\"}}",
+            "{\"mimeType\":\"text/plain\",\"body\":{\"data\":\"_w\"}}",
+            "{\"mimeType\":\"text/plain\",\"headers\":[{\"name\":\"Content-Type\",\"value\":\"text/plain; charset=not-a-real-charset\"}],\"body\":{\"data\":\"SGVsbG8\"}}")) {
+            Fake f=new Fake().at("/profile",json("{\"historyId\":\"10\"}"))
+                .at(GmailClient.FULL,json("{\"messages\":[{\"id\":\"a\"}]}"))
+                .at("/messages/a?format=full",message("a","[]").put("payload",json(payload)));
+            try { new GmailClient(f).scan("one",null); fail("Invalid MIME was scored"); }
+            catch (GmailClient.Failure e) { assertEquals(422,e.status); }
+        }
+    }
+    @Test public void historyArrivingAfterFixedEndIsDeferredWithoutLosingCursor() throws Exception {
+        long end=1_700_604_800_999L;
+        int[] reads={0};
+        java.time.Clock clock=new java.time.Clock() {
+            public java.time.ZoneId getZone() { return java.time.ZoneOffset.UTC; }
+            public java.time.Clock withZone(java.time.ZoneId ignored) { return this; }
+            public java.time.Instant instant() { return java.time.Instant.ofEpochMilli(end+reads[0]++*1000L); }
+        };
+        JSONObject history=json("{\"historyId\":\"11\",\"history\":[{\"messagesAdded\":[{\"message\":{\"id\":\"new\"}}]}]}");
+        JSONObject mail=message("new","[]").put("internalDate",Long.toString(end+1));
+        Fake f=new Fake().at("/history?startHistoryId=10&maxResults=500",history,history)
+            .at("/messages/new?format=full",mail,mail);
+        GmailClient client=new GmailClient(f,ignored -> {},clock);
+        GmailClient.Batch first=client.scan("one","10");
+        assertEquals("10",first.historyId());
+        assertEquals(0,first.samples().length());
+        GmailClient.Batch second=client.scan("one",first.historyId());
+        assertEquals("11",second.historyId());
+        assertEquals(1,second.samples().length());
+        assertEquals(2,reads[0]);
     }
 }

@@ -33,4 +33,4 @@ with zipfile.ZipFile(sys.argv[1]) as apk:
 print("Verified packaged JNI ABIs, signature and 16KB ZIP alignment.")
 ' "$apk"
 # Never emit a checksum for a failed build or fabricate release credentials.
-bash "$mobile/scripts/artifact-checksum.sh" "$apk"
+bash "$mobile/scripts/artifact-checksum.sh" "$apk" --write

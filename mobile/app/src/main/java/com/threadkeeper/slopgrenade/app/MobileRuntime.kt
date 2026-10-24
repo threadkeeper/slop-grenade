@@ -19,9 +19,9 @@ class MobileRuntime private constructor(context: Context) {
     val consentActive = AtomicBoolean(false)
     val engine = ScanEngine(accounts, core, { account ->
         try { google.token(account.label) }
-        catch (_: GoogleAccounts.Reconnect) { throw GmailClient.Failure(401, 0) }
         catch (_: GoogleAccounts.Transient) { throw GmailClient.Failure(503, 0) }
     }, { account, token, checkpoint ->
+        // ScanEngine enforces sender pseudonyms + generic subjects immediately before every JNI ingest.
         GmailClient(GmailClient.https(token)).scan(account.id, checkpoint)
     })
 

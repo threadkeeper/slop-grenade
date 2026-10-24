@@ -4,9 +4,14 @@
 //! reports, and seen IDs remain until the normal process/session clear, so other
 //! accounts are unaffected and reconnect cannot count the same mail twice.
 //! The shell separately removes credentials, checkpoints, and scheduled work.
+//! Raw Gmail metadata is transient scoring input; report metadata is redacted
+//! here afterward, before responses, ledger storage, or event publication.
 
+use std::collections::hash_map::RandomState;
 use std::collections::HashSet;
+use std::hash::BuildHasher;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
@@ -73,6 +78,7 @@ impl NativeCore {
 
     fn route(&mut self, request: Request) -> Result<Value, ApiError> {
         match (request.method.as_str(), request.path.as_str()) {
+            ("GET", "/api/v1/health") => Ok(json!({"ok":true,"version":env!("CARGO_PKG_VERSION")})),
             ("GET", "/internal/session") => Ok(json!({"sessionId":self.session_id})),
             ("GET", "/api/v1/ledger") => Ok(json!(self.ledger.scorecard())),
             ("GET", path) if path == "/api/v1/events" || path.starts_with("/api/v1/events?") => {
@@ -235,7 +241,19 @@ fn valid_account(account: &str) -> bool {
 
 fn sanitize_report(mut report: SlopReport) -> SlopReport {
     // Preserve scoring and schema, but do not retain verbatim body fragments.
-    // Kotlin supplies the redacted sender/topic labels used for leaderboards.
+    // Sender/subject automation checks must already have run on unmodified
+    // transient samples. Never redact inputs before the detector sees them.
+    if report.app == M365App::Gmail {
+        static SENDER_HASHER: OnceLock<RandomState> = OnceLock::new();
+        let normalized_sender = report.sender.trim().to_lowercase();
+        // Process-keyed, never persisted, and independent of account/message IDs
+        // so the same sender still groups across connected Gmail accounts.
+        let pseudonym = SENDER_HASHER
+            .get_or_init(RandomState::new)
+            .hash_one(normalized_sender);
+        report.sender = format!("Gmail sender {pseudonym:016x}");
+        report.subject_or_topic = "Gmail message".into();
+    }
     report.redacted_preview = "[Message content kept ephemeral]".into();
     for signal in &mut report.signals {
         signal.excerpt.clear();
@@ -346,6 +364,38 @@ mod tests {
         sample.app = M365App::Gmail;
         sample.message_id = id.into();
         serde_json::to_value(sample).unwrap()
+    }
+
+    #[test]
+    fn health_reports_native_package_version_without_mutating_session() {
+        let mut core = NativeCore::new();
+        let before = call(&mut core, "GET", "/internal/session", Value::Null);
+        let response = call(&mut core, "GET", "/api/v1/health", Value::Null);
+        assert_eq!(
+            response,
+            json!({
+                "status":200,
+                "body":{"ok":true,"version":env!("CARGO_PKG_VERSION")}
+            })
+        );
+        assert_eq!(
+            call(&mut core, "GET", "/internal/session", Value::Null),
+            before
+        );
+        assert_eq!(
+            call(&mut core, "GET", "/api/v1/events", Value::Null)["body"],
+            json!([])
+        );
+        assert_eq!(
+            call(&mut core, "GET", "/api/v1/ledger", Value::Null)["body"]["sentByMe"]
+                ["totalMessages"],
+            0
+        );
+        assert_eq!(
+            call(&mut core, "GET", "/api/v1/ledger", Value::Null)["body"]["receivedByMe"]
+                ["totalMessages"],
+            0
+        );
     }
 
     #[test]
@@ -817,6 +867,138 @@ mod tests {
         for path in ["/api/v1/ledger", "/api/v1/events"] {
             let response = call(&mut core, "GET", path, Value::Null);
             assert!(!response.to_string().contains("PRIVATE_FIXTURE_9483"));
+        }
+    }
+
+    #[test]
+    fn gmail_automated_metadata_is_scored_before_report_redaction() {
+        for (sender, subject) in [
+            (
+                "noreply@sender-private-fixture.invalid",
+                "PRIVATE_TOPIC_SENTINEL",
+            ),
+            (
+                "sender-private-fixture@example.invalid",
+                "Automatic reply: PRIVATE_TOPIC_SENTINEL",
+            ),
+        ] {
+            let mut core = NativeCore::new();
+            let mut message = sample("account:automated", "slop_grenade");
+            message["sender"] = json!(sender);
+            message["subjectOrTopic"] = json!(subject);
+            let raw: MessageSample = serde_json::from_value(message.clone()).unwrap();
+            assert_eq!(SlopDetector::new().analyze(&raw).slop_score, 4);
+            let response = call(
+                &mut core,
+                "POST",
+                "/internal/ingest",
+                json!({"samples":[message],"quiet":false}),
+            );
+            let report = &response["body"]["batch"]["reports"][0];
+            assert_eq!(report["slopScore"], 4);
+            assert_eq!(report["tier"], "human_sparkle");
+            assert_eq!(report["subjectOrTopic"], "Gmail message");
+            assert!(report["sender"]
+                .as_str()
+                .unwrap()
+                .starts_with("Gmail sender "));
+            for result in [
+                response,
+                call(&mut core, "GET", "/api/v1/ledger", Value::Null),
+                call(&mut core, "GET", "/api/v1/events", Value::Null),
+            ] {
+                let json = result.to_string();
+                assert!(!json.contains(sender));
+                assert!(!json.contains(subject));
+                assert!(!json.contains("PRIVATE_TOPIC_SENTINEL"));
+            }
+        }
+    }
+
+    #[test]
+    fn gmail_sender_pseudonyms_group_across_accounts_and_do_not_retain_topics() {
+        let mut core = NativeCore::new();
+        let mut messages = Vec::new();
+        for (id, sender) in [
+            ("a:1", "Person <private-grouping-fixture@example.invalid>"),
+            ("b:1", " person <PRIVATE-GROUPING-FIXTURE@EXAMPLE.INVALID> "),
+            ("b:2", "Different <other-private-fixture@example.invalid>"),
+        ] {
+            let mut message = sample(id, "human_sparkle");
+            message["sender"] = json!(sender);
+            message["subjectOrTopic"] = json!("PRIVATE_GROUPING_TOPIC");
+            messages.push(message);
+        }
+        let response = call(
+            &mut core,
+            "POST",
+            "/internal/ingest",
+            json!({"samples":messages,"quiet":false}),
+        );
+        let reports = response["body"]["batch"]["reports"].as_array().unwrap();
+        assert_eq!(reports[0]["sender"], reports[1]["sender"]);
+        assert_ne!(reports[0]["sender"], reports[2]["sender"]);
+        let pseudonym = reports[0]["sender"].clone();
+        // A manual analysis and another native runtime in this process share
+        // the same process key, rather than an account- or request-specific key.
+        let mut same_process = NativeCore::new();
+        let manual = call(
+            &mut same_process,
+            "POST",
+            "/api/v1/analyze",
+            json!({
+                "app":"gmail","sender":"Person <private-grouping-fixture@example.invalid>",
+                "subjectOrTopic":"PRIVATE_GROUPING_TOPIC","body":"Synthetic draft"
+            }),
+        );
+        assert_eq!(manual["body"]["report"]["sender"], pseudonym);
+        for result in [
+            response,
+            manual,
+            call(&mut core, "GET", "/api/v1/ledger", Value::Null),
+            call(&mut core, "GET", "/api/v1/events", Value::Null),
+        ] {
+            let json = result.to_string().to_lowercase();
+            assert!(!json.contains("private-grouping-fixture"));
+            assert!(!json.contains("other-private-fixture"));
+            assert!(!json.contains("private_grouping_topic"));
+        }
+        let ledger = call(&mut core, "GET", "/api/v1/ledger", Value::Null);
+        assert!(ledger["body"]["topPDoomers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|person| person["name"] == pseudonym && person["messageCount"] == 2));
+    }
+
+    #[test]
+    fn gmail_draft_automatic_reply_subject_still_suppresses_grenade_before_redaction() {
+        let mut core = NativeCore::new();
+        let draft = build_preset_sample("slop_grenade", 1);
+        let response = call(
+            &mut core,
+            "POST",
+            "/api/v1/analyze",
+            json!({
+                "app":"gmail","sender":"private-draft-fixture@example.invalid",
+                "subjectOrTopic":"Automatic reply: PRIVATE_DRAFT_TOPIC","body":draft.body
+            }),
+        );
+        assert_eq!(response["status"], 200);
+        assert_eq!(response["body"]["report"]["slopScore"], 4);
+        assert_eq!(response["body"]["report"]["tier"], "human_sparkle");
+        assert_eq!(
+            response["body"]["report"]["subjectOrTopic"],
+            "Gmail message"
+        );
+        for result in [
+            response,
+            call(&mut core, "GET", "/api/v1/ledger", Value::Null),
+            call(&mut core, "GET", "/api/v1/events", Value::Null),
+        ] {
+            let json = result.to_string();
+            assert!(!json.contains("private-draft-fixture"));
+            assert!(!json.contains("PRIVATE_DRAFT_TOPIC"));
         }
     }
 

@@ -24,6 +24,15 @@ class OverlayService : Service() {
         if (!MainActivity.visible || !Settings.canDrawOverlays(this)) {
             stopSelf(); return START_NOT_STICKY
         }
+        val sound = OverlaySoundPreferences(
+            intent?.getBooleanExtra("soundEnabled", false) ?: false,
+            (intent?.getIntExtra("soundVolume", 70) ?: 70).coerceIn(0, 100))
+        view?.let {
+            // A subsequent explicit activation reapplies the latest dashboard preferences.
+            it.settings.mediaPlaybackRequiresUserGesture = sound.requiresGesture(overlay = true)
+            it.loadUrl(sound.url())
+            return START_NOT_STICKY
+        }
         if (view == null) {
             try {
                 windows = getSystemService(WindowManager::class.java)
@@ -34,7 +43,7 @@ class OverlayService : Service() {
                             runtime.core.request(method, path, body)
                         else JSONObject().put("status", 403).put("body", JSONObject().put("error", "Read-only overlay"))
                     }, runtime.io)
-                }, overlay = true)
+                }, overlay = true, overlaySound = sound)
                 val params = WindowManager.LayoutParams(
                     WindowManager.LayoutParams.MATCH_PARENT, WindowManager.LayoutParams.MATCH_PARENT,
                     WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,

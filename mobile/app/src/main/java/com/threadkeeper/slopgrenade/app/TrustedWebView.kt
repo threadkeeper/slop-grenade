@@ -22,7 +22,12 @@ import java.util.concurrent.CompletableFuture
 /** Bundled assets only. There is no JavascriptInterface, file access, remote navigation, or HTTP bridge. */
 object TrustedWebView {
     @SuppressLint("SetJavaScriptEnabled")
-    fun create(context: Context, dispatch: (String, String, JSONObject) -> CompletableFuture<JSONObject>, overlay: Boolean = false): WebView {
+    fun create(
+        context: Context,
+        dispatch: (String, String, JSONObject) -> CompletableFuture<JSONObject>,
+        overlay: Boolean = false,
+        overlaySound: OverlaySoundPreferences = OverlaySoundPreferences(),
+    ): WebView {
         check(WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
             "Update Android System WebView to use Slop Grenade"
         }
@@ -30,21 +35,29 @@ object TrustedWebView {
         val loader = WebViewAssetLoader.Builder()
             .setDomain("appassets.androidplatform.net")
             .addPathHandler("/", WebViewAssetLoader.AssetsPathHandler(context)).build()
+        // shouldInterceptRequest runs off main. Hash the packaged file, never request-controlled HTML.
+        val policy by lazy {
+            context.assets.open("index.html").bufferedReader(Charsets.UTF_8).use {
+                ContentSecurityPolicy.forIndex(it.readText())
+            }
+        }
         return WebView(context).apply {
             settings.javaScriptEnabled = true
-            settings.domStorageEnabled = false
+            // The trusted bundle persists only sound/volume; all app data remains backup-excluded.
+            settings.domStorageEnabled = true
             settings.allowFileAccess = false
             settings.allowContentAccess = false
             settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
             settings.cacheMode = WebSettings.LOAD_NO_CACHE
             settings.javaScriptCanOpenWindowsAutomatically = false
             settings.setSupportMultipleWindows(false)
-            settings.mediaPlaybackRequiresUserGesture = true
+            settings.mediaPlaybackRequiresUserGesture = overlaySound.requiresGesture(overlay)
             CookieManager.getInstance().setAcceptCookie(false)
             CookieManager.getInstance().setAcceptThirdPartyCookies(this, false)
             setDownloadListener { _, _, _, _, _ -> /* Downloads are never permitted. */ }
             setBackgroundColor(if (overlay) Color.TRANSPARENT else Color.WHITE)
             isSaveEnabled = false
+            importantForAutofill = android.view.View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
             webViewClient = object : WebViewClient() {
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
                     !assetUri(request.url)
@@ -55,9 +68,7 @@ object TrustedWebView {
                     result.responseHeaders = (result.responseHeaders ?: emptyMap()) + mapOf(
                         "Cache-Control" to "no-store",
                         "X-Content-Type-Options" to "nosniff",
-                        "Content-Security-Policy" to "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
-                            "img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; " +
-                            "frame-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+                        "Content-Security-Policy" to policy)
                     return result
                 }
             }
@@ -83,7 +94,7 @@ object TrustedWebView {
                         }
                 } catch (_: Exception) { /* Malformed/untrusted input gets no reflective response. */ }
             }
-            loadUrl(BridgePolicy.ORIGIN + "/index.html" + if (overlay) "?mode=overlay" else "")
+            loadUrl(if (overlay) overlaySound.url() else BridgePolicy.ORIGIN + "/index.html")
         }
     }
 

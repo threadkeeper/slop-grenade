@@ -33,7 +33,7 @@ class MainActivity : Activity() {
         visible = true
         if (pendingOverlay) {
             pendingOverlay = false
-            if (Settings.canDrawOverlays(this)) startService(Intent(this, OverlayService::class.java))
+            if (Settings.canDrawOverlays(this)) startOverlayWithPreferences()
         }
         runtime.io.execute {
             try {
@@ -53,13 +53,28 @@ class MainActivity : Activity() {
     fun requestOverlay(): JSONObject {
         check(visible)
         val granted = Settings.canDrawOverlays(this)
-        if (granted) startService(Intent(this, OverlayService::class.java))
+        if (granted) startOverlayWithPreferences()
         else {
             pendingOverlay = true
             startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
         }
         return JSONObject().put("overlayGranted", granted)
             .put("requested", !granted).put("scope", "visible-app-only")
+    }
+    private fun startOverlayWithPreferences() {
+        fun launch(preferences: OverlaySoundPreferences) {
+            if (!visible || isFinishing || isDestroyed || !Settings.canDrawOverlays(this)) return
+            startService(Intent(this, OverlayService::class.java)
+                .putExtra("soundEnabled", preferences.enabled).putExtra("soundVolume", preferences.volume))
+        }
+        val view = dashboard
+        if (view == null) { launch(OverlaySoundPreferences()); return }
+        try {
+            // Read only two non-sensitive preferences from our trusted bundled dashboard.
+            view.evaluateJavascript(OverlaySoundPreferences.READ_SCRIPT) {
+                launch(OverlaySoundPreferences.fromScriptResult(it))
+            }
+        } catch (_: Exception) { launch(OverlaySoundPreferences()) }
     }
     @Deprecated("Delegates supported Google consent results")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {

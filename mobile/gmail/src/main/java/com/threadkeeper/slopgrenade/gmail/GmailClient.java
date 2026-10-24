@@ -6,21 +6,37 @@ import java.io.*;
 import java.net.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.charset.Charset;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
 import java.time.Instant;
+import java.time.Clock;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /** Ephemeral Gmail REST connector. No message content or bearer token is persisted. */
 public final class GmailClient {
-    public static final String FULL = "/messages?maxResults=500&includeSpamTrash=false&q="
-        + "newer_than%3A7d%20-in%3Adrafts%20-in%3Aspam%20-in%3Atrash";
+    public static final String FULL = "/messages?maxResults=500&includeSpamTrash=false&q=";
+    private static final long SEVEN_DAYS_MILLIS = 7L * 24 * 60 * 60 * 1000;
     private static final int MAX_BYTES = 8 * 1024 * 1024;
     private final Transport transport;
     private final Sleeper sleeper;
+    private final Clock clock;
     public interface Transport { JSONObject get(String path) throws Failure; }
     public interface Sleeper { void sleep(long millis) throws InterruptedException; }
-    public record Batch(JSONArray samples, String historyId, boolean resynced) {}
+    /** API-30-compatible immutable holder; no Record runtime or content-bearing generated toString. */
+    public static final class Batch {
+        private final JSONArray samples;
+        private final String historyId;
+        private final boolean resynced;
+        public Batch(JSONArray samples, String historyId, boolean resynced) {
+            this.samples=samples; this.historyId=historyId; this.resynced=resynced;
+        }
+        public JSONArray samples() { return samples; }
+        public String historyId() { return historyId; }
+        public boolean resynced() { return resynced; }
+    }
     /** Sanitized transport failure, intentionally excludes server response content. */
     public static final class Failure extends IOException {
         public final int status;
@@ -33,16 +49,23 @@ public final class GmailClient {
     }
     public GmailClient(Transport transport) { this(transport, Thread::sleep); }
     public GmailClient(Transport transport, Sleeper sleeper) {
-        this.transport = transport; this.sleeper = sleeper;
+        this(transport,sleeper,Clock.systemUTC());
+    }
+    public GmailClient(Transport transport, Sleeper sleeper, Clock clock) {
+        this.transport = transport; this.sleeper = sleeper; this.clock = clock;
     }
     /** Returns a complete batch only; callers must commit the checkpoint after successful ingest. */
     public Batch scan(String accountId, String checkpoint) throws Failure, InterruptedException {
+        long end = clock.millis();
+        return scanWithinWindow(accountId,checkpoint,end-SEVEN_DAYS_MILLIS,end);
+    }
+    private Batch scanWithinWindow(String accountId, String checkpoint, long start, long end) throws Failure, InterruptedException {
         boolean full = checkpoint == null;
         LinkedHashSet<String> ids = new LinkedHashSet<>();
         String watermark;
         try {
             watermark = full ? get("/profile").getString("historyId") : checkpoint;
-            String base = full ? FULL : "/history?startHistoryId="+encode(checkpoint)+"&maxResults=500";
+            String base = full ? fullQuery(start,end) : "/history?startHistoryId="+encode(checkpoint)+"&maxResults=500";
             String next = "";
             Set<String> pages = new HashSet<>();
             do {
@@ -62,16 +85,29 @@ public final class GmailClient {
             } while (!next.isEmpty());
         } catch (Failure e) {
             if (!full && e.status == 404) {
-                Batch b = scan(accountId,null);
-                return new Batch(b.samples,b.historyId,true);
+                Batch b = scanWithinWindow(accountId,null,start,end);
+                return new Batch(b.samples(),b.historyId(),true);
             }
             throw e;
         }
         JSONArray samples = new JSONArray();
+        boolean deferredFutureHistory = false;
         for (String id : ids) {
             if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
             try {
                 JSONObject message = get("/messages/"+encode(id)+"?format=full");
+                long timestamp;
+                try { timestamp=Long.parseLong(message.getString("internalDate")); }
+                catch (RuntimeException e) { throw new Failure(422,0); }
+                // Apply the same fixed window to history label events as to full pages.
+                // In particular, marking years-old mail unread must not create new effects.
+                if (timestamp > end) {
+                    // History may grow while paging. Keep the cursor so newly arrived mail
+                    // beyond this scan's fixed end can be picked up on the next scan.
+                    deferredFutureHistory = !full;
+                    continue;
+                }
+                if (timestamp <= start) continue;
                 JSONArray labels = message.optJSONArray("labelIds");
                 boolean excluded = false;
                 if (labels != null) for (int i=0;i<labels.length();i++)
@@ -85,7 +121,12 @@ public final class GmailClient {
                 if (e.status != 404) throw e; // Deleted between listing and fetch.
             }
         }
-        return new Batch(samples,watermark,full);
+        return new Batch(samples,deferredFutureHistory ? checkpoint : watermark,full);
+    }
+    private static String fullQuery(long start, long end) {
+        // Widen coarse Gmail second bounds by at most one second; enforce exact milliseconds locally.
+        return FULL+encode("after:"+(Math.floorDiv(start,1000L)-1)+" before:"+(Math.floorDiv(end,1000L)+1)
+            +" -in:drafts -in:spam -in:trash");
     }
     private void resolveInlineBodies(String messageId, JSONObject part) throws Failure, InterruptedException {
         if (isAttachment(part)) return;
@@ -163,7 +204,7 @@ public final class GmailClient {
             .put("timestamp",Instant.ofEpochMilli(Long.parseLong(message.getString("internalDate"))).toString());
     }
     /** Prefers text/plain alternatives, ignores attachments, and strips inert HTML fallback. */
-    public static String mimeText(JSONObject part) {
+    public static String mimeText(JSONObject part) throws Failure {
         if (isAttachment(part)) return "";
         String type=part.optString("mimeType","");
         JSONArray parts=part.optJSONArray("parts");
@@ -190,13 +231,15 @@ public final class GmailClient {
         JSONObject body=part.optJSONObject("body");
         if (body == null) return "";
         try {
-            String text=new String(Base64.getUrlDecoder().decode(body.optString("data","")),charset(part));
+            byte[] decoded=Base64.getUrlDecoder().decode(body.optString("data",""));
+            String text=charset(part).newDecoder().onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(decoded)).toString();
             if (type.equals("text/html")) text=text.replaceAll("(?is)<(script|style)\\b[^>]*>.*?</\\1>","")
                 .replaceAll("(?s)<[^>]*>"," ").replace("&nbsp;"," ").replace("&lt;","<")
                 .replace("&gt;",">").replace("&quot;","\"").replace("&#39;","'").replace("&amp;","&")
                 .replaceAll("\\s+"," ").trim();
             return text;
-        } catch (IllegalArgumentException e) { return ""; }
+        } catch (IllegalArgumentException | CharacterCodingException e) { throw new Failure(422,0); }
     }
     private static boolean isAttachment(JSONObject part) {
         if (!part.optString("filename","").isEmpty()) return true;
@@ -210,7 +253,7 @@ public final class GmailClient {
         }
         return false;
     }
-    private static Charset charset(JSONObject part) {
+    private static Charset charset(JSONObject part) throws Failure {
         JSONArray headers=part.optJSONArray("headers");
         if (headers != null) for (int i=0;i<headers.length();i++) {
             JSONObject header=headers.getJSONObject(i);
@@ -218,7 +261,7 @@ public final class GmailClient {
             Matcher m=Pattern.compile("(?i)charset\\s*=\\s*[\"']?([^\\s;\"']+)").matcher(header.optString("value"));
             if (m.find()) {
                 try { return Charset.forName(m.group(1)); }
-                catch (IllegalArgumentException ignored) { /* Unknown charset falls back to UTF-8. */ }
+                catch (IllegalArgumentException ignored) { throw new Failure(422,0); }
             }
         }
         return StandardCharsets.UTF_8;

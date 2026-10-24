@@ -23,7 +23,9 @@ class ScanEngineTest {
         val request = JSONObject(it); calls.add(request)
         when (request.getString("path")) {
             "/internal/session" -> """{"status":200,"body":{"sessionId":"new"}}"""
-            "/internal/ingest" -> if (failIngest) """{"status":503,"body":{}}""" else """{"status":200,"body":{"ok":true}}"""
+            "/internal/ingest" -> if (failIngest) """{"status":503,"body":{}}""" else
+                """{"status":200,"body":{"ok":true,"batch":{"fetchedCount":0,"newMessagesAnalyzed":0,"grenadesTriggered":0}}}"""
+            "/internal/disconnect" -> """{"status":200,"body":{"ok":true,"historyRetained":true,"clearedEvents":0}}"""
             else -> """{"status":200,"body":{"ok":true}}"""
         }
     }
@@ -58,7 +60,7 @@ class ScanEngineTest {
         assertTrue(store.all().first { it.id == "one" }.reconnectRequired)
         assertEquals("10", store.all().first { it.id == "two" }.checkpoint)
     }
-    @Test fun disconnectWaitsForInFlightIngestThenPurgesWithoutResurrection() {
+    @Test fun disconnectWaitsForInFlightIngestThenRemovesConnectionWithoutResurrection() {
         val entered = CountDownLatch(1)
         val release = CountDownLatch(1)
         val calls = mutableListOf<JSONObject>()
@@ -107,5 +109,129 @@ class ScanEngineTest {
         assertEquals(1, calls.size)
         assertTrue(engine.status.contains("MIME body unavailable"))
         assertTrue(engine.status.contains("checkpoint unchanged"))
+    }
+    @Test fun explicitRefreshForcesFullQuietSevenDaysAndAggregatesDesktopEnvelope() {
+        val store = Store(account.copy(session = "new"), account.copy(id = "two", session = "new"))
+        val checkpoints = mutableListOf<String?>()
+        var ingests = 0
+        val core = CoreApi {
+            val request = JSONObject(it)
+            if (request.getString("path") == "/internal/session") """{"status":200,"body":{"sessionId":"new"}}"""
+            else {
+                assertTrue(request.getJSONObject("body").getBoolean("quiet"))
+                ingests++
+                """{"status":200,"body":{"ok":true,"batch":{"fetchedCount":${if (ingests == 1) 2 else 1},"newMessagesAnalyzed":1,"grenadesTriggered":0}}}"""
+            }
+        }
+        val engine = ScanEngine(store, core, { "token" }, { a, _, checkpoint ->
+            checkpoints.add(checkpoint)
+            val samples = JSONArray().put(JSONObject())
+            if (a.id == "one") samples.put(JSONObject())
+            GmailClient.Batch(samples, "20", false)
+        })
+        val result = engine.refreshAllSevenDays()
+        assertTrue(result.ok)
+        assertFalse(result.retry)
+        assertEquals(listOf(null, null), checkpoints)
+        val body = result.toJson()
+        assertTrue(body.getBoolean("ok"))
+        assertEquals(7, body.getInt("lookbackDays"))
+        assertEquals(3, body.getJSONObject("batch").getInt("fetchedCount"))
+        assertEquals(2, body.getJSONObject("batch").getInt("newMessagesAnalyzed"))
+        assertEquals(0, body.getJSONObject("batch").getInt("grenadesTriggered"))
+        assertTrue(store.all().all { it.checkpoint == "20" && it.session == "new" })
+    }
+    @Test fun refreshFailureKeepsFailedAccountCheckpointButCommitsOtherAccount() {
+        val store = Store(account.copy(session = "new"), account.copy(id = "two", session = "new"))
+        val engine = ScanEngine(store, api(mutableListOf()), { "token" }, { a, _, checkpoint ->
+            assertNull(checkpoint)
+            if (a.id == "one") throw GmailClient.Failure(503, 0)
+            GmailClient.Batch(JSONArray(), "20", true)
+        })
+        val result = engine.refreshAllSevenDays()
+        assertFalse(result.ok)
+        assertTrue(result.retry)
+        assertFalse(result.toJson().getBoolean("ok"))
+        assertEquals("9", store.all().first { it.id == "one" }.checkpoint)
+        assertEquals("20", store.all().first { it.id == "two" }.checkpoint)
+    }
+    @Test fun typedAuthorizationFailureMarksReconnectWithoutRetryLoop() {
+        val store = Store(account)
+        val engine = ScanEngine(store, api(mutableListOf()), { throw AuthorizationRequired() },
+            { _, _, _ -> error("Unauthorized account must not fetch mail") })
+        val result = engine.refreshAllSevenDays()
+        assertFalse(result.ok)
+        assertFalse(result.retry)
+        assertTrue(store.all().single().reconnectRequired)
+        assertEquals("9", store.all().single().checkpoint)
+        assertTrue(engine.status.contains("Reconnect required"))
+        assertFalse(engine.scanAll())
+    }
+    @Test fun everyIngestPathRedactsRawSenderAndSubjectBeforeCrossingJni() {
+        var ingested = false
+        val core = CoreApi {
+            val request = JSONObject(it)
+            if (request.getString("path") == "/internal/session") """{"status":200,"body":{"sessionId":"new"}}"""
+            else {
+                val sample = request.getJSONObject("body").getJSONArray("samples").getJSONObject(0)
+                assertTrue(sample.getString("sender").startsWith("Gmail correspondent "))
+                assertEquals("Gmail message", sample.getString("subjectOrTopic"))
+                assertEquals("Ephemeral synthetic body", sample.getString("body"))
+                ingested = true
+                """{"status":200,"body":{"ok":true,"batch":{"fetchedCount":1,"newMessagesAnalyzed":1,"grenadesTriggered":0}}}"""
+            }
+        }
+        val engine = ScanEngine(Store(account), core, { "token" }, { _, _, _ ->
+            GmailClient.Batch(JSONArray().put(JSONObject().put("sender", "synthetic@example.invalid")
+                .put("subjectOrTopic", "Synthetic private topic").put("body", "Ephemeral synthetic body")
+                .put("direction", "received")), "20", true)
+        })
+        assertTrue(engine.refreshAllSevenDays().ok)
+        assertTrue(ingested)
+    }
+    @Test fun disconnectForwardsRetentionAcknowledgementAndReconnectUsesSameDedupIdentity() {
+        val email = "synthetic@example.invalid"
+        val id = AccountState.identity(email)
+        val store = Store(AccountState(id, email))
+        val seen = mutableSetOf<String>()
+        var historicalMessages = 0
+        var ingests = 0
+        val core = CoreApi {
+            val request = JSONObject(it)
+            when (request.getString("path")) {
+                "/internal/session" -> """{"status":200,"body":{"sessionId":"same-process"}}"""
+                "/internal/ingest" -> {
+                    val input = request.getJSONObject("body")
+                    assertTrue(input.getBoolean("quiet"))
+                    val messageId = input.getJSONArray("samples").getJSONObject(0).getString("messageId")
+                    assertEquals("$id:gmail-id", messageId)
+                    val added = if (seen.add(messageId)) 1 else 0
+                    historicalMessages += added
+                    ingests++
+                    """{"status":200,"body":{"ok":true,"batch":{"fetchedCount":1,"newMessagesAnalyzed":$added,"grenadesTriggered":0}}}"""
+                }
+                "/internal/disconnect" -> {
+                    assertEquals(id, request.getJSONObject("body").getString("accountId"))
+                    """{"status":200,"body":{"ok":true,"historyRetained":true,"clearedEvents":0}}"""
+                }
+                else -> error("Disconnect must not reset native history or deduplication")
+            }
+        }
+        val engine = ScanEngine(store, core, { "token" }, { _, _, checkpoint ->
+            assertNull(checkpoint)
+            GmailClient.Batch(JSONArray().put(JSONObject().put("messageId", "$id:gmail-id")
+                .put("sender", "synthetic@example.invalid").put("subjectOrTopic", "Synthetic topic")
+                .put("body", "Synthetic body").put("direction", "received")), "20", true)
+        })
+        assertEquals(1L, engine.refreshAllSevenDays().newMessagesAnalyzed)
+        val disconnected = engine.disconnect(id)
+        assertTrue(disconnected.getBoolean("historyRetained"))
+        assertEquals(0, disconnected.getInt("clearedEvents"))
+        assertTrue(store.all().isEmpty())
+        assertEquals(id, engine.connect(email).id)
+        assertEquals(0L, engine.refreshAllSevenDays().newMessagesAnalyzed)
+        assertEquals(2, ingests)
+        assertEquals(1, historicalMessages)
+        assertEquals(1, seen.size)
     }
 }

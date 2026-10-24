@@ -2,16 +2,6 @@ plugins { id("com.android.application"); kotlin("android") }
 
 val signingNames = listOf("SLOP_ANDROID_KEYSTORE", "SLOP_ANDROID_STORE_PASSWORD",
     "SLOP_ANDROID_KEY_ALIAS", "SLOP_ANDROID_KEY_PASSWORD")
-val releaseRequested = gradle.startParameter.taskNames.any {
-    val name = it.substringAfterLast(':')
-    name.contains("release", ignoreCase = true) || name in listOf("build", "assemble", "bundle")
-}
-if (releaseRequested) {
-    require(signingNames.all { !System.getenv(it).isNullOrBlank() }) {
-        "Release signing requires all SLOP_ANDROID signing environment variables"
-    }
-    require(file(System.getenv("SLOP_ANDROID_KEYSTORE")).isFile) { "Release keystore not found" }
-}
 android {
     namespace = "com.threadkeeper.slopgrenade"
     compileSdk = 35
@@ -71,13 +61,18 @@ tasks.register("verifyPackagedRuntime") {
     }
 }
 tasks.matching { it.name == "preBuild" }.configureEach { dependsOn("verifyPackagedRuntime") }
-tasks.matching { it.name == "packageRelease" || it.name == "bundleRelease" }.configureEach {
-    doFirst {
+val verifyReleaseSigning = tasks.register("verifyReleaseSigning") {
+    doLast {
         require(signingNames.all { !System.getenv(it).isNullOrBlank() }) {
             "Unsigned release packaging is prohibited; provide signing environment"
         }
+        require(file(System.getenv("SLOP_ANDROID_KEYSTORE")).isFile) { "Release keystore not found" }
     }
 }
+// Lint and unit tests may inspect release variants without signing credentials.
+// Guard the actual APK/AAB producers before they can create an unsigned release artifact.
+tasks.matching { it.name in listOf("packageRelease", "packageReleaseBundle", "signReleaseBundle", "bundleRelease") }
+    .configureEach { dependsOn(verifyReleaseSigning) }
 dependencies {
     implementation(project(":accounts"))
     implementation(project(":gmail"))

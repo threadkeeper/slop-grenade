@@ -142,7 +142,7 @@ The Android application lives separately under `mobile/`. It reuses the platform
 | `mobile/app/` | Android lifecycle, WorkManager, restricted WebView and overlay prototype |
 | `web/` | Existing dashboard/effects with a separate native transport; desktop HTTP/SSE remains supported |
 
-Build prerequisites are JDK 17, Android SDK platform 35, NDK `27.3.13750724` (or `ANDROID_NDK_HOME`), Rust, Node.js and the two Rust targets:
+Build prerequisites are Bash, Python 3 (available as `python`), JDK 17, Android SDK platform 35, NDK `27.3.13750724` (or `ANDROID_NDK_HOME`), Rust, Node.js and the two Rust targets:
 
 ```sh
 rustup target add aarch64-linux-android x86_64-linux-android
@@ -151,7 +151,7 @@ npm --prefix /home/runner/work/slop-grenade/slop-grenade/web run build
 bash /home/runner/work/slop-grenade/slop-grenade/mobile/scripts/build-android.sh debug
 ```
 
-Set `ANDROID_SDK_ROOT` to the local SDK directory. The build packages the web assets and compiles native libraries for ARM64 phones and x86-64 emulators. The minimum supported Android version is 11 (API 30). Generated assets, native libraries, APKs, SDK configuration and signing material are not committed.
+Set `ANDROID_SDK_ROOT` to the local SDK directory. The supplied native-build scripts support Linux and macOS hosts; on Windows, use a Linux build environment with its own SDK/NDK installation. The build packages the web assets and compiles native libraries for ARM64 phones and x86-64 emulators. The minimum supported Android version is 11 (API 30). Generated assets, native libraries, APKs, SDK configuration and signing material are not committed.
 
 For a release, supply `SLOP_ANDROID_KEYSTORE` (an absolute private keystore path), `SLOP_ANDROID_STORE_PASSWORD`, `SLOP_ANDROID_KEY_ALIAS` and `SLOP_ANDROID_KEY_PASSWORD` through a secure environment, then run:
 
@@ -165,6 +165,7 @@ Run the existing Rust and web gates in section 3, plus shared-core/bridge format
 
 ```sh
 bash /home/runner/work/slop-grenade/slop-grenade/mobile/scripts/test-jvm.sh
+bash /home/runner/work/slop-grenade/slop-grenade/mobile/scripts/build-policy.test.sh
 /home/runner/work/slop-grenade/slop-grenade/mobile/gradlew -p /home/runner/work/slop-grenade/slop-grenade/mobile :app:testDebugUnitTest :accounts:testDebugUnitTest :core:testDebugUnitTest :app:lintDebug
 /home/runner/work/slop-grenade/slop-grenade/mobile/gradlew -p /home/runner/work/slop-grenade/slop-grenade/mobile :app:connectedDebugAndroidTest
 ```
@@ -177,7 +178,7 @@ The JVM suite exercises connector and synchronization transactions with syntheti
 2. Register an **Android OAuth client** for the application's package name and the SHA-1 fingerprint of the certificate actually signing the installed APK. Debug and release certificates differ; register each certificate used for testing or distribution.
 3. Configure permitted test accounts while the consent screen is in testing. Request only `https://www.googleapis.com/auth/gmail.readonly`; the app does not send, edit or delete email.
 4. Review Google's current restricted-scope verification rules, testing-user limits and authorization-expiry rules before distribution. Workspace administrators may block access. Sideloading bypasses neither consent nor organizational policy.
-5. Use a device with Google Play services. Add and authorize each mailbox independently; authorization requiring user interaction must be completed with the app open.
+5. Use a device with Google Play services and an up-to-date Android System WebView. Add and authorize each mailbox independently; authorization requiring user interaction must be completed with the app open.
 
 Do not put OAuth client secrets, Google passwords, personal mailbox data or signing keys in this repository. An Android OAuth client is identified by the registered package/certificate, not an embedded confidential-client secret.
 
@@ -190,6 +191,7 @@ References: [Android authorization](https://developer.android.com/identity/autho
 - A failure for one mailbox must not prevent other mailboxes from being scanned. Authorization failures require reconnection; transient failures use scheduled retries.
 - Disconnect removes an account's local connection and stops future scans. Already-scored in-memory history and deduplication identifiers remain until normal process clear, so reconnecting does not double-count messages or reset another account's statistics. Disconnect is not a historical-data deletion operation.
 - Message bodies, reports and previews remain in memory. Only account configuration and minimal synchronization state are stored, with sensitive account state encrypted using Android Keystore-backed keys and excluded from backup. Process death clears the ledger; recovery rebuilds recent history quietly.
+- Gmail sender pseudonyms and generic subjects are applied **after** scoring, so automated-message detection still sees the original transient metadata. Reports retain signal labels and scores, not verbatim body fragments; sender pseudonyms are stable only within the process.
 - The WebView serves bundled assets only. Native capabilities must not be exposed to arbitrary websites, email HTML or remote scripts.
 
 ### Background execution and effects
