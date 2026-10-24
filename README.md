@@ -53,11 +53,17 @@ Slop is not exclusive to one inbox. The goal is a consistent little habit mirror
 | Connector | Status |
 | --- | --- |
 | **Outlook + Teams** | Available today through the local WorkIQ CLI/MCP connection. |
-| **Google Workspace / Gmail** | Planned. Not implemented yet. |
+| **Google Workspace / Gmail** | Experimental Android port; see [Android setup and limitations](./TECHNICAL.md#5-android-gmail-port). Google authorization setup and device acceptance are required. |
 | **Slack** | Planned. Not implemented yet. |
 | **More chat and email platforms** | On the roadmap. Ideas and contributions welcome. |
 
 The current native overlay runs on **Windows**. The connector roadmap is not a claim that those integrations already work.
+
+### Android Gmail port
+
+The experimental, isolated `mobile/` application reuses the Rust scoring engine and Svelte dashboard for Gmail accounts, including received and already-sent mail. It does not monitor drafts or change scoring rules. Windows installation and WorkIQ remain unchanged.
+
+Android scheduling is battery-managed, not continuous one-minute monitoring. Gmail access requires Google Play services, a configured Google OAuth client and read-only consent for each account; installing an APK does not bypass those requirements. See the [technical guide](./TECHNICAL.md#5-android-gmail-port) before building or installing.
 
 ## Get started
 

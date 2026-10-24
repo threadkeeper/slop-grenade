@@ -12,15 +12,19 @@
     type DashboardFilterState,
     type TimeSpanFilter
   } from '$lib/dashboard';
-  import type { AnimationEvent, AnimationTier, AwarenessScorecard } from '$lib/types';
+  import type { AnimationTier, AwarenessScorecard } from '$lib/types';
   import { WebAudioSfx, type StageCue } from '$lib/engine';
   import { refreshSevenDays } from '$lib/refresh';
+  import { isNativeMobile, subscribeAnimations } from '$lib/transport';
+  import { createLedger } from '$lib/ledger';
+  import Mailbox from '$lib/components/Mailbox.svelte';
   import BrassGauge from '$lib/components/BrassGauge.svelte';
   import ProvingGrounds from '$lib/components/ProvingGrounds.svelte';
   import OverlayStage from '$lib/components/OverlayStage.svelte';
 
   /** `/?mode=overlay` shows only the transparent effects layer. */
   const overlayMode = new URLSearchParams(window.location.search).get('mode') === 'overlay';
+  const mobile = isNativeMobile();
 
   const TIER_ORDER: AnimationTier[] = ['slop_grenade', 'slop_splat', 'innocent_fruit', 'peaceful_cloud', 'human_sparkle'];
   const TIER_COLOR: Record<AnimationTier, string> = {
@@ -32,7 +36,7 @@
   };
 
   let scorecard = $state<AwarenessScorecard | null>(null);
-  let lastSeenSequence = $state(0);
+  let cueSequence = 0;
   let selectedBucket = $state<string | null>(null);
   let selectedPerson = $state<string | null>(null);
   let cue = $state<StageCue | null>(null);
@@ -42,6 +46,7 @@
   let refreshNotice = $state('');
   let refreshError = $state<string | null>(null);
   let ledgerError = $state<string | null>(null);
+  let ledger: ReturnType<typeof createLedger> | undefined;
 
   function readPref(key: string, fallback: string): string {
     try {
@@ -61,6 +66,7 @@
     timeSpan: 'today',
     teams: true,
     outlook: true,
+    gmail: true,
     tiers: {
       slop_grenade: true,
       slop_splat: true,
@@ -93,23 +99,14 @@
   const gridRows = $derived(rankGridReports(filteredReports, selectedBucket, selectedPerson, filters.timeSpan));
 
   async function loadLedger() {
-    try {
-      const res = await fetch('/api/v1/ledger');
-      if (!res.ok) throw new Error(`Dashboard reload failed (HTTP ${res.status}).`);
-      scorecard = (await res.json()) as AwarenessScorecard;
-      ledgerError = null;
-      return true;
-    } catch (error) {
-      ledgerError = error instanceof Error ? error.message : 'Cannot reach the local daemon.';
-      return false;
-    }
+    return ledger?.refresh() ?? false;
   }
 
   async function refreshHistory() {
     if (refreshing) return;
     refreshing = true;
     refreshError = null;
-    refreshNotice = 'Reading the last seven days from Outlook and Teams. This can take a few minutes.';
+    refreshNotice = `Reading the last seven days from ${mobile ? 'Gmail' : 'Outlook and Teams'}. This can take a few minutes.`;
     try {
       const batch = await refreshSevenDays();
       if (!(await loadLedger())) {
@@ -222,27 +219,25 @@
     const arm = () => sfx.setEnabled(soundOn);
     window.addEventListener('pointerdown', arm, { once: true });
 
-    void loadLedger();
+    ledger = createLedger(
+      (snapshot) => { scorecard = snapshot; },
+      (error) => { ledgerError = error; },
+      { native: mobile }
+    );
 
-    const evtSource = new EventSource('/api/v1/events/stream');
-    evtSource.addEventListener('animation', (e: MessageEvent) => {
-      try {
-        const animEvent = JSON.parse(e.data) as AnimationEvent;
-        if (animEvent.sequence > lastSeenSequence) {
-          lastSeenSequence = animEvent.sequence;
-          cue = animEvent.squeegeeSide
-            ? { seq: animEvent.sequence, side: animEvent.squeegeeSide, squeegee: true }
-            : { seq: animEvent.sequence, side: animEvent.report.monitorSide, tier: animEvent.report.tier };
-          void loadLedger();
-        }
-      } catch {
-        // Ignore malformed event
-      }
+    const stopEvents = subscribeAnimations((animEvent) => {
+      // Local cue IDs stay monotonic even when the native core process restarts.
+      const seq = ++cueSequence;
+      cue = animEvent.squeegeeSide
+        ? { seq, side: animEvent.squeegeeSide, squeegee: true }
+        : { seq, side: animEvent.report.monitorSide, tier: animEvent.report.tier };
+      void loadLedger();
     });
 
     return () => {
       window.removeEventListener('pointerdown', arm);
-      evtSource.close();
+      stopEvents();
+      ledger?.dispose();
       sfx.setEnabled(false);
     };
   });
@@ -277,7 +272,7 @@
       <div class="header-tools">
         <button
           class="brass small refresh-btn"
-          title="Merge the last seven days of Outlook and Teams without duplicates or replaying effects"
+          title={`Merge the last seven days of ${mobile ? 'Gmail' : 'Outlook and Teams'} without duplicates or replaying effects`}
           aria-busy={refreshing}
           disabled={refreshing}
           onclick={refreshHistory}
@@ -312,6 +307,10 @@
       </div>
     </header>
 
+    {#if mobile}
+      <Mailbox onAccountsChanged={() => { void loadLedger(); }} />
+    {/if}
+
     {#if refreshError || ledgerError}
       <p class="refresh-feedback error" role="alert">Refresh unavailable: {refreshError ?? ledgerError}</p>
     {:else if refreshNotice}
@@ -331,12 +330,18 @@
 
       <div class="filter-group" role="group" aria-label="Source channels">
         <span class="group-label">Source</span>
-        <button class="brass small" class:active={filters.teams} onclick={() => (filters.teams = !filters.teams)}>
-          Teams
-        </button>
-        <button class="brass small" class:active={filters.outlook} onclick={() => (filters.outlook = !filters.outlook)}>
-          Outlook
-        </button>
+        {#if mobile}
+          <button class="brass small" class:active={filters.gmail} onclick={() => (filters.gmail = !filters.gmail)}>
+            Gmail
+          </button>
+        {:else}
+          <button class="brass small" class:active={filters.teams} onclick={() => (filters.teams = !filters.teams)}>
+            Teams
+          </button>
+          <button class="brass small" class:active={filters.outlook} onclick={() => (filters.outlook = !filters.outlook)}>
+            Outlook
+          </button>
+        {/if}
       </div>
 
       <div class="filter-group" role="group" aria-label="Slop and non-slop types">

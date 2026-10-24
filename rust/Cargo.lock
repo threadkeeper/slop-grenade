@@ -1005,6 +1005,16 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "slop-grenade-core",
+ "tokio",
+]
+
+[[package]]
+name = "slop-grenade-core"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
  "tokio",
 ]
 

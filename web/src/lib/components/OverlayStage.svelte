@@ -6,7 +6,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { runStage, WebAudioSfx, type Stage } from '$lib/engine';
-  import type { AnimationEvent } from '$lib/types';
+  import { subscribeAnimations } from '$lib/transport';
 
   let canvas: HTMLCanvasElement | undefined = $state();
 
@@ -25,22 +25,13 @@
     const onResize = () => stage.resize();
     window.addEventListener('resize', onResize);
 
-    let lastSeq = 0;
-    const events = new EventSource('/api/v1/events/stream');
-    events.addEventListener('animation', (e: MessageEvent) => {
-      try {
-        const ev = JSON.parse(e.data) as AnimationEvent;
-        if (ev.sequence <= lastSeq) return;
-        lastSeq = ev.sequence;
-        if (ev.squeegeeSide) stage.world.squeegee(ev.squeegeeSide);
-        else stage.world.trigger(ev.report.tier, ev.report.monitorSide);
-      } catch {
-        // ignore malformed events
-      }
+    const stopEvents = subscribeAnimations((ev) => {
+      if (ev.squeegeeSide) stage.world.squeegee(ev.squeegeeSide);
+      else stage.world.trigger(ev.report.tier, ev.report.monitorSide);
     });
 
     return () => {
-      events.close();
+      stopEvents();
       window.removeEventListener('resize', onResize);
       stage.stop();
       document.documentElement.classList.remove('overlay-mode');

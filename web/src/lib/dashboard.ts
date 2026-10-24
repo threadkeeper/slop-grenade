@@ -6,6 +6,7 @@ export interface DashboardFilterState {
   timeSpan: TimeSpanFilter;
   teams: boolean;
   outlook: boolean;
+  gmail?: boolean;
   tiers: Record<AnimationTier, boolean>;
 }
 
@@ -30,7 +31,7 @@ export interface BarBucket {
 }
 
 /**
- * Filter reports according to the active time span, channel (Teams / Outlook),
+ * Filter reports according to the active time span, channel (Teams / Outlook / Gmail),
  * and slop / non-slop tier toggles.
  */
 export function filterReports(
@@ -46,10 +47,11 @@ export function filterReports(
   const refMs = Date.parse(`${refDay}T23:59:59Z`);
 
   return reports.filter((r) => {
-    // 1. Channel filter (Teams vs Outlook)
+    // 1. Distinct channel identities; omitted Gmail toggle preserves existing callers.
     const app: M365App = r.app;
     if (app === 'teams' && !filters.teams) return false;
     if (app === 'outlook' && !filters.outlook) return false;
+    if (app === 'gmail' && filters.gmail === false) return false;
 
     // 2. Slop / Non-Slop tier filter
     if (!filters.tiers[r.tier]) return false;

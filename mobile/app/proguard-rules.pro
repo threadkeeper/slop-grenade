@@ -1,0 +1,3 @@
+-keep class com.threadkeeper.slopgrenade.core.NativeCore { *; }
+-keepclasseswithmembernames,includedescriptorclasses class * { native <methods>; }
+-keep class com.threadkeeper.slopgrenade.app.GmailWorker { public <init>(...); }

@@ -1,3 +1,5 @@
+import { requestApi } from './transport';
+
 /** Counts returned after merging a seven-day history refresh. */
 export interface RefreshSummary {
   fetchedCount: number;
@@ -10,7 +12,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /** Refresh the last seven days locally, surfacing HTTP and application failures. */
-export async function refreshSevenDays(fetcher: typeof fetch = fetch): Promise<RefreshSummary> {
+export async function refreshSevenDays(fetcher: typeof fetch = requestApi): Promise<RefreshSummary> {
   const response = await fetcher('/api/v1/scan/now', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
