@@ -12,6 +12,8 @@ FROM rust:1.85-bookworm AS rust-builder
 WORKDIR /workspace
 COPY LICENSE ./LICENSE
 COPY rust/Cargo.toml rust/Cargo.lock ./rust/
+COPY core/Cargo.toml core/Cargo.lock ./core/
+COPY core/src ./core/src
 COPY rust/src ./rust/src
 RUN cargo build --manifest-path rust/Cargo.toml --release --locked
 

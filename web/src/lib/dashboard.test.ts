@@ -11,6 +11,18 @@ import {
 import type { SlopReport } from './types';
 
 describe('Slop Grenade dashboard', () => {
+  it('keeps Gmail distinct from Outlook and Teams with a backward-compatible optional filter', () => {
+    const reports = ['gmail', 'outlook', 'teams'].map((app) => ({
+      app, tier: 'human_sparkle', timestamp: '2026-10-23T09:00:00Z'
+    })) as SlopReport[];
+    const filters: DashboardFilterState = {
+      timeSpan: 'all', teams: false, outlook: false,
+      tiers: { human_sparkle: true, peaceful_cloud: true, innocent_fruit: true, slop_splat: true, slop_grenade: true }
+    };
+    expect(filterReports(reports, filters).map((r) => r.app)).toEqual(['gmail']);
+    expect(filterReports(reports, { ...filters, gmail: false })).toEqual([]);
+    expect(filterReports(reports, { ...filters, gmail: false, outlook: true }).map((r) => r.app)).toEqual(['outlook']);
+  });
   it('names the five message types and colours the gauge from white to purple', () => {
     expect(tierDisplayName('slop_grenade')).toBe('slop-grenade');
     expect(tierDisplayName('slop_splat')).toBe('ai-cannon');

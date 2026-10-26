@@ -4,7 +4,7 @@
 
 It runs quietly in the background on your Windows PC, watches the messages you send and receive through connected services, and gives instant visual feedback right on the edges of your monitor.
 
-**Connectors:** Outlook and Teams are available today through WorkIQ. Google Workspace / Gmail, Slack, and other providers are planned; they are not yet available on `main`.
+**Connectors:** Outlook and Teams are available on Windows through WorkIQ. Gmail has an experimental Android app with separate Google authorization setup. Slack and other providers are planned.
 
 <p align="center">
   <img src="docs/screenshots/grenade-throw.gif" width="640" alt="A small pink grenade with a cheeky face is thrown at the left edge of the screen, slows down for a moment just before impact, then pops and splats pink slop on the edge next to an email inbox">
@@ -93,7 +93,15 @@ The target icon opens a test range where you can fire every effect without touch
 
 ---
 
-## Step-by-Step Setup Guide
+## Android Gmail App (Experimental)
+
+The separate Android app reuses the Rust scoring engine and this dashboard for multiple Gmail accounts, including received and already-sent mail. It does not monitor drafts or change the Windows WorkIQ connection.
+
+Android 11 or later, Google Play services, and a configured Google OAuth client are required. Background scans are battery-managed, with a 15-minute minimum interval rather than continuous monitoring. Cross-app effects need explicit overlay and notification permissions.
+
+See [Android setup, builds, and limitations](./TECHNICAL.md#5-android-gmail-port). Device acceptance and Google consent are required before using a real mailbox; an APK does not bypass either requirement.
+
+## Windows Step-by-Step Setup Guide
 
 ### Step 1: Connect Your Messages (WorkIQ MCP)
 

@@ -5,7 +5,7 @@ export type AnimationTier =
   | 'slop_splat'
   | 'slop_grenade';
 
-export type M365App = 'teams' | 'outlook' | 'share_point' | 'word' | 'copilot_chat' | 'other';
+export type M365App = 'teams' | 'outlook' | 'gmail' | 'share_point' | 'word' | 'copilot_chat' | 'other';
 
 export type MessageDirection = 'received' | 'sent';
 

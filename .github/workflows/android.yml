@@ -1,0 +1,95 @@
+name: Android and shared-core compatibility
+
+on:
+  push:
+    branches: [main, android-mobile-integration]
+    paths:
+      - "core/**"
+      - "mobile/**"
+      - "rust/**"
+      - "web/**"
+      - "Dockerfile"
+      - ".github/workflows/android.yml"
+  pull_request:
+    paths:
+      - "core/**"
+      - "mobile/**"
+      - "rust/**"
+      - "web/**"
+      - "Dockerfile"
+      - ".github/workflows/android.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compatibility:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+      - name: Configure Android and Rust toolchains
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:?Android SDK is missing}}"
+          echo "ANDROID_SDK_ROOT=$sdk" >> "$GITHUB_ENV"
+          "$sdk/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-35" "build-tools;35.0.0" "ndk;27.3.13750724"
+          rustup component add rustfmt clippy
+          rustup target add aarch64-linux-android x86_64-linux-android
+      - name: Rust compatibility gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          for manifest in core/Cargo.toml rust/Cargo.toml mobile/rust-bridge/Cargo.toml; do
+            cargo fmt --manifest-path "$manifest" --all -- --check
+            cargo clippy --locked --manifest-path "$manifest" --all-targets -- -D warnings
+            cargo test --locked --manifest-path "$manifest"
+          done
+          cargo build --locked --manifest-path rust/Cargo.toml --release
+      - name: Web compatibility gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm --prefix web ci
+          npm --prefix web test
+          npm --prefix web run check
+          npm --prefix web run build
+      - name: JVM and packaging-policy tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash mobile/scripts/test-jvm.sh
+          bash mobile/scripts/build-policy.test.sh
+      - name: Build and verify Android debug APK
+        run: bash mobile/scripts/build-android.sh debug
+      - name: Android unit tests and lint
+        run: |
+          mobile/gradlew -p mobile --no-daemon \
+            :app:testDebugUnitTest :accounts:testDebugUnitTest :core:testDebugUnitTest :app:lintDebug
+      - name: Upload validated debug APK
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: slop-grenade-android-debug
+          path: |
+            mobile/app/build/outputs/apk/debug/app-debug.apk
+            mobile/app/build/outputs/apk/debug/app-debug.apk.sha256
+          if-no-files-found: error

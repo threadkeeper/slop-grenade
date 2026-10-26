@@ -95,9 +95,22 @@ History ingestion shares the normal deduplication state but records without anim
 
 ### Rust Backend (`rust/`)
 ```powershell
-cargo fmt --manifest-path rust/Cargo.toml --all -- --check
-cargo clippy --manifest-path rust/Cargo.toml --all-targets -- -D warnings
-cargo test --manifest-path rust/Cargo.toml
+cargo fmt --manifest-path rust\Cargo.toml --all -- --check
+cargo clippy --manifest-path rust\Cargo.toml --all-targets -- -D warnings
+cargo test --manifest-path rust\Cargo.toml
+```
+
+### Shared Rust Core and Android Bridge
+
+The desktop public module paths re-export the shared types. Run the shared crates' own tests as well as the desktop tests; dependency tests are not included automatically by `cargo test` in `rust/`.
+
+```powershell
+cargo fmt --manifest-path core\Cargo.toml --all -- --check
+cargo clippy --manifest-path core\Cargo.toml --all-targets -- -D warnings
+cargo test --manifest-path core\Cargo.toml
+cargo fmt --manifest-path mobile\rust-bridge\Cargo.toml --all -- --check
+cargo clippy --manifest-path mobile\rust-bridge\Cargo.toml --all-targets -- -D warnings
+cargo test --manifest-path mobile\rust-bridge\Cargo.toml
 ```
 
 ### Web Dashboard (`web/`)
@@ -123,3 +136,106 @@ Unit tests: `web/src/lib/dashboard.test.ts` (filters, gauges, leaderboards), `we
 A multi-stage [`Dockerfile`](./Dockerfile) and Azure Container Apps Bicep template ([`infra/main.bicep`](./infra/main.bicep)) are included for hosting the web dashboard and API on a private tenant.
 
 See [`PLAN.md`](./PLAN.md), [`CurrentWorkAssignments.md`](./CurrentWorkAssignments.md), and [`research/ai-slop-and-slop-grenade.md`](./research/ai-slop-and-slop-grenade.md) for the research notes and test-driven work packet breakdown.
+
+---
+
+## 5. Android Gmail port
+
+The Android application lives separately under `mobile/`. It reuses the platform-independent Rust core and the existing Svelte dashboard/effects, rather than running WorkIQ or the Windows overlay on a phone. The desktop daemon retains its existing public module paths and behavior.
+
+### Modules and build
+
+| Location | Responsibility |
+| --- | --- |
+| `core/` | Shared Rust detector, ledger, event bus and effect presets; no Android or WorkIQ dependency |
+| `mobile/rust-bridge/` | Isolated JNI/JSON boundary and process-local Android ingestion state |
+| `mobile/core/` | Kotlin facade for the native core |
+| `mobile/accounts/` | Google account authorization and encrypted configuration |
+| `mobile/gmail/` | Read-only Gmail REST connector and MIME decoding |
+| `mobile/app/` | Android lifecycle, WorkManager, restricted WebView and user-started effects overlay |
+| `web/` | Existing dashboard/effects with a separate native transport; desktop HTTP/SSE remains supported |
+
+Build prerequisites are Bash, Python 3 (available as `python`), JDK 17, Android SDK platform 35, NDK `27.3.13750724` (or `ANDROID_NDK_HOME`), Rust, Node.js and the two Rust targets:
+
+```sh
+rustup target add aarch64-linux-android x86_64-linux-android
+npm --prefix web ci
+npm --prefix web run build
+bash mobile/scripts/build-android.sh debug
+```
+
+Set `ANDROID_SDK_ROOT` to the local SDK directory. The supplied native-build scripts support Linux and macOS hosts; on Windows, use a Linux build environment with its own SDK/NDK installation. The build packages the web assets and compiles native libraries for ARM64 phones and x86-64 emulators. The minimum supported Android version is 11 (API 30). Generated assets, native libraries, APKs, SDK configuration and signing material are not committed.
+
+The build environment must be able to resolve and download from Google's Maven repository (`dl.google.com`) as well as Maven Central, the Gradle distribution service, npm and crates.io. An Android Gradle plugin resolution failure is not evidence that an APK was produced; do not distribute a shell without its bundled dashboard and native libraries.
+
+For a release, supply `SLOP_ANDROID_KEYSTORE` (an absolute private keystore path), `SLOP_ANDROID_STORE_PASSWORD`, `SLOP_ANDROID_KEY_ALIAS` and `SLOP_ANDROID_KEY_PASSWORD` through a secure environment, then run:
+
+```sh
+bash mobile/scripts/build-android.sh release
+```
+
+Release packaging fails without signing configuration; a debug APK is not a release artifact. Never paste credentials into a checked-in script or shell command history.
+
+Successful builds write the APK and adjacent `.sha256` file under `mobile/app/build/outputs/apk/debug/` or `mobile/app/build/outputs/apk/release/`. The build verifies the APK signature, packaged ARM64/x86-64 native bridge exports and 16-KB ZIP alignment before producing that checksum.
+
+Run the existing Rust and web gates in section 3, plus shared-core/bridge formatting, Clippy and tests using their respective manifests. Android-focused gates are:
+
+```sh
+bash mobile/scripts/test-jvm.sh
+bash mobile/scripts/build-policy.test.sh
+mobile/gradlew -p mobile :app:testDebugUnitTest :accounts:testDebugUnitTest :core:testDebugUnitTest :app:lintDebug
+mobile/gradlew -p mobile :app:connectedDebugAndroidTest
+```
+
+The JVM suite exercises connector and synchronization transactions with synthetic fixtures without requiring account credentials. It is not a substitute for Android compilation, lint or instrumentation. The connected gate requires a compatible emulator or device. The shared core keeps `unsafe_code = "forbid"`; only the isolated JNI export boundary permits the native export attribute.
+
+The [Android compatibility workflow](./.github/workflows/android.yml) runs the Rust, web, JVM, build-policy, Android unit-test, lint and debug-APK gates on Linux without personal accounts or release signing secrets. It uploads the debug APK and checksum only after those gates succeed. Connected-device tests and real Google account acceptance remain separate manual gates.
+
+### Google authorization prerequisites
+
+1. Enable the Gmail API in a Google Cloud project and configure its OAuth consent screen.
+2. Register an **Android OAuth client** for the application's package name and the SHA-1 fingerprint of the certificate actually signing the installed APK. Debug and release certificates differ; register each certificate used for testing or distribution.
+3. Configure permitted test accounts while the consent screen is in testing. Request only `https://www.googleapis.com/auth/gmail.readonly`; the app does not send, edit or delete email.
+4. Review Google's current restricted-scope verification rules, testing-user limits and authorization-expiry rules before distribution. Workspace administrators may block access. Sideloading bypasses neither consent nor organizational policy.
+5. Use a device with Google Play services and an up-to-date Android System WebView. Add and authorize each mailbox independently; authorization requiring user interaction must be completed with the app open.
+
+Do not put OAuth client secrets, Google passwords, personal mailbox data or signing keys in this repository. An Android OAuth client is identified by the registered package/certificate, not an embedded confidential-client secret.
+
+References: [Android authorization](https://developer.android.com/identity/authorization), [Gmail scopes](https://developers.google.com/workspace/gmail/api/auth/scopes), [incremental synchronization](https://developers.google.com/workspace/gmail/api/guides/sync).
+
+### Scanning and privacy contract
+
+- Scan messages, not threads, with account-scoped identifiers. Archived received messages are included; Drafts, Spam and Trash are excluded. Sent classification refers to messages already sent, including from another device.
+- Initial/recovery seven-day refreshes are quiet: no historical effects and no automatic LLM calls. Incremental synchronization follows every page and updates its checkpoint only after successful ingestion.
+- A failure for one mailbox must not prevent other mailboxes from being scanned. Authorization failures require reconnection; transient failures use scheduled retries.
+- Disconnect removes an account's local connection and stops future scans. Already-scored in-memory history and deduplication identifiers remain until normal process clear, so reconnecting does not double-count messages or reset another account's statistics. Disconnect is not a historical-data deletion operation.
+- Message bodies, reports and previews remain in memory. Only account configuration and minimal synchronization state are stored, with sensitive account state encrypted using Android Keystore-backed keys and excluded from backup. Process death clears the ledger; recovery rebuilds recent history quietly.
+- Gmail sender pseudonyms and generic subjects are applied **after** scoring, so automated-message detection still sees the original transient metadata. Reports retain signal labels and scores, not verbatim body fragments; sender pseudonyms are stable only within the process.
+- Successfully decoded empty or attachment-only messages do not block a mailbox's synchronization. Attachment contents and Gmail snippets are not substituted for missing message text; malformed encodings and failed inline-body retrieval still fail the scan without advancing its checkpoint.
+- The WebView serves bundled assets only. Native capabilities must not be exposed to arbitrary websites, email HTML or remote scripts.
+
+### Background execution and effects
+
+Periodic WorkManager scheduling has a **15-minute minimum**, and actual execution can be delayed by Doze, connectivity, battery policy and manufacturer restrictions. Closing the dashboard does not cancel scheduled scans. A force-stopped application generally needs to be opened again before work resumes; uninstalling removes its jobs and local state.
+
+Do not disable Android's protections globally or promise uninterrupted scanning. Check the per-account last-success status and the phone's app battery settings when diagnosing delays.
+
+Cross-app effects require explicit **Display over other apps** permission. Use **Allow overlay**, then **Start effects** in the mailbox panel. The user-started foreground service displays a generic ongoing notification and keeps the touch-through effects layer available when the dashboard is closed. Stop it using **Stop effects** or the notification's **Stop** action; stopping effects never disconnects mailboxes or cancels scheduled scans.
+
+The overlay uses the declared `specialUse` foreground-service type on Android 14+ for user-requested screen-edge rendering, not `dataSync`. It does not poll Gmail or change WorkManager's scan frequency. Effects require app notifications and the **Screen-edge effects** notification channel to be enabled, keeping their status and Stop action visible in the notification drawer. If blocked, enable them in Android app settings; notification denial must not disable mailbox scanning.
+
+Protected screens, revoked overlay permission, Android process management and manufacturer restrictions may interrupt effects. The overlay does not automatically restart after reboot or process termination: reopen the dashboard and choose **Start effects**. Do not promise an uninterrupted service or use foreground rendering to evade background data-sync restrictions. See [background work](https://developer.android.com/develop/background-work/background-tasks/persistent-work), [special-use foreground services](https://developer.android.com/develop/background-work/services/fgs/service-types#special-use) and [foreground service timeouts](https://developer.android.com/develop/background-work/services/fgs/timeout).
+
+### APK distribution and acceptance
+
+Use a private, securely backed-up release signing key. Keep the application ID and certificate unchanged for upgrades; losing the key prevents ordinary in-place updates. Never commit signing credentials or use a debug key as a production release identity.
+
+Distribute the signed APK and its SHA-256 checksum through a trusted release channel. On the phone:
+
+1. Download the APK and verify its checksum against that trusted channel.
+2. Temporarily allow **Install unknown apps** for the browser or file manager opening the APK.
+3. Install it, then turn that permission off again.
+4. Open Slop Grenade, add each Gmail account and complete Google's consent flow.
+5. Review monitoring status and, if desired, grant overlay permission, allow notifications and start effects.
+
+Release acceptance requires real-device checks for account consent/reconnection, multiple mailboxes, Doze, offline recovery, reboot, process recreation, force-stop, denied overlay permission, battery usage, clean installation and an in-place signed upgrade. Synthetic unit tests and a successful APK build cannot prove these device/OAuth conditions. No Play Store or cloud push backend is required.

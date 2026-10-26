@@ -4,6 +4,18 @@
 /desktop/*.exe
 /desktop/*.pdb
 
+# Android build output, local SDK configuration and signing material
+/mobile/.gradle/
+/mobile/.kotlin/
+/mobile/**/build/
+/mobile/local.properties
+/mobile/**/local.properties
+*.jks
+*.keystore
+keystore.properties
+*.apk
+*.aab
+
 # Node / SvelteKit build artifacts
 /web/node_modules/
 /web/.svelte-kit/
