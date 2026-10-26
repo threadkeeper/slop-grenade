@@ -1,8 +1,10 @@
 # Slop Grenade
 
-**Slop Grenade** is a lightweight Windows desktop companion that helps you and your team notice—and break—the habit of sending unedited AI-generated fluff in Microsoft Teams and Outlook.
+**Slop Grenade** is a lightweight Windows desktop companion that helps you and your team notice—and break—the habit of sending unedited AI-generated fluff across chat and email.
 
-It runs quietly in the background on your Windows PC, watches the messages you send and receive across Microsoft 365, and gives instant visual feedback right on the edges of your monitor.
+It runs quietly in the background on your Windows PC, watches the messages you send and receive through connected services, and gives instant visual feedback right on the edges of your monitor.
+
+**Connectors:** Outlook and Teams are available today through WorkIQ. Google Workspace / Gmail, Slack, and other providers are planned; they are not yet available on `main`.
 
 <p align="center">
   <img src="docs/screenshots/grenade-throw.gif" width="640" alt="A small pink grenade with a cheeky face is thrown at the left edge of the screen, slows down for a moment just before impact, then pops and splats pink slop on the edge next to an email inbox">
@@ -42,6 +44,8 @@ Slop Grenade overlays your main Windows desktop monitor without interrupting you
 ---
 
 ## See It in Action
+
+All screenshots and GIFs use fictional example data, not a real inbox.
 
 ### Incoming!
 
@@ -85,15 +89,15 @@ Daily slop pressure gauges for what you receive and what you send, a Most Wanted
 
 The target icon opens a test range where you can fire every effect without touching your stats. Good for demos, and for showing the team what happens if they keep pasting unedited AI replies.
 
-> Made someone laugh, or wince? Share the GIF at the top with your team.
+> Made someone laugh, or wince? Share the GIF at the top with your team, and [give Slop Grenade a star](https://github.com/threadkeeper/slop-grenade).
 
 ---
 
 ## Step-by-Step Setup Guide
 
-### Step 1: Sign In to Microsoft 365 (WorkIQ MCP)
+### Step 1: Connect Your Messages (WorkIQ MCP)
 
-Slop Grenade reads your Microsoft Teams and Outlook activity through the **WorkIQ** command-line tool using your normal Microsoft 365 sign-in.
+The current Outlook and Teams connector reads your activity through the **WorkIQ** command-line tool using your existing account sign-in. No custom admin app registration is required.
 
 Open PowerShell and run:
 
@@ -101,15 +105,15 @@ Open PowerShell and run:
 # Accept the WorkIQ license agreement (first time only)
 workiq accept-eula
 
-# Sign in with your Microsoft 365 work account
-workiq auth login
+# Reuse your existing account, or sign in if prompted
+workiq ask --question "Reply only with OK."
 ```
 
-A standard Microsoft sign-in prompt will appear. Once signed in, WorkIQ can securely read your recent Teams and Outlook messages on your machine.
+WorkIQ reuses your existing session or opens a standard sign-in prompt when needed. Once signed in, it can read your recent Teams and Outlook messages through the first-party connection.
 
 ---
 
-### Step 2: Sign In to GitHub Copilot (for LLM Slop Scoring)
+### Step 2: Optionally Connect GitHub Copilot (for LLM Slop Scoring)
 
 To let Slop Grenade use **GitHub Copilot's LLM** alongside its built-in text analyzer, sign in with the GitHub CLI:
 
@@ -118,6 +122,8 @@ gh auth login
 ```
 
 Follow the on-screen prompt to sign in with your GitHub account that has GitHub Copilot access. Slop Grenade will automatically use your active GitHub session—no API keys or config files required.
+
+Local scoring and the seven-day refresh do not require LLM requests. Optional Copilot scoring sends the message being analyzed to the Copilot service.
 
 ---
 
@@ -153,6 +159,7 @@ Look for the **Bright Pink Hand Grenade** icon in your Windows System Tray (bott
 ### 2. The Habit Dashboard (`http://127.0.0.1:8090/`)
 Clicking **Dashboard** in the tray opens the habit tracker in your browser, styled to match (brass, ink and parchment), featuring:
 - **Incoming / Outgoing Slop Pressure Gauges** (0-100%) that vent steam when you are in the red.
+- **Refresh 7 days**: merge the last week of messages without duplicates or replaying historical effects. The refresh uses local scoring, then selects the `7d` view. History is in memory and resets when the background daemon restarts.
 - **Effects test range**: click the target icon in the header to open a small monitor where you can test fire every effect (test shots are not recorded in your stats). The **Sound** switch and volume slider sit next to it.
 - **Per-Day Stacked Bar Chart** broken down by type (`slop-grenade` in pink, `ai-cannon` in orange, `sprinkled` in yellow, `polish` in smoke grey, and `human` in cream).
 - **Filters** for time span (`Today`, `7d`, `30d`, `All`), source (`Teams` vs. `Outlook`), and message type (`All`, `slop-grenade`, `ai-cannon`, `sprinkled`, `polish`, `human`).
