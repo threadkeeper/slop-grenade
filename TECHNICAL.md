@@ -176,7 +176,7 @@ bash mobile/scripts/build-android.sh release
 
 Release packaging fails without signing configuration; a debug APK is not a release artifact. Never paste credentials into a checked-in script or shell command history.
 
-Successful builds write the APK and adjacent `.sha256` file under `mobile/app/build/outputs/apk/debug/` or `mobile/app/build/outputs/apk/release/`. The build verifies the APK signature, packaged ARM64/x86-64 native bridge exports and 16-KB ZIP alignment before producing that checksum.
+Successful builds write the APK and adjacent `.sha256` file under `mobile/app/build/outputs/apk/debug/` or `mobile/app/build/outputs/apk/release/`. Before producing that checksum, the build verifies the APK signature, packaged ARM64/x86-64 native bridge exports, 16-KB ZIP alignment and every dashboard asset byte for byte, including SvelteKit's `_app` JavaScript and styles. Android's default underscore-directory exclusion is overridden so the APK cannot silently omit the dashboard bundle.
 
 Run the existing Rust and web gates in section 3, plus shared-core/bridge formatting, Clippy and tests using their respective manifests. Android-focused gates are:
 

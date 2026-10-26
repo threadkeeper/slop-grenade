@@ -58,6 +58,9 @@ assert "apksigner\" verify" in build
 assert "artifact-checksum.sh\" \"$apk\" --write" in build
 assert "gradle.startParameter.taskNames" not in app
 assert "verifyReleaseSigning" in app
+assert "ignoreAssetsPatterns += listOf(" in app
+assert "\"<dir>_*\"" not in app
+assert "verify_apk_assets.py" in build
 assert "\"packageReleaseBundle\"" in app
 assert "\"signReleaseBundle\"" in app
 assert ".isBlank(" not in gmail and "public record " not in gmail
@@ -74,3 +77,5 @@ for path in (mobile.parent/"web/src").rglob("*"):
 assert keys=={"slopgrenade.sound","slopgrenade.volume"}, "Only UI sound/volume may be persisted"
 print("PASS: ABI, JNI, locked-build and 16KB linker policy")
 ' "$mobile"
+
+python -m unittest discover -s "$mobile/scripts" -p 'test_verify_apk_assets.py'

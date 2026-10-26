@@ -32,5 +32,6 @@ with zipfile.ZipFile(sys.argv[1]) as apk:
     assert len(libs)==2 and set(libs)==expected, "Packaged JNI libraries do not match ABI filters"
 print("Verified packaged JNI ABIs, signature and 16KB ZIP alignment.")
 ' "$apk"
+python "$mobile/scripts/verify_apk_assets.py" "$apk" "$mobile/app/src/main/assets"
 # Never emit a checksum for a failed build or fabricate release credentials.
 bash "$mobile/scripts/artifact-checksum.sh" "$apk" --write

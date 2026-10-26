@@ -35,6 +35,13 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
     lint { abortOnError = true; checkReleaseBuilds = true }
+    androidResources {
+        // AAPT's default underscore-directory filter drops SvelteKit's _app bundle.
+        ignoreAssetsPatterns += listOf(
+            "!.svn", "!.git", "!.ds_store", "!*.scc", ".*",
+            "!CVS", "!thumbs.db", "!picasa.ini", "!*~"
+        )
+    }
     packaging { jniLibs { useLegacyPackaging = false } }
 }
 // Fail closed rather than producing an installable shell with missing dashboard/native code.
