@@ -30,7 +30,7 @@ pub fn build_preset_sample(preset: &str, sequence_hint: u64) -> MessageSample {
             direction: MessageDirection::Received,
             sender: "Priya Nair".to_string(),
             subject_or_topic: "Sprint 14 Planning Follow-up".to_string(),
-            body: "I hope this email finds you well. Thank you for reaching out about the Q4 milestones. Furthermore, we want to ensure a seamless handoff and unlock value for the mobile squad next week.".to_string(),
+            body: "Thank you for reaching out about the Q4 milestones. We want to ensure a seamless handoff for the mobile squad next week, so I have shared the updated test plan. Let me know if you have any questions.".to_string(),
             timestamp: "2026-10-23T14:37:00Z".to_string(),
         },
         "slop_splat" => MessageSample {

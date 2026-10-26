@@ -10,10 +10,39 @@ export interface DashboardFilterState {
   tiers: Record<AnimationTier, boolean>;
 }
 
+/** Reports at or above this score read as AI-written (the `sprinkled` tier and up). */
+export const AI_WRITTEN_THRESHOLD = 40;
+
+const AUTOMATED_SUMMARY_PREFIX = 'Automated / machine-generated response';
+const PLACEHOLDER_SENDERS = new Set(['unknown sender', 'teams colleague']);
+
+/** Automated mail (no-reply, calendar responses, bots) is scored by rule, not by writing style. */
+export function isAutomatedReport(r: SlopReport): boolean {
+  return (r.summary ?? '').startsWith(AUTOMATED_SUMMARY_PREFIX);
+}
+
+/** `true` when a report reads as AI-written (score of 40 or more). */
+export function isAiWritten(r: SlopReport): boolean {
+  return r.slopScore >= AI_WRITTEN_THRESHOLD;
+}
+
 export interface GaugeMetrics {
+  /** Share (0-100) of person-written messages that read as AI-written. */
+  aiPercent: number;
+  /** Person-written messages that read as AI-written (score of 40 or more). */
+  aiWrittenCount: number;
+  /** Average 0-100 slop score across all messages. */
   averageScore: number;
   messageCount: number;
   grenadeCount: number;
+}
+
+/** Leaderboard row computed on the dashboard, with the person's AI-written share. */
+export interface RankedPerson extends PersonLeaderboardEntry {
+  /** Messages that read as AI-written (score of 40 or more). */
+  aiMessages: number;
+  /** Share (0-100) of the person's messages that read as AI-written. */
+  aiSharePercent: number;
 }
 
 export interface BarBucket {
@@ -71,44 +100,37 @@ export function filterReports(
 }
 
 /**
- * Compute In (Received) and Out (Sent) gauge metrics from filtered reports.
+ * Compute In (Received) and Out (Sent) gauge metrics from filtered reports. The needle reads
+ * the share of person-written messages that read as AI-written; automated mail is left out of
+ * that share but still counted as a message.
  */
 export function computeInOutGauges(reports: SlopReport[]): {
   received: GaugeMetrics;
   sent: GaugeMetrics;
 } {
-  let recSum = 0;
-  let recCount = 0;
-  let recGrenades = 0;
-
-  let sentSum = 0;
-  let sentCount = 0;
-  let sentGrenades = 0;
+  const tally = () => ({ count: 0, sum: 0, grenades: 0, scored: 0, ai: 0 });
+  const received = tally();
+  const sent = tally();
 
   for (const r of reports) {
-    if (r.direction === 'received') {
-      recCount++;
-      recSum += r.slopScore;
-      if (r.tier === 'slop_grenade') recGrenades++;
-    } else {
-      sentCount++;
-      sentSum += r.slopScore;
-      if (r.tier === 'slop_grenade') sentGrenades++;
+    const t = r.direction === 'received' ? received : sent;
+    t.count++;
+    t.sum += r.slopScore;
+    if (r.tier === 'slop_grenade') t.grenades++;
+    if (!isAutomatedReport(r)) {
+      t.scored++;
+      if (isAiWritten(r)) t.ai++;
     }
   }
 
-  return {
-    received: {
-      averageScore: recCount > 0 ? Math.round(recSum / recCount) : 0,
-      messageCount: recCount,
-      grenadeCount: recGrenades
-    },
-    sent: {
-      averageScore: sentCount > 0 ? Math.round(sentSum / sentCount) : 0,
-      messageCount: sentCount,
-      grenadeCount: sentGrenades
-    }
-  };
+  const toGauge = (t: ReturnType<typeof tally>): GaugeMetrics => ({
+    aiPercent: t.scored > 0 ? Math.round((100 * t.ai) / t.scored) : 0,
+    aiWrittenCount: t.ai,
+    averageScore: t.count > 0 ? Math.round(t.sum / t.count) : 0,
+    messageCount: t.count,
+    grenadeCount: t.grenades
+  });
+  return { received: toGauge(received), sent: toGauge(sent) };
 }
 
 /**
@@ -192,54 +214,63 @@ export function computeBarChartBuckets(
 }
 
 /**
- * Compute Top 5 Sloppers and Top 5 P-Doomers (refuse to use AI) from a report slice.
+ * Compute the Most Wanted (Top 5 Sloppers) and Hand-Crafted Heroes (Top 5 P-Doomers) lists
+ * from a report slice, ranked by each person's share of AI-written messages.
+ *
+ * Both lists fill to five whenever five people are known. With fewer than ten people a person
+ * can appear on both lists; with ten or more the lists never overlap. Automated mail and
+ * placeholder senders are left out.
  */
 export function computeTopFiveLists(reports: SlopReport[]): {
-  topSloppers: PersonLeaderboardEntry[];
-  topPDoomers: PersonLeaderboardEntry[];
+  topSloppers: RankedPerson[];
+  topPDoomers: RankedPerson[];
 } {
   const bySender = new Map<
     string,
-    { count: number; sum: number; grenades: number; human: number }
+    { count: number; sum: number; ai: number; grenades: number; human: number }
   >();
 
   for (const r of reports) {
     const name = r.sender.trim();
-    if (!name) continue;
-    const cur = bySender.get(name) ?? { count: 0, sum: 0, grenades: 0, human: 0 };
+    if (!name || PLACEHOLDER_SENDERS.has(name.toLowerCase()) || isAutomatedReport(r)) continue;
+    const cur = bySender.get(name) ?? { count: 0, sum: 0, ai: 0, grenades: 0, human: 0 };
     cur.count++;
     cur.sum += r.slopScore;
+    if (isAiWritten(r)) cur.ai++;
     if (r.tier === 'slop_grenade') cur.grenades++;
     if (r.tier === 'human_sparkle') cur.human++;
     bySender.set(name, cur);
   }
 
-  const entries: PersonLeaderboardEntry[] = Array.from(bySender.entries()).map(([name, v]) => ({
+  const entries: RankedPerson[] = Array.from(bySender.entries()).map(([name, v]) => ({
     name,
     messageCount: v.count,
     averageSlopScore: Math.round(v.sum / Math.max(1, v.count)),
     slopGrenades: v.grenades,
-    humanMessages: v.human
+    humanMessages: v.human,
+    aiMessages: v.ai,
+    aiSharePercent: Math.round((100 * v.ai) / Math.max(1, v.count))
   }));
+  const share = (p: RankedPerson) => p.aiMessages / Math.max(1, p.messageCount);
 
-  const topSloppers = entries
-    .filter((e) => e.averageSlopScore >= 40)
+  const topSloppers = [...entries]
     .sort(
       (a, b) =>
+        share(b) - share(a) ||
         b.averageSlopScore - a.averageSlopScore ||
-        b.slopGrenades - a.slopGrenades ||
         b.messageCount - a.messageCount
     )
     .slice(0, 5);
 
-  const topPDoomers = entries
-    .filter((e) => e.averageSlopScore < 40)
+  const wanted = new Set(topSloppers.map((p) => p.name));
+  const topPDoomers = [...entries]
     .sort(
       (a, b) =>
+        share(a) - share(b) ||
         a.averageSlopScore - b.averageSlopScore ||
-        b.humanMessages - a.humanMessages ||
         b.messageCount - a.messageCount
     )
+    .filter((p) => entries.length < 10 || !wanted.has(p.name))
     .slice(0, 5);
 
   return { topSloppers, topPDoomers };

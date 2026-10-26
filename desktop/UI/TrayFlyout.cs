@@ -1,6 +1,6 @@
 // TrayFlyout.cs
 // The brass-and-ink control panel that pops above the tray icon: two daily
-// "slop pressure" gauges (incoming / outgoing, reset at 00:00), lever toggles,
+// "% AI-written" gauges (incoming / outgoing, reset at 00:00), lever toggles,
 // sound controls, squeegee plates and launch buttons. Fully custom painted.
 
 using System;
@@ -29,7 +29,7 @@ namespace SlopGrenadeDesktop
         private Bitmap _backdrop;
         private string _hover;
         private string _pressed;
-        private int _recAvg, _recCount, _sentAvg, _sentCount;
+        private int _recPct, _recCount, _sentPct, _sentCount;
         private float _needleIn, _needleOut, _velIn, _velOut;
         private readonly System.Windows.Forms.Timer _anim;
 
@@ -64,11 +64,12 @@ namespace SlopGrenadeDesktop
         /// <summary>When the panel last closed because it lost focus (UTC).</summary>
         public DateTime LastAutoHide = DateTime.MinValue;
 
-        public void UpdateMetrics(int recAvg, int recCount, int sentAvg, int sentCount)
+        /// <summary>Daily share (0-100) of AI-written messages and message counts per direction.</summary>
+        public void UpdateMetrics(int recPct, int recCount, int sentPct, int sentCount)
         {
-            _recAvg = recAvg;
+            _recPct = recPct;
             _recCount = recCount;
-            _sentAvg = sentAvg;
+            _sentPct = sentPct;
             _sentCount = sentCount;
             if (Visible) _anim.Start();
         }
@@ -91,7 +92,7 @@ namespace SlopGrenadeDesktop
 
         private void OnAnim(object sender, EventArgs e)
         {
-            bool moving = Spring(ref _needleIn, ref _velIn, _recAvg) | Spring(ref _needleOut, ref _velOut, _sentAvg);
+            bool moving = Spring(ref _needleIn, ref _velIn, _recPct) | Spring(ref _needleOut, ref _velOut, _sentPct);
             Invalidate();
             if (!moving) _anim.Stop();
         }
@@ -150,14 +151,14 @@ namespace SlopGrenadeDesktop
             SteampunkArt.Rivet(g, title.Right - 10f * f, title.Top + title.Height / 2f, 3f * f);
             SteampunkArt.ComicText(g, "SLOP GRENADE", 30f * f, new RectangleF(title.X, title.Y - 2f * f, title.Width, title.Height), -3f,
                 Color.FromArgb(255, 245, 190), Color.FromArgb(255, 110, 30), 2.2f * f);
-            SteampunkArt.Engraved(g, "DAILY SLOP PRESSURE  \u00b7  RESETS AT 00:00", 10.5f * f, FontStyle.Bold,
+            SteampunkArt.Engraved(g, "DAILY % AI-WRITTEN  \u00b7  RESETS AT 00:00", 10.5f * f, FontStyle.Bold,
                 new RectangleF(20f * f, 74f * f, Width - 40f * f, 18f * f), SteampunkArt.BrassL, StringAlignment.Center);
 
             // gauges
             SteampunkArt.Gauge(g, new PointF(98f * f, 170f * f), 70f * f, _needleIn, "INCOMING", _recCount + " msgs", f);
             SteampunkArt.Gauge(g, new PointF(Width - 98f * f, 170f * f), 70f * f, _needleOut, "OUTGOING", _sentCount + " msgs", f);
-            SteampunkArt.Engraved(g, _recAvg + "% slop", 13f * f, FontStyle.Bold, new RectangleF(28f * f, 242f * f, 140f * f, 18f * f), SteampunkArt.Cream, StringAlignment.Center);
-            SteampunkArt.Engraved(g, _sentAvg + "% slop", 13f * f, FontStyle.Bold, new RectangleF(Width - 168f * f, 242f * f, 140f * f, 18f * f), SteampunkArt.Cream, StringAlignment.Center);
+            SteampunkArt.Engraved(g, _recPct + "% AI", 13f * f, FontStyle.Bold, new RectangleF(28f * f, 242f * f, 140f * f, 18f * f), SteampunkArt.Cream, StringAlignment.Center);
+            SteampunkArt.Engraved(g, _sentPct + "% AI", 13f * f, FontStyle.Bold, new RectangleF(Width - 168f * f, 242f * f, 140f * f, 18f * f), SteampunkArt.Cream, StringAlignment.Center);
 
             // toggles
             float y0 = 272f * f;

@@ -95,9 +95,10 @@ impl ScannerDaemon {
         self.ingest_samples(fetched, use_luna).await
     }
 
-    /// Merge a complete seven-day WorkIQ backfill using local scoring without replaying animations.
-    pub async fn refresh_last_seven_days(&self) -> Result<ScanBatchResult, String> {
-        let fetched = self.workiq.poll_last_seven_days().await?;
+    /// Merge a complete WorkIQ backfill of the last `days` days (`1..=30`) using local scoring
+    /// without replaying animations.
+    pub async fn refresh_history(&self, days: u8) -> Result<ScanBatchResult, String> {
+        let fetched = self.workiq.poll_history(days).await?;
         self.ingest_samples_with_animation(fetched, false, false)
             .await
     }

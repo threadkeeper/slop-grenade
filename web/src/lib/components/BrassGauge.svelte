@@ -8,7 +8,7 @@
     label,
     id
   }: {
-    /** 0-100 average slop score */
+    /** 0-100 share of messages that read as AI-written */
     value: number;
     label: string;
     /** unique id prefix for SVG gradients */
@@ -43,7 +43,7 @@
 </script>
 
 <div class="gauge" class:hot>
-  <svg viewBox="0 0 220 200" role="img" aria-label="{label}: {clamped}% slop">
+  <svg viewBox="0 0 220 200" role="img" aria-label="{label}: {clamped}%">
     <defs>
       <radialGradient id="{id}-brass" cx="35%" cy="30%" r="80%">
         <stop offset="0%" stop-color="#ffe9a8" />
@@ -96,7 +96,7 @@
       {/if}
     {/each}
 
-    <text x={CX} y={CY + 34} class="unit" text-anchor="middle">% SLOP</text>
+    <text x={CX} y={CY + 34} class="unit" text-anchor="middle">% AI</text>
 
     <!-- needle -->
     <g class="needle" style="transform: rotate({needleDeg}deg); transform-origin: {CX}px {CY}px;">

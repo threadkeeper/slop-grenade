@@ -142,6 +142,9 @@ pub struct UpdateWorkIqAccountRequest {
     pub account: Option<String>,
 }
 
+/// Longest history refresh the dashboard can request.
+const MAX_LOOKBACK_DAYS: u8 = 30;
+
 /// Request payload for `POST /api/v1/scan/now`.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -149,7 +152,7 @@ pub struct ScanNowRequest {
     /// Whether to enrich newly discovered M365 messages with GPT Luna (`gpt-5.6-luna`).
     #[serde(default)]
     pub use_luna: bool,
-    /// Set to `7` for a complete, quiet seven-day backfill; omitted for the normal recent poll.
+    /// Days (`1..=30`) for a complete, quiet history backfill; omitted for the normal recent poll.
     pub lookback_days: Option<u8>,
 }
 
@@ -343,10 +346,16 @@ async fn handle_scan_now(
     payload: Option<Json<ScanNowRequest>>,
 ) -> Response {
     let request = payload.map(|payload| payload.0).unwrap_or_default();
-    if request.lookback_days.is_some_and(|days| days != 7) {
+    if request
+        .lookback_days
+        .is_some_and(|days| !(1..=MAX_LOOKBACK_DAYS).contains(&days))
+    {
         return (
             StatusCode::BAD_REQUEST,
-            Json(json!({ "ok": false, "error": "lookbackDays must be 7 when provided." })),
+            Json(json!({
+                "ok": false,
+                "error": "lookbackDays must be between 1 and 30 when provided."
+            })),
         )
             .into_response();
     }
@@ -357,10 +366,9 @@ async fn handle_scan_now(
         )
             .into_response();
     }
-    let batch = if request.lookback_days == Some(7) {
-        state.daemon.refresh_last_seven_days().await
-    } else {
-        state.daemon.poll_workiq_once(request.use_luna).await
+    let batch = match request.lookback_days {
+        Some(days) => state.daemon.refresh_history(days).await,
+        None => state.daemon.poll_workiq_once(request.use_luna).await,
     };
     match batch {
         Ok(batch) => (

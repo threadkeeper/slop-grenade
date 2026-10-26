@@ -15,8 +15,15 @@ use crate::slop_detector::{
     AnimationTier, M365App, MessageDirection, MessageSample, SlopDetector, SlopReport,
 };
 
-/// Older reports retained in addition to the complete seven-day refresh window.
+/// Days of history kept in full: the longest dashboard refresh (30 days) plus the partial
+/// UTC day at the boundary.
+const HISTORY_WINDOW_DAYS: i64 = 31;
+
+/// Older reports retained in addition to the complete refresh window.
 const MAX_OLDER_HISTORY_REPORTS: usize = 360;
+
+/// Reports scoring at or above this value count as AI-written in shares and leaderboards.
+pub const AI_WRITTEN_THRESHOLD: u8 = 40;
 
 /// Leaderboard entry for Top 5 Sloppers and Top 5 P-Doomers (refuse to use AI).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -68,9 +75,9 @@ pub struct AwarenessScorecard {
     pub daily_sent: DirectionalStats,
     /// Daily incoming metrics (resetting at midnight daily).
     pub daily_received: DirectionalStats,
-    /// Top 5 Sloppers (highest average slop score / grenades thrown).
+    /// Top 5 Sloppers (highest share of AI-written messages, then average score).
     pub top_sloppers: Vec<PersonLeaderboardEntry>,
-    /// Top 5 P-Doomers (refuse to use AI — lowest average slop score & pure human typing).
+    /// Top 5 P-Doomers (lowest share of AI-written messages, then average score).
     pub top_p_doomers: Vec<PersonLeaderboardEntry>,
     /// Dynamic self-awareness reflection comparing user's own habits against incoming messages.
     pub self_awareness_verdict: String,
@@ -142,12 +149,12 @@ impl AwarenessLedger {
         }
 
         inner.recent.push_front(report);
-        let cutoff_day = (Utc::now() - Duration::days(7))
+        let cutoff_day = (Utc::now() - Duration::days(HISTORY_WINDOW_DAYS))
             .format("%Y-%m-%d")
             .to_string();
         let mut older_count = 0;
         inner.recent.retain(|report| {
-            // Keep the full UTC day covering the rolling seven-day boundary.
+            // Keep the full UTC day covering the rolling refresh boundary.
             if report
                 .timestamp
                 .get(..10)
@@ -230,6 +237,24 @@ fn extract_day_key(timestamp: &str) -> String {
     timestamp.chars().take(10).collect()
 }
 
+/// Placeholder names used when Microsoft 365 does not return a real sender.
+fn is_placeholder_sender(name: &str) -> bool {
+    ["unknown sender", "teams colleague"]
+        .iter()
+        .any(|placeholder| name.eq_ignore_ascii_case(placeholder))
+}
+
+fn is_automated_report(report: &SlopReport) -> bool {
+    report
+        .summary
+        .starts_with("Automated / machine-generated response")
+}
+
+/// Rank people by the share of their messages that read as AI-written (`score >= 40`).
+///
+/// Both lists are filled to five whenever five people are known. With fewer than ten people a
+/// person can appear on both lists; with ten or more the lists never overlap. Automated mail and
+/// placeholder senders are left out.
 fn compute_leaderboards(
     reports: &[SlopReport],
 ) -> (Vec<PersonLeaderboardEntry>, Vec<PersonLeaderboardEntry>) {
@@ -237,6 +262,7 @@ fn compute_leaderboards(
     struct Acc {
         count: usize,
         sum: u64,
+        ai_written: usize,
         grenades: usize,
         human: usize,
     }
@@ -244,12 +270,15 @@ fn compute_leaderboards(
     let mut by_sender: BTreeMap<String, Acc> = BTreeMap::new();
     for r in reports {
         let name = r.sender.trim();
-        if name.is_empty() {
+        if name.is_empty() || is_placeholder_sender(name) || is_automated_report(r) {
             continue;
         }
         let entry = by_sender.entry(name.to_string()).or_default();
         entry.count += 1;
         entry.sum += u64::from(r.slop_score);
+        if r.slop_score >= AI_WRITTEN_THRESHOLD {
+            entry.ai_written += 1;
+        }
         if r.tier == AnimationTier::SlopGrenade {
             entry.grenades += 1;
         }
@@ -258,51 +287,63 @@ fn compute_leaderboards(
         }
     }
 
-    let all_entries: Vec<PersonLeaderboardEntry> = by_sender
+    // (AI-written share in basis points, entry)
+    let ranked: Vec<(usize, PersonLeaderboardEntry)> = by_sender
         .into_iter()
-        .map(|(name, acc)| PersonLeaderboardEntry {
-            name,
-            message_count: acc.count,
-            average_slop_score: (acc.sum / (acc.count.max(1) as u64)).min(100) as u8,
-            slop_grenades: acc.grenades,
-            human_messages: acc.human,
+        .map(|(name, acc)| {
+            let count = acc.count.max(1);
+            (
+                acc.ai_written * 10_000 / count,
+                PersonLeaderboardEntry {
+                    name,
+                    message_count: acc.count,
+                    average_slop_score: (acc.sum / (count as u64)).min(100) as u8,
+                    slop_grenades: acc.grenades,
+                    human_messages: acc.human,
+                },
+            )
         })
         .collect();
+    let people = ranked.len();
 
-    // Top 5 Sloppers: highest average slop score ( >= 45 ), tie-broken by grenade count & message count
-    let mut sloppers: Vec<PersonLeaderboardEntry> = all_entries
-        .iter()
-        .filter(|e| e.average_slop_score >= 45)
-        .cloned()
-        .collect();
-    sloppers.sort_by(|a, b| {
-        b.average_slop_score
-            .cmp(&a.average_slop_score)
-            .then_with(|| b.slop_grenades.cmp(&a.slop_grenades))
+    // Top 5 Sloppers: highest AI-written share, then average score, then message count.
+    let mut sloppers = ranked.clone();
+    sloppers.sort_by(|(share_a, a), (share_b, b)| {
+        share_b
+            .cmp(share_a)
+            .then_with(|| b.average_slop_score.cmp(&a.average_slop_score))
             .then_with(|| b.message_count.cmp(&a.message_count))
     });
-    sloppers.truncate(5);
-
-    // Top 5 P-Doomers (refuse to use AI): lowest average slop score (< 35), tie-broken by human message count
-    let mut p_doomers: Vec<PersonLeaderboardEntry> = all_entries
+    let top_sloppers: Vec<PersonLeaderboardEntry> = sloppers
         .into_iter()
-        .filter(|e| e.average_slop_score < 35)
+        .take(5)
+        .map(|(_, entry)| entry)
         .collect();
-    p_doomers.sort_by(|a, b| {
-        a.average_slop_score
-            .cmp(&b.average_slop_score)
-            .then_with(|| b.human_messages.cmp(&a.human_messages))
+
+    // Top 5 P-Doomers: lowest AI-written share, then average score, then message count.
+    let mut p_doomers = ranked;
+    p_doomers.sort_by(|(share_a, a), (share_b, b)| {
+        share_a
+            .cmp(share_b)
+            .then_with(|| a.average_slop_score.cmp(&b.average_slop_score))
             .then_with(|| b.message_count.cmp(&a.message_count))
     });
-    p_doomers.truncate(5);
+    let top_p_doomers: Vec<PersonLeaderboardEntry> = p_doomers
+        .into_iter()
+        .filter(|(_, entry)| {
+            people < 10 || !top_sloppers.iter().any(|slopper| slopper.name == entry.name)
+        })
+        .take(5)
+        .map(|(_, entry)| entry)
+        .collect();
 
-    (sloppers, p_doomers)
+    (top_sloppers, top_p_doomers)
 }
 
 fn baseline_seed_samples() -> Vec<MessageSample> {
     let grenade_body = "I hope this message finds you thriving! Quick first pass from Copilot for reaction:\n- **Strategic Alignment:** Fostering holistic cross-functional synergy across all pivotal workstreams.\n- **Transformative Paradigm:** Delving into the multifaceted tapestry of our evolving landscape.\n- **Actionable Insights:** Leveraging seamless architectures to catalyze our north star.";
     let splat_body = "I hope this email finds you well. In today's fast-paced evolving landscape, it is important to note that fostering cross-functional strategic alignment is pivotal. Furthermore, we must delve into holistic actionable insights to streamline our paradigm.";
-    let fruit_body = "I hope this email finds you well. Thank you for reaching out about the Q4 milestones. Furthermore, we want to ensure a seamless handoff and unlock value for the squad next week.";
+    let fruit_body = "Thank you for reaching out about the Q4 milestones. We want to ensure a seamless handoff for the squad next week, so I have shared the updated test plan. Let me know if you have any questions.";
     let cloud_body = "Hi everyone, I hope your week is going well. Additionally, I uploaded the benchmark numbers to the shared folder before Monday's sync.";
     let human_body =
         "Fixed the null pointer in the auth retry loop—PR #142 is ready for a quick look.";
@@ -588,7 +629,7 @@ mod tests {
         let detector = SlopDetector::new();
         let now = Utc::now();
         for index in 0..400 {
-            for (prefix, age) in [("old", Duration::days(30)), ("week", Duration::zero())] {
+            for (prefix, age) in [("old", Duration::days(45)), ("week", Duration::zero())] {
                 ledger.record(
                     detector.analyze(&MessageSample {
                         message_id: format!("{prefix}-{index}"),
@@ -655,5 +696,101 @@ mod tests {
         assert!(card
             .self_awareness_verdict
             .contains("Exemplary Human Communicator"));
+    }
+
+    #[test]
+    fn retains_a_thirty_day_refresh_window() {
+        let ledger = AwarenessLedger::new();
+        let detector = SlopDetector::new();
+        let now = Utc::now();
+        for day in 0..30 {
+            ledger.record(detector.analyze(&MessageSample {
+                message_id: format!("month-{day}"),
+                app: M365App::Teams,
+                direction: MessageDirection::Received,
+                sender: "Fictional Colleague".to_string(),
+                subject_or_topic: "Synthetic month".to_string(),
+                body: "Ready for review.".to_string(),
+                timestamp: (now - Duration::days(day))
+                    .to_rfc3339_opts(SecondsFormat::Millis, true),
+            }));
+        }
+        assert_eq!(ledger.scorecard().recent_reports.len(), 30);
+    }
+
+    #[test]
+    fn leaderboards_rank_people_by_ai_share_and_always_fill_five() {
+        fn names(entries: &[PersonLeaderboardEntry]) -> Vec<&str> {
+            entries.iter().map(|entry| entry.name.as_str()).collect()
+        }
+        let ledger = AwarenessLedger::new();
+        let detector = SlopDetector::new();
+        let now = Utc::now();
+        let ai = crate::presets::build_preset_sample("slop_grenade", 1).body;
+        let human = crate::presets::build_preset_sample("human_sparkle", 1).body;
+        let mut index = 0;
+        let mut record = |sender: &str, body: &str| {
+            index += 1;
+            ledger.record(detector.analyze(&MessageSample {
+                message_id: format!("board-{index}"),
+                app: M365App::Teams,
+                direction: MessageDirection::Received,
+                sender: sender.to_string(),
+                subject_or_topic: "Leaderboard fixture".to_string(),
+                body: body.to_string(),
+                timestamp: (now - Duration::minutes(index))
+                    .to_rfc3339_opts(SecondsFormat::Millis, true),
+            }));
+        };
+        // (sender, AI-written messages, human messages)
+        for (sender, ai_count, human_count) in [
+            ("Ava", 4, 0),
+            ("Ben", 3, 1),
+            ("Cal", 2, 2),
+            ("Dee", 1, 3),
+            ("Eli", 0, 4),
+            ("Fay", 0, 1),
+            ("Gus", 1, 1),
+        ] {
+            for _ in 0..ai_count {
+                record(sender, &ai);
+            }
+            for _ in 0..human_count {
+                record(sender, &human);
+            }
+        }
+        // Automated mail and placeholder senders never appear on the boards.
+        record("no-reply@contoso.com", &ai);
+        record("Unknown Sender", &ai);
+        record("Teams Colleague", &human);
+
+        let card = ledger.scorecard();
+        assert_eq!(names(&card.top_sloppers), ["Ava", "Ben", "Cal", "Gus", "Dee"]);
+        assert_eq!(names(&card.top_p_doomers), ["Eli", "Fay", "Dee", "Cal", "Gus"]);
+    }
+
+    #[test]
+    fn leaderboards_do_not_overlap_once_ten_people_are_known() {
+        let ledger = AwarenessLedger::new();
+        let detector = SlopDetector::new();
+        let human = crate::presets::build_preset_sample("human_sparkle", 1).body;
+        for person in 0..12 {
+            ledger.record(detector.analyze(&MessageSample {
+                message_id: format!("person-{person}"),
+                app: M365App::Teams,
+                direction: MessageDirection::Received,
+                sender: format!("Person {person:02}"),
+                subject_or_topic: "Overlap fixture".to_string(),
+                body: human.clone(),
+                timestamp: Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true),
+            }));
+        }
+        let card = ledger.scorecard();
+        assert_eq!(card.top_sloppers.len(), 5);
+        assert_eq!(card.top_p_doomers.len(), 5);
+        assert!(card
+            .top_p_doomers
+            .iter()
+            .all(|hero| card.top_sloppers.iter().all(|slopper| slopper.name != hero.name)));
     }
 }

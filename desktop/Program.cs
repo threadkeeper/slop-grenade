@@ -47,7 +47,10 @@ namespace SlopGrenadeDesktop
         private static readonly DateTime[] _localWipeAt = new DateTime[] { DateTime.MinValue, DateTime.MinValue };
 
         private static DateTime _activeDay = DateTime.Now.Date;
-        private static int _dailyRecSum, _dailyRecCount, _dailySentSum, _dailySentCount;
+        private static int _dailyRecAi, _dailyRecCount, _dailySentAi, _dailySentCount;
+
+        /// <summary>Scores at or above this read as AI-written (same threshold as the dashboard).</summary>
+        private const int AiWrittenThreshold = 40;
 
         [STAThread]
         private static void Main(string[] args)
@@ -151,26 +154,28 @@ namespace SlopGrenadeDesktop
             DateTime today = DateTime.Now.Date;
             if (today == _activeDay) return;
             _activeDay = today;
-            _dailyRecSum = _dailyRecCount = _dailySentSum = _dailySentCount = 0;
+            _dailyRecAi = _dailyRecCount = _dailySentAi = _dailySentCount = 0;
             RefreshDailyTrayMetrics();
         }
 
         private static void RecordDailyMessageMetric(Side side, int score)
         {
             CheckMidnightReset();
-            if (side == Side.Left) { _dailyRecCount++; _dailyRecSum += score; }
-            else { _dailySentCount++; _dailySentSum += score; }
+            bool aiWritten = score >= AiWrittenThreshold;
+            if (side == Side.Left) { _dailyRecCount++; if (aiWritten) _dailyRecAi++; }
+            else { _dailySentCount++; if (aiWritten) _dailySentAi++; }
             RefreshDailyTrayMetrics();
         }
 
         private static void RefreshDailyTrayMetrics()
         {
-            int recAvg = _dailyRecCount > 0 ? _dailyRecSum / _dailyRecCount : 0;
-            int sentAvg = _dailySentCount > 0 ? _dailySentSum / _dailySentCount : 0;
-            if (_flyout != null) _flyout.UpdateMetrics(recAvg, _dailyRecCount, sentAvg, _dailySentCount);
+            // Share of today's person-written messages that read as AI-written.
+            int recPct = _dailyRecCount > 0 ? (int)Math.Round(100.0 * _dailyRecAi / _dailyRecCount) : 0;
+            int sentPct = _dailySentCount > 0 ? (int)Math.Round(100.0 * _dailySentAi / _dailySentCount) : 0;
+            if (_flyout != null) _flyout.UpdateMetrics(recPct, _dailyRecCount, sentPct, _dailySentCount);
             if (_trayIcon != null)
             {
-                string tip = string.Format("Slop Grenade: In {0}% ({1}), Out {2}% ({3})", recAvg, _dailyRecCount, sentAvg, _dailySentCount);
+                string tip = string.Format("Slop Grenade: In {0}% AI ({1}), Out {2}% AI ({3})", recPct, _dailyRecCount, sentPct, _dailySentCount);
                 _trayIcon.Text = tip.Length > 63 ? tip.Substring(0, 63) : tip;
             }
         }
@@ -416,6 +421,8 @@ namespace SlopGrenadeDesktop
                 string sideStr = ExtractJsonString(json, "monitorSide");
                 string appStr = ExtractJsonString(json, "app");
                 int score = ExtractJsonInt(json, "slopScore", 50);
+                // Automated mail (no-reply, calendar responses, bots) is not anyone's writing.
+                bool automated = ExtractJsonString(json, "summary").StartsWith("Automated / machine-generated response", StringComparison.Ordinal);
 
                 EffectTier tier = EffectTier.HumanSparkle;
                 if (tierStr == "slop_grenade") tier = EffectTier.SlopGrenade;
@@ -426,7 +433,7 @@ namespace SlopGrenadeDesktop
 
                 _overlay.BeginInvoke(new Action(delegate
                 {
-                    RecordDailyMessageMetric(side, score);
+                    if (!automated) RecordDailyMessageMetric(side, score);
                     if (appStr == "teams" && !_settings.MonitorTeams) return;
                     if (appStr == "outlook" && !_settings.MonitorOutlook) return;
                     bool isSlop = tier == EffectTier.SlopGrenade || tier == EffectTier.SlopSplat;

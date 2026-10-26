@@ -14,7 +14,7 @@
   } from '$lib/dashboard';
   import type { AnimationTier, AwarenessScorecard } from '$lib/types';
   import { WebAudioSfx, type StageCue } from '$lib/engine';
-  import { refreshSevenDays } from '$lib/refresh';
+  import { refreshDaysForSpan, refreshHistory as requestHistoryRefresh } from '$lib/refresh';
   import { isNativeMobile, subscribeAnimations } from '$lib/transport';
   import { createLedger } from '$lib/ledger';
   import Mailbox from '$lib/components/Mailbox.svelte';
@@ -88,14 +88,16 @@
       filters.tiers.peaceful_cloud &&
       filters.tiers.human_sparkle
   );
-  const leaderboards = $derived(
-    filteredReports.length > 0
-      ? computeTopFiveLists(filteredReports)
-      : {
-          topSloppers: scorecard?.topSloppers ?? [],
-          topPDoomers: scorecard?.topPDoomers ?? []
-        }
-  );
+  const leaderboards = $derived(computeTopFiveLists(filteredReports));
+  /** Days the Refresh button reads: follows the Span filter, at most 30 (Android: always 7). */
+  const refreshDays = $derived(refreshDaysForSpan(filters.timeSpan, mobile));
+  const refreshWindow = $derived(refreshDays === 1 ? 'the last day' : `the last ${refreshDays} days`);
+  const SPAN_LABEL: Record<TimeSpanFilter, string> = {
+    today: 'Today · resets 00:00',
+    '7d': 'Last 7 days',
+    '30d': 'Last 30 days',
+    all: 'All loaded history'
+  };
   const gridRows = $derived(rankGridReports(filteredReports, selectedBucket, selectedPerson, filters.timeSpan));
 
   async function loadLedger() {
@@ -104,21 +106,22 @@
 
   async function refreshHistory() {
     if (refreshing) return;
+    const days = refreshDays;
+    const windowLabel = refreshWindow;
     refreshing = true;
     refreshError = null;
-    refreshNotice = `Reading the last seven days from ${mobile ? 'Gmail' : 'Outlook and Teams'}. This can take a few minutes.`;
+    refreshNotice = `Reading ${windowLabel} from ${mobile ? 'Gmail' : 'Outlook and Teams'}. This can take a few minutes.`;
     try {
-      const batch = await refreshSevenDays();
+      const batch = await requestHistoryRefresh(days);
       if (!(await loadLedger())) {
         refreshNotice = '';
         return;
       }
-      setTimeSpan('7d');
       clearCrossFilters();
-      refreshNotice = `7 days refreshed: ${batch.newMessagesAnalyzed} added / ${batch.fetchedCount} scanned. History merged.`;
+      refreshNotice = `Refreshed ${windowLabel}: ${batch.newMessagesAnalyzed} added / ${batch.fetchedCount} scanned. History merged.`;
     } catch (error) {
       refreshNotice = '';
-      refreshError = error instanceof Error ? error.message : 'The seven-day refresh failed.';
+      refreshError = error instanceof Error ? error.message : 'The refresh failed.';
     } finally {
       refreshing = false;
     }
@@ -272,7 +275,7 @@
       <div class="header-tools">
         <button
           class="brass small refresh-btn"
-          title={`Merge the last seven days of ${mobile ? 'Gmail' : 'Outlook and Teams'} without duplicates or replaying effects`}
+          title={`Read ${refreshWindow} of ${mobile ? 'Gmail' : 'Outlook and Teams (follows the Span filter, up to 30 days)'} without duplicates or replaying effects`}
           aria-busy={refreshing}
           disabled={refreshing}
           onclick={refreshHistory}
@@ -280,7 +283,7 @@
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M20 7v5h-5M4 17v-5h5M5.5 7a7.5 7.5 0 0 1 12.4-2L20 8M4 16l2.1 3A7.5 7.5 0 0 0 18.5 17" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
-          {refreshing ? 'Refreshing…' : 'Refresh 7 days'}
+          {refreshing ? 'Refreshing…' : 'Refresh'}
         </button>
         <button
           class="brass icon-btn"
@@ -361,11 +364,12 @@
           <div class="panel gauge-panel">
             <div class="panel-head">
               <h2>Incoming Slop</h2>
-              <span class="meta">Resets 00:00</span>
+              <span class="meta">{SPAN_LABEL[filters.timeSpan]}</span>
             </div>
-            <BrassGauge value={gauges.received.averageScore} label="Incoming slop" id="g-in" />
+            <BrassGauge value={gauges.received.aiPercent} label="Incoming messages written by AI" id="g-in" />
             <div class="gauge-stats">
               <div><span class="k">Messages</span><span class="v">{gauges.received.messageCount}</span></div>
+              <div><span class="k">AI-written</span><span class="v">{gauges.received.aiWrittenCount}</span></div>
               <div><span class="k">Grenades in</span><span class="v hot">{gauges.received.grenadeCount}</span></div>
             </div>
           </div>
@@ -373,11 +377,12 @@
           <div class="panel gauge-panel">
             <div class="panel-head">
               <h2>Outgoing Slop</h2>
-              <span class="meta">Resets 00:00</span>
+              <span class="meta">{SPAN_LABEL[filters.timeSpan]}</span>
             </div>
-            <BrassGauge value={gauges.sent.averageScore} label="Outgoing slop" id="g-out" />
+            <BrassGauge value={gauges.sent.aiPercent} label="Your messages written by AI" id="g-out" />
             <div class="gauge-stats">
               <div><span class="k">Messages</span><span class="v">{gauges.sent.messageCount}</span></div>
+              <div><span class="k">AI-written</span><span class="v">{gauges.sent.aiWrittenCount}</span></div>
               <div><span class="k">Grenades out</span><span class="v hot">{gauges.sent.grenadeCount}</span></div>
             </div>
           </div>
@@ -441,18 +446,18 @@
         <section class="panel list-panel" aria-label="Top 5 Sloppers">
           <div class="panel-head">
             <h2>Most Wanted</h2>
-            <span class="meta">Top 5 sloppers</span>
+            <span class="meta">Highest % AI</span>
           </div>
           {#if leaderboards.topSloppers.length === 0}
-            <p class="empty">No sloppers in selected range.</p>
+            <p class="empty">No people in the selected range.</p>
           {:else}
             <table class="rank-table">
               <thead>
                 <tr>
                   <th>#</th>
                   <th>Person</th>
-                  <th class="num">Grenades</th>
-                  <th class="num">Avg</th>
+                  <th class="num">Msgs</th>
+                  <th class="num">AI %</th>
                 </tr>
               </thead>
               <tbody>
@@ -460,8 +465,8 @@
                   <tr class="clickable-row" class:selected-row={selectedPerson === p.name} onclick={() => togglePersonSelection(p.name)}>
                     <td><span class="coin">{i + 1}</span></td>
                     <td class="name">{p.name}</td>
-                    <td class="num">{p.slopGrenades}</td>
-                    <td class="num score-high">{p.averageSlopScore}</td>
+                    <td class="num">{p.messageCount}</td>
+                    <td class="num score-high">{p.aiSharePercent}%</td>
                   </tr>
                 {/each}
               </tbody>
@@ -472,18 +477,18 @@
         <section class="panel list-panel" aria-label="Top 5 P-Doomers">
           <div class="panel-head">
             <h2>Hand-Crafted Heroes</h2>
-            <span class="meta">Top 5 p-doomers</span>
+            <span class="meta">Lowest % AI</span>
           </div>
           {#if leaderboards.topPDoomers.length === 0}
-            <p class="empty">No P-Doomers in selected range.</p>
+            <p class="empty">No people in the selected range.</p>
           {:else}
             <table class="rank-table">
               <thead>
                 <tr>
                   <th>#</th>
                   <th>Person</th>
-                  <th class="num">Human</th>
-                  <th class="num">Avg</th>
+                  <th class="num">Msgs</th>
+                  <th class="num">AI %</th>
                 </tr>
               </thead>
               <tbody>
@@ -491,8 +496,8 @@
                   <tr class="clickable-row" class:selected-row={selectedPerson === p.name} onclick={() => togglePersonSelection(p.name)}>
                     <td><span class="coin">{i + 1}</span></td>
                     <td class="name">{p.name}</td>
-                    <td class="num">{p.humanMessages}</td>
-                    <td class="num score-low">{p.averageSlopScore}</td>
+                    <td class="num">{p.messageCount}</td>
+                    <td class="num score-low">{p.aiSharePercent}%</td>
                   </tr>
                 {/each}
               </tbody>

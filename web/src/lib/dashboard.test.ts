@@ -5,6 +5,7 @@ import {
   computeTopFiveLists,
   filterReports,
   gaugeWhiteToPurpleColor,
+  isAutomatedReport,
   tierDisplayName,
   type DashboardFilterState
 } from './dashboard';
@@ -116,7 +117,9 @@ describe('Slop Grenade dashboard', () => {
     const gauges = computeInOutGauges(todaySlice);
     expect(gauges.received.averageScore).toBe(94);
     expect(gauges.received.grenadeCount).toBe(1);
+    expect(gauges.received.aiPercent).toBe(100);
     expect(gauges.sent.averageScore).toBe(52);
+    expect(gauges.sent.aiPercent).toBe(100);
 
     const allSlice = filterReports(sampleReports, { ...filters, timeSpan: '7d' }, '2026-10-23');
     expect(allSlice.length).toBe(3);
@@ -127,5 +130,84 @@ describe('Slop Grenade dashboard', () => {
     const { topSloppers, topPDoomers } = computeTopFiveLists(allSlice);
     expect(topSloppers[0].name).toBe('Chad Slopper');
     expect(topPDoomers[0].name).toBe('Linus Stallman');
+  });
+
+  function report(sender: string, slopScore: number, extra: Partial<SlopReport> = {}): SlopReport {
+    const tier =
+      slopScore >= 80 ? 'slop_grenade'
+      : slopScore >= 60 ? 'slop_splat'
+      : slopScore >= 40 ? 'innocent_fruit'
+      : slopScore >= 20 ? 'peaceful_cloud'
+      : 'human_sparkle';
+    return {
+      messageId: `${sender}-${slopScore}-${Math.random()}`,
+      app: 'teams',
+      direction: 'received',
+      sender,
+      subjectOrTopic: 'Chat',
+      timestamp: '2026-10-23T09:00:00Z',
+      wordCount: 20,
+      slopScore,
+      heuristicScore: slopScore,
+      lunaScore: null,
+      tier,
+      isSlopGrenade: tier === 'slop_grenade',
+      monitorSide: 'left',
+      breakdown: { lexicalScore: 0, structuralScore: 0, burstinessScore: 0, handoffScore: 0, lunaScore: null },
+      signals: [],
+      summary: '',
+      selfAwarenessTip: '',
+      redactedPreview: '',
+      ...extra
+    } as SlopReport;
+  }
+
+  it('reads the gauges as the share of AI-written messages, leaving automated mail out of the share', () => {
+    const gauges = computeInOutGauges([
+      report('Ava', 85),
+      report('Ben', 45),
+      report('Cal', 39),
+      report('Dee', 5),
+      report('Calendar', 4, { summary: 'Automated / machine-generated response classified as sparkle (human).' }),
+      report('You', 62, { direction: 'sent', monitorSide: 'right' }),
+      report('You', 12, { direction: 'sent', monitorSide: 'right' })
+    ]);
+    expect(gauges.received).toMatchObject({ aiPercent: 50, aiWrittenCount: 2, messageCount: 5, grenadeCount: 1 });
+    expect(gauges.sent).toMatchObject({ aiPercent: 50, aiWrittenCount: 1, messageCount: 2, grenadeCount: 0 });
+    expect(computeInOutGauges([]).received.aiPercent).toBe(0);
+  });
+
+  it('ranks both leaderboards by AI share and always fills five rows', () => {
+    const reports = [
+      ...[90, 85, 70, 60].map((s) => report('Ava', s)),
+      ...[90, 85, 70, 10].map((s) => report('Ben', s)),
+      ...[90, 45, 10, 5].map((s) => report('Cal', s)),
+      ...[41, 10, 5, 5].map((s) => report('Dee', s)),
+      ...[30, 10, 5, 2].map((s) => report('Eli', s)),
+      report('Fay', 3),
+      ...[95, 3].map((s) => report('Gus', s)),
+      report('Unknown Sender', 99),
+      report('Teams Colleague', 1),
+      report('no-reply', 4, { summary: 'Automated / machine-generated response classified as sparkle (human).' })
+    ];
+    const { topSloppers, topPDoomers } = computeTopFiveLists(reports);
+    expect(topSloppers.map((p) => p.name)).toEqual(['Ava', 'Ben', 'Gus', 'Cal', 'Dee']);
+    expect(topSloppers.map((p) => p.aiSharePercent)).toEqual([100, 75, 50, 50, 25]);
+    expect(topPDoomers.map((p) => p.name)).toEqual(['Fay', 'Eli', 'Dee', 'Cal', 'Gus']);
+    expect(topPDoomers[0]).toMatchObject({ aiSharePercent: 0, messageCount: 1 });
+  });
+
+  it('keeps the two leaderboards apart once ten people are known', () => {
+    const reports = Array.from({ length: 12 }, (_, i) => report(`Person ${i}`, i * 8));
+    const { topSloppers, topPDoomers } = computeTopFiveLists(reports);
+    expect(topSloppers).toHaveLength(5);
+    expect(topPDoomers).toHaveLength(5);
+    const wanted = new Set(topSloppers.map((p) => p.name));
+    expect(topPDoomers.some((p) => wanted.has(p.name))).toBe(false);
+  });
+
+  it('recognises automated reports by their summary', () => {
+    expect(isAutomatedReport(report('x', 4, { summary: 'Automated / machine-generated response classified as sparkle (human).' }))).toBe(true);
+    expect(isAutomatedReport(report('x', 4))).toBe(false);
   });
 });

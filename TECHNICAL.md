@@ -40,10 +40,10 @@ Slop Grenade consists of three coordinated components:
 2. **Rust Background Daemon (`rust/`)**:
    - Built with stable Rust (`axum` + `tokio`), enforcing `unsafe_code = "forbid"` and `missing_docs = "deny"`.
    - **Modules**:
-     - `slop_detector.rs`: Deterministic linguistic, structural, burstiness, and passive-handoff analyzer + 5-tier animation classifier (`HumanSparkle`, `PeacefulCloud`, `InnocentFruit`, `SlopSplat`, `SlopGrenade`).
-     - `workiq_mcp.rs`: JSON-RPC 2.0 stdio client for the local Microsoft 365 `workiq mcp` server. Recent polling reads inbox/sent items and recent chats; a seven-day refresh pages through non-draft mailbox messages, chats active in the week, and their date-filtered message collections.
+     - `slop_detector.rs` (re-exported from `core/`): Deterministic linguistic, structural, burstiness, and passive-handoff analyzer + 5-tier animation classifier (`HumanSparkle`, `PeacefulCloud`, `InnocentFruit`, `SlopSplat`, `SlopGrenade`). See "Scoring rubric" below.
+     - `workiq_mcp.rs`: JSON-RPC 2.0 stdio client for the local Microsoft 365 `workiq mcp` server. Recent polling reads inbox/sent items and recent chats; a history refresh (1 to 30 days) pages through non-draft mailbox messages, chats active in the window, and their date-filtered message collections. HTML bodies are reduced to text (style blocks and comments dropped, tags with attributes handled, entities decoded) with bold and bullet structure kept. Teams bot posts are named `<app> [bot]` so they take the automated path.
      - `llm_luna.rs`: GitHub Copilot Responses API client (`POST https://api.githubcopilot.com/responses` with `model: "gpt-5.6-luna"`).
-     - `ledger.rs`: In-memory directional habit ledger tracking daily midnight-resetting gauges, historical reports, **Top 5 Sloppers**, and **Top 5 P-Doomers**. Retains the full UTC days covering the rolling seven-day window plus up to 360 older reports, and returns reports newest first.
+     - `ledger.rs`: In-memory directional habit ledger tracking daily midnight-resetting gauges, historical reports, **Top 5 Sloppers**, and **Top 5 P-Doomers**. The lists rank people by their share of AI-written messages (score 40 or more), then average score, then message count; both fill to five whenever five people are known, may overlap only below ten people, and leave out automated mail and placeholder senders. Retains the full UTC days covering the rolling 31-day window plus up to 360 older reports, and returns reports newest first.
      - `event_bus.rs`: Broadcast channel for real-time desktop overlay animations and squeegee wipes.
      - `scanner_daemon.rs`: Background M365 polling and deduplication loop.
      - `server.rs` & `static_files.rs`: REST API, SSE stream, and static asset server.
@@ -52,11 +52,27 @@ Slop Grenade consists of three coordinated components:
 
 3. **Habit Monitoring Web Dashboard (`web/`)**:
    - Built with Svelte 5 runes (`$state`, `$derived`), SvelteKit (`@sveltejs/adapter-static`), strict TypeScript, and Vite. Theme in `web/src/app.css` (brass, ink and parchment).
-   - Displays the incoming and outgoing daily slop pressure gauges, the stacked daily breakdown by type, time span / channel / type filters, the Top 5 Sloppers and Top 5 P-Doomers, and the drill-down ledger.
+   - Displays the incoming and outgoing % AI dials (share of person-written messages scoring 40 or more in the selected span), the stacked daily breakdown by type, time span / channel / type filters, the Most Wanted and Hand-Crafted Heroes lists (computed from the filtered reports by AI share, see `computeTopFiveLists`), and the drill-down ledger.
    - **Effects test range**: opened from the target icon in the header, a pop-up monitor running the effects engine (`web/src/lib/engine/`). Live messages replay there while it is open, and the buttons fire test effects without calling the API, so test shots do not change your stats.
-   - **Refresh 7 days**: merges a paginated seven-day Outlook/Teams backfill, then reloads the ledger, clears chart/person cross-filters, and selects `7d`. The button is disabled while pending; HTTP, protocol, application, and reload failures are shown visibly. Backfills always use local scoring and do not publish historical animation events.
+   - **Refresh**: merges a paginated Outlook/Teams backfill for the selected span (`Today` 1 day, `7d` 7, `30d` and `All` 30; the Android app always uses 7), then reloads the ledger and clears chart/person cross-filters, keeping the selected span. The button is disabled while pending; HTTP, protocol, application, and reload failures are shown visibly. Backfills always use local scoring and do not publish historical animation events.
    - **Sound**: optional WebAudio output of the same synthesised effects (`engine/audio.ts`), switched on from the header and remembered per browser.
    - **Overlay mode**: `/?mode=overlay` renders only a transparent full-window effects layer driven by the SSE stream (for example as an OBS browser source). Add `&sound=1` for sound.
+
+---
+
+### Scoring rubric (`core/src/slop_detector.rs`)
+
+The heuristic score is `lexical (capped at 74) + structural + burstiness + handoff - human credit`, clamped to 0..=100. Without any structural or handoff signal it is capped at 79, so plain buzzword prose cannot reach the grenade tier.
+
+| Family | Signals |
+| :--- | :--- |
+| Lexical | Opening clichés, AI buzzwords, formulaic transitions, stock assistant phrases (`AI_PHRASES`, matched after folding curly quotes) and AI-favoured words (`AI_WORDS`, matched at word starts) |
+| Structural | Bold-bullet walls, headings, em dashes (any count; heavier in Teams), plain bullet lists, bold spans, emoji-led lines, curly quotes and multi-paragraph essays in Teams, colon lead-ins, rule-of-three lists |
+| Burstiness | Flat sentence cadence, plus a prior for long, uniformly capitalised and punctuated prose with long words (heavier for long Teams messages); capped at 36 |
+| Handoff | Handoff phrases, assistant voice (`ASSISTANT_VOICE`: offers, templates, chatbot openers), a pasted `Subject:` line, channel length mismatch |
+| Human credit | 6 points per fingerprint, up to 24: lower-case sentence start, lower-case "i", each slang word, `??`/`!!`/`...`, emoticons, no final punctuation in a short message |
+
+A score of 40 or more counts as AI-written for the dashboard dials, the tray gauges and the leaderboards. Automated mail is always scored 4 (`human_sparkle`) and is left out of those shares. Calibration examples live in the detector's unit tests.
 
 ---
 
@@ -72,19 +88,19 @@ Slop Grenade consists of three coordinated components:
 | `POST` | `/api/v1/analyze` | Evaluates a communication sample and broadcasts the resulting animation |
 | `POST` | `/api/v1/simulate` | Triggers a preset animation (`human_sparkle`, `peaceful_cloud`, `innocent_fruit`, `slop_splat`, `slop_grenade`, `my_outgoing_grenade`) |
 | `POST` | `/api/v1/squeegee` | Broadcasts a left or right bezel squeegee wipe to all connected overlays |
-| `POST` | `/api/v1/scan/now` | Recent poll by default; `{"lookbackDays":7,"useLuna":false}` performs a complete quiet seven-day merge |
+| `POST` | `/api/v1/scan/now` | Recent poll by default; `{"lookbackDays":N,"useLuna":false}` with `N` from 1 to 30 performs a complete quiet merge of the last `N` days |
 | `GET` | `/api/v1/events/stream` | Server-Sent Events stream for real-time desktop overlay animations |
 
 ---
 
-### Seven-day refresh contract
+### History refresh contract
 
-`POST /api/v1/scan/now` accepts optional `lookbackDays: 7`. Other provided window values, or combining a history refresh with `useLuna: true`, return HTTP 400 with `ok: false`.
-A successful history response includes `ok: true`, `lookbackDays: 7`, and `batch` counts/reports. Clients must inspect `ok`, not merely HTTP status; WorkIQ scan failures retain the existing HTTP-200 error envelope.
+`POST /api/v1/scan/now` accepts optional `lookbackDays` from 1 to 30. Values outside that range, or combining a history refresh with `useLuna: true`, return HTTP 400 with `ok: false`. The Android app accepts only `lookbackDays: 7`.
+A successful history response includes `ok: true`, the requested `lookbackDays`, and `batch` counts/reports. Clients must inspect `ok`, not merely HTTP status; WorkIQ scan failures retain the existing HTTP-200 error envelope.
 
-The UTC window is fixed when fetching starts: `start < message timestamp <= end`, with `start = end - 7 days`.
+The UTC window is fixed when fetching starts: `start < message timestamp <= end`, with `start = end - lookbackDays`.
 Mailbox queries exclude drafts. Teams uses matched `$orderby=lastModifiedDateTime desc` and `$filter=lastModifiedDateTime gt ...`, then filters actual creation timestamps locally so edits to older messages are not imported as new history.
-Chat discovery expands `lastMessagePreview`, orders it newest first, and filters `lastMessagePreview/createdDateTime` to the week. It does not use `lastUpdatedDateTime`, which tracks renames and membership changes, or the unsupported chat-list `$select` option. All next links are still followed, including empty filtered pages that have a continuation, without a chat-count cap.
+Chat discovery expands `lastMessagePreview`, orders it newest first, and filters `lastMessagePreview/createdDateTime` to the window. It does not use `lastUpdatedDateTime`, which tracks renames and membership changes, or the unsupported chat-list `$select` option. All next links are still followed, including empty filtered pages that have a continuation, without a chat-count cap.
 Every collection follows opaque Graph `@odata.nextLink` values, without rebuilding skip tokens. Unexpected hosts and repeated paging URLs fail explicitly. Teams IDs are scoped to their chat, and account IDs identify outgoing messages.
 
 History ingestion shares the normal deduplication state but records without animation broadcasts or LLM calls. Repeating a refresh does not increase counts for already observed message IDs.
@@ -120,7 +136,7 @@ npm --prefix web run test
 npm --prefix web run check
 npm --prefix web run build
 ```
-Unit tests: `web/src/lib/dashboard.test.ts` (filters, gauges, leaderboards), `web/src/lib/refresh.test.ts` (seven-day request/response contracts and visible failure paths), and `web/src/lib/engine.test.ts` (grenade slow-motion moment and edge splat, cannon side, fruit sticks only on slop, squeegee clears one side, flies arrive and leave, smoke and twinkles fade, 20 fruit models with no labels, sound bank levels).
+Unit tests: `web/src/lib/dashboard.test.ts` (filters, gauges, leaderboards), `web/src/lib/refresh.test.ts` (span-to-days mapping, 1 to 30 day request/response contracts and visible failure paths), and `web/src/lib/engine.test.ts` (grenade slow-motion moment and edge splat, cannon side, fruit sticks only on slop, squeegee clears one side, flies arrive and leave, smoke and twinkles fade, 20 fruit models with no labels, sound bank levels).
 
 ### Native Windows Desktop Overlay (`desktop/`)
 ```powershell

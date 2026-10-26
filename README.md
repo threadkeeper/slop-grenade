@@ -41,6 +41,15 @@ Slop Grenade overlays your main Windows desktop monitor without interrupting you
   - **Daily Buildup & Squeegee**: Fruit and slop stay stuck along the sides of your monitor until you squeegee that side clean from the tray icon. The squeegee also chases the flies away.
 - **Sound (optional)**: Switch on **Sound FX** in the tray panel for soft, retro sounds in the style of early Macintosh games: a light whee, a ticking fuse, plops, a quiet hum from the flies and a rounded "pomf" for the grenade. Sound is off by default.
 
+### How messages are scored
+
+Every message gets a score from 0 to 100 from a local, rule-based reader. It is strict on purpose, because modern assistants write clean, friendly business prose:
+
+- **Adds points**: stock assistant phrases ("I hope you're doing well", "Let me know if you have any questions", "Would you like me to..."), AI-favoured words (ensure, crucial, enhance, landscape), em dashes, tidy bullet lists, bold labels, emoji checklists, evenly sized sentences, and long, uniformly polished paragraphs.
+- **Takes points off**: human typing habits such as lower-case sentence starts, slang (lol, thx, tbh), "??", emoticons and a missing final full stop.
+
+A score of **40 or more counts as AI-written**. That threshold drives the % AI dials and the leaderboards. Casual human chat lands at 0 to 10, AI-assisted mail at about 45 to 70, and pasted assistant answers at 80 or more.
+
 ---
 
 ## See It in Action
@@ -78,10 +87,10 @@ The slop never quite settles. Drips stretch, a drop lets go, and the drip starts
 ### The dashboard
 
 <p align="center">
-  <img src="docs/screenshots/dashboard.jpg" width="900" alt="The Slop Grenade dashboard in a brass and parchment style, with incoming and outgoing slop pressure gauges, a Most Wanted list of top sloppers and a Hand-Crafted Heroes list">
+  <img src="docs/screenshots/dashboard.jpg" width="900" alt="The Slop Grenade dashboard in a brass and parchment style, with incoming and outgoing % AI dials, a Most Wanted list and a Hand-Crafted Heroes list">
 </p>
 
-Daily slop pressure gauges for what you receive and what you send, a Most Wanted list, and the Hand-Crafted Heroes who still write their own messages.
+% AI dials for what you receive and what you send, a Most Wanted list of the people who use AI the most, and the Hand-Crafted Heroes who still write their own messages.
 
 <p align="center">
   <img src="docs/screenshots/test-range.jpg" width="900" alt="The effects test range pop-up with buttons to fire a slop grenade, the AI cannon, fruit, smoke, a twinkle, a barrage and the squeegees">
@@ -131,7 +140,7 @@ gh auth login
 
 Follow the on-screen prompt to sign in with your GitHub account that has GitHub Copilot access. Slop Grenade will automatically use your active GitHub session—no API keys or config files required.
 
-Local scoring and the seven-day refresh do not require LLM requests. Optional Copilot scoring sends the message being analyzed to the Copilot service.
+Local scoring and the history refresh do not require LLM requests. Optional Copilot scoring sends the message being analyzed to the Copilot service.
 
 ---
 
@@ -157,7 +166,7 @@ What this does automatically:
 Look for the **Bright Pink Hand Grenade** icon in your Windows System Tray (bottom-right taskbar near the clock):
 - Slop Grenade pings your **WorkIQ MCP** server every **1 minute** and triggers a desktop animation for each and every new message that comes through (automated and machine-generated system replies are always classified as the gentle `human` sparkle type).
 - **Left-click the Tray Icon** to open the brass control panel where you can:
-  - Read today's **Incoming** and **Outgoing** slop pressure gauges (they reset automatically at `00:00`).
+  - Read today's **Incoming** and **Outgoing** % AI gauges: the share of today's messages that read as AI-written (they reset automatically at `00:00`).
   - Click **Squeegee** (left or right) to wipe your monitor edges clean.
   - Toggle **Launch at Windows sign-in**, **Teams / Outlook monitoring**, **Slop FX** and **Calm FX**.
   - Switch **Sound FX** on or off and pick a volume (**Soft**, **Med**, **Loud**).
@@ -166,12 +175,12 @@ Look for the **Bright Pink Hand Grenade** icon in your Windows System Tray (bott
 
 ### 2. The Habit Dashboard (`http://127.0.0.1:8090/`)
 Clicking **Dashboard** in the tray opens the habit tracker in your browser, styled to match (brass, ink and parchment), featuring:
-- **Incoming / Outgoing Slop Pressure Gauges** (0-100%) that vent steam when you are in the red.
-- **Refresh 7 days**: merge the last week of messages without duplicates or replaying historical effects. The refresh uses local scoring, then selects the `7d` view. History is in memory and resets when the background daemon restarts.
+- **Incoming / Outgoing % AI dials**: the share of messages in the selected span that read as AI-written (score 40 or more), with the message, AI-written and grenade counts underneath. Automated mail is left out of the share. The dials vent steam when you are in the red.
+- **Refresh**: reads the span selected in the filters (`Today` 1 day, `7d` 7 days, `30d` and `All` 30 days, the maximum) and merges it without duplicates or replaying historical effects. The refresh uses local scoring. History is in memory and resets when the background daemon restarts, so restart the app after an update and press **Refresh** to re-score with the latest rules.
 - **Effects test range**: click the target icon in the header to open a small monitor where you can test fire every effect (test shots are not recorded in your stats). The **Sound** switch and volume slider sit next to it.
 - **Per-Day Stacked Bar Chart** broken down by type (`slop-grenade` in pink, `ai-cannon` in orange, `sprinkled` in yellow, `polish` in smoke grey, and `human` in cream).
 - **Filters** for time span (`Today`, `7d`, `30d`, `All`), source (`Teams` vs. `Outlook`), and message type (`All`, `slop-grenade`, `ai-cannon`, `sprinkled`, `polish`, `human`).
-- **Top 5 Sloppers** and **Top 5 P-Doomers** (the colleagues who refuse to touch AI).
+- **Most Wanted** and **Hand-Crafted Heroes**: the five people with the highest and the lowest share of AI-written messages in the selected span, with their message count and AI %. Both lists always show five people once five are known; automated mail and bots are left out.
 - **Interactive Drill-Down Grid** at the bottom ranked by highest slop score, showing the score, type, source, core metrics, sender, recipient, subject, and a short preview of each message.
 
 ---

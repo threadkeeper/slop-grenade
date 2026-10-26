@@ -128,9 +128,9 @@ async fn rejects_invalid_history_windows_and_remote_scoring_for_backfills() {
     let client = reqwest::Client::new();
     for payload in [
         json!({ "lookbackDays": 0 }),
-        json!({ "lookbackDays": 1 }),
-        json!({ "lookbackDays": 8 }),
+        json!({ "lookbackDays": 31 }),
         json!({ "lookbackDays": 7, "useLuna": true }),
+        json!({ "lookbackDays": 30, "useLuna": true }),
     ] {
         let response = client
             .post(format!("{base}/api/v1/scan/now"))

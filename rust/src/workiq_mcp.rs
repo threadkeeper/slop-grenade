@@ -171,16 +171,16 @@ impl WorkIqClient {
         Ok(samples)
     }
 
-    /// Fetch every page of non-draft mail and Teams chats in the last seven days.
+    /// Fetch every page of non-draft mail and Teams chats in the last `days` days (`1..=30`).
     ///
     /// The window is fixed at request start. Historical edits and future-dated messages
     /// are excluded using each message's creation/receive timestamp.
-    pub async fn poll_last_seven_days(&self) -> Result<Vec<MessageSample>, String> {
+    pub async fn poll_history(&self, days: u8) -> Result<Vec<MessageSample>, String> {
         let Some(ref bin) = self.binary_path else {
             return Err("WorkIQ binary not configured".to_string());
         };
         let until = Utc::now();
-        let since = until - ChronoDuration::days(7);
+        let since = until - ChronoDuration::days(i64::from(days.clamp(1, 30)));
         let cutoff = since.to_rfc3339_opts(SecondsFormat::Millis, true);
         let identity = self
             .call_mcp_fetch(
@@ -554,43 +554,141 @@ pub fn resolve_workiq_binary(explicit: Option<PathBuf>) -> Option<PathBuf> {
 
 /// Normalize HTML or rich-text M365 message content into clean markdown/plain text
 /// while preserving bolded bullet structures (`- **Heading:**`) for accurate slop detection.
+///
+/// Tags may carry attributes (Outlook adds `class="MsoNormal"` everywhere). Style, script and
+/// head blocks and HTML comments are dropped, entities are decoded after the tags are removed,
+/// and blank lines between bullet items are collapsed.
 pub fn strip_html_preserving_structure(raw: &str) -> String {
-    let mut s = raw
-        .replace("<strong>", "**")
-        .replace("</strong>", "**")
-        .replace("<b>", "**")
-        .replace("</b>", "**")
-        .replace("<li>", "\n- ")
-        .replace("</li>", "\n")
-        .replace("<br>", "\n")
-        .replace("<br/>", "\n")
-        .replace("<br />", "\n")
-        .replace("</p>", "\n\n")
-        .replace("</div>", "\n")
-        .replace("&nbsp;", " ")
-        .replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'");
-
-    // Strip any remaining HTML tags `<...>`
-    let mut out = String::with_capacity(s.len());
-    let mut in_tag = false;
-    for ch in s.drain(..) {
-        match ch {
-            '<' => in_tag = true,
-            '>' => in_tag = false,
-            _ if !in_tag => out.push(ch),
+    let mut text = String::with_capacity(raw.len());
+    let mut rest = raw;
+    while let Some(open) = rest.find('<') {
+        text.push_str(&rest[..open]);
+        let tail = &rest[open..];
+        if let Some(comment) = tail.strip_prefix("<!--") {
+            rest = match comment.find("-->") {
+                Some(end) => &comment[end + 3..],
+                None => "",
+            };
+            continue;
+        }
+        let Some(close) = tail.find('>') else {
+            rest = "";
+            break;
+        };
+        let tag = &tail[1..close];
+        rest = &tail[close + 1..];
+        let closing = tag.starts_with('/');
+        let name = tag
+            .trim_start_matches('/')
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .next()
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        match (name.as_str(), closing) {
+            ("style" | "script" | "head" | "title", false) => {
+                let end_tag = format!("</{name}");
+                rest = match find_ascii_case_insensitive(rest, &end_tag) {
+                    Some(at) => match rest[at..].find('>') {
+                        Some(gt) => &rest[at + gt + 1..],
+                        None => "",
+                    },
+                    None => "",
+                };
+            }
+            ("strong" | "b", _) => text.push_str("**"),
+            ("li", false) => text.push_str("\n- "),
+            ("h1" | "h2" | "h3" | "h4" | "h5" | "h6", false) => text.push_str("\n### "),
+            ("p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "table", true) => {
+                text.push_str("\n\n")
+            }
+            ("br", _) | ("li" | "ul" | "ol" | "div" | "tr", true) => text.push('\n'),
+            ("td" | "th", true) => text.push(' '),
             _ => {}
         }
     }
-    out.lines()
-        .map(str::trim_end)
-        .collect::<Vec<_>>()
-        .join("\n")
-        .trim()
-        .to_string()
+    text.push_str(rest);
+    tidy_text_lines(&decode_html_entities(&text))
+}
+
+fn find_ascii_case_insensitive(haystack: &str, needle: &str) -> Option<usize> {
+    haystack.to_ascii_lowercase().find(needle)
+}
+
+/// Decode named and numeric HTML entities (`&rsquo;`, `&#8217;`, `&#x2014;`, ...).
+fn decode_html_entities(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(amp) = rest.find('&') {
+        out.push_str(&rest[..amp]);
+        let tail = &rest[amp..];
+        let decoded = tail[1..]
+            .find(';')
+            .filter(|semi| (1..=10).contains(semi))
+            .and_then(|semi| decode_html_entity(&tail[1..=semi]).map(|c| (c, semi + 2)));
+        match decoded {
+            Some((c, consumed)) => {
+                out.push(c);
+                rest = &tail[consumed..];
+            }
+            None => {
+                out.push('&');
+                rest = &tail[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+fn decode_html_entity(entity: &str) -> Option<char> {
+    if let Some(number) = entity.strip_prefix('#') {
+        let code = match number.strip_prefix(['x', 'X']) {
+            Some(hex) => u32::from_str_radix(hex, 16).ok()?,
+            None => number.parse().ok()?,
+        };
+        return char::from_u32(code);
+    }
+    Some(match entity {
+        "nbsp" => ' ',
+        "amp" => '&',
+        "lt" => '<',
+        "gt" => '>',
+        "quot" => '"',
+        "apos" => '\'',
+        "rsquo" => '\u{2019}',
+        "lsquo" => '\u{2018}',
+        "rdquo" => '\u{201D}',
+        "ldquo" => '\u{201C}',
+        "mdash" => '\u{2014}',
+        "ndash" => '\u{2013}',
+        "hellip" => '\u{2026}',
+        "bull" => '\u{2022}',
+        "middot" => '\u{00B7}',
+        _ => return None,
+    })
+}
+
+/// Trim line ends, collapse repeated blank lines, and drop blank lines between bullet items.
+fn tidy_text_lines(text: &str) -> String {
+    let lines: Vec<&str> = text.lines().map(str::trim_end).collect();
+    let mut kept: Vec<&str> = Vec::with_capacity(lines.len());
+    for (index, line) in lines.iter().enumerate() {
+        if !line.trim().is_empty() {
+            kept.push(line);
+            continue;
+        }
+        let previous = kept.last().copied();
+        let after_blank = previous.is_some_and(|last| last.trim().is_empty());
+        let between_bullets = previous.is_some_and(|last| last.trim_start().starts_with("- "))
+            && lines[index + 1..]
+                .iter()
+                .find(|next| !next.trim().is_empty())
+                .is_some_and(|next| next.trim_start().starts_with("- "));
+        if !after_blank && !between_bullets {
+            kept.push("");
+        }
+    }
+    kept.join("\n").trim().to_string()
 }
 
 /// Parse a WorkIQ MCP `fetch` response bundle into normalized [`MessageSample`] items.
@@ -726,11 +824,18 @@ fn parse_chat_messages(
             if body.is_empty() {
                 continue;
             }
+            // Bots and apps post with `from.application`; the marker routes them to the
+            // automated (sparkle) path instead of the people leaderboards.
             let sender_name = item
                 .pointer("/from/user/displayName")
                 .and_then(Value::as_str)
-                .unwrap_or("Teams Colleague")
-                .to_string();
+                .map(ToString::to_string)
+                .or_else(|| {
+                    item.pointer("/from/application/displayName")
+                        .and_then(Value::as_str)
+                        .map(|app| format!("{app} [bot]"))
+                })
+                .unwrap_or_else(|| "Teams Colleague".to_string());
             let is_sent = !me.is_empty()
                 && [
                     item.pointer("/from/user/id").and_then(Value::as_str),
@@ -1150,6 +1255,36 @@ mod tests {
         let cleaned = strip_html_preserving_structure(html);
         assert!(cleaned.contains("- **Strategic Alignment:** Fostering synergy."));
         assert!(cleaned.contains("- **Key Takeaways:** Delving deeper."));
+    }
+
+    #[test]
+    fn strip_html_handles_outlook_markup_and_entities() {
+        let html = "<html><head><style>p.MsoNormal {margin:0cm;}</style></head><body><!-- [if gte mso 9]> x <![endif] --><p class=\"MsoNormal\">I hope you&rsquo;re doing well&nbsp;&#8212; quick update:</p><ul type=\"disc\"><li class=\"MsoListParagraph\"><b><span>Timeline:</span></b> on track</li><li class=\"MsoListParagraph\">Risks &amp; issues</li></ul><p>Let me know &lt;insert name&gt;</p></body></html>";
+        let cleaned = strip_html_preserving_structure(html);
+        assert!(!cleaned.contains("MsoNormal"));
+        assert!(!cleaned.contains("margin"));
+        assert!(cleaned.starts_with("I hope you\u{2019}re doing well \u{2014} quick update:"));
+        assert!(
+            cleaned.contains("quick update:\n\n- **Timeline:** on track\n- Risks & issues"),
+            "{cleaned:?}"
+        );
+        assert!(cleaned.ends_with("Let me know <insert name>"));
+        assert_eq!(strip_html_preserving_structure("AT&T &unknown; 5 &lt 6"), "AT&T &unknown; 5 &lt 6");
+    }
+
+    #[test]
+    fn teams_bot_messages_are_marked_for_the_automated_path() {
+        let payload = json!({ "value": [{
+            "id": "bot-1",
+            "createdDateTime": "2026-10-23T13:10:00Z",
+            "from": { "application": { "displayName": "Planner" } },
+            "body": { "content": "<p>Task assigned to you</p>" }
+        }] });
+        let messages = parse_teams_chat_messages(&payload, Some("Alex Taylor"));
+        assert_eq!(messages[0].sender, "Planner [bot]");
+        assert!(crate::slop_detector::is_automated_or_machine_generated(
+            &messages[0]
+        ));
     }
 
     #[test]

@@ -236,11 +236,16 @@ pub fn build_luna_evaluation_prompt(sample: &MessageSample) -> String {
 
     format!(
         "You are the Slop Grenade detector evaluating a Microsoft 365 {:?} message ({dir_str}).\n\
-         Score the message from 0 to 100 for AI Slop / Slop Grenade severity:\n\
+         Score the message from 0 to 100 for how much of it was written by AI. Be strict: \
+         modern assistants write clean, friendly business prose, so polish is evidence of AI, \
+         not of care. Stock phrases (\"I hope you're doing well\", \"Let me know if you have \
+         any questions\", \"Would you like me to\"), em dashes, tidy bullet lists, bold labels, \
+         emoji checklists and evenly sized sentences all point to AI. Typos, lower-case starts, \
+         slang, missing full stops and terse fragments point to a human.\n\
          - 0..19: Authentic human-typed message (natural cadence, concise, specific).\n\
-         - 20..39: Lightly polished prose (peaceful cloud).\n\
-         - 40..59: Moderate AI template assistance (innocent fruit).\n\
-         - 60..79: Heavy corporate AI buzzwords and padding (slop splat).\n\
+         - 20..39: Human-written but lightly polished (peaceful cloud).\n\
+         - 40..59: AI-assisted: drafted or rewritten with AI, lightly edited (innocent fruit).\n\
+         - 60..79: Mostly AI-written, stock phrasing and padding (slop splat).\n\
          - 80..100: SLOP GRENADE! Unedited AI dump, symmetrical `- **Heading:**` bullet wall, or passive handoff shifting cognitive load onto readers.\n\n\
          Return ONLY a single compact JSON object with keys:\n\
          {{\"slopScore\": <0-100 integer>, \"reasoning\": \"<under 120 chars>\", \"coachingTip\": \"<under 160 chars>\"}}\n\n\
