@@ -287,13 +287,13 @@ fn compute_leaderboards(
         }
     }
 
-    // (AI-written share in basis points, entry)
+    // (AI-written message count, entry); compare fractions before applying tie-breaks.
     let ranked: Vec<(usize, PersonLeaderboardEntry)> = by_sender
         .into_iter()
         .map(|(name, acc)| {
             let count = acc.count.max(1);
             (
-                acc.ai_written * 10_000 / count,
+                acc.ai_written,
                 PersonLeaderboardEntry {
                     name,
                     message_count: acc.count,
@@ -308,9 +308,9 @@ fn compute_leaderboards(
 
     // Top 5 Sloppers: highest AI-written share, then average score, then message count.
     let mut sloppers = ranked.clone();
-    sloppers.sort_by(|(share_a, a), (share_b, b)| {
-        share_b
-            .cmp(share_a)
+    sloppers.sort_by(|(ai_a, a), (ai_b, b)| {
+        ((*ai_b as u128) * (a.message_count as u128))
+            .cmp(&((*ai_a as u128) * (b.message_count as u128)))
             .then_with(|| b.average_slop_score.cmp(&a.average_slop_score))
             .then_with(|| b.message_count.cmp(&a.message_count))
     });
@@ -322,16 +322,19 @@ fn compute_leaderboards(
 
     // Top 5 P-Doomers: lowest AI-written share, then average score, then message count.
     let mut p_doomers = ranked;
-    p_doomers.sort_by(|(share_a, a), (share_b, b)| {
-        share_a
-            .cmp(share_b)
+    p_doomers.sort_by(|(ai_a, a), (ai_b, b)| {
+        ((*ai_a as u128) * (b.message_count as u128))
+            .cmp(&((*ai_b as u128) * (a.message_count as u128)))
             .then_with(|| a.average_slop_score.cmp(&b.average_slop_score))
             .then_with(|| b.message_count.cmp(&a.message_count))
     });
     let top_p_doomers: Vec<PersonLeaderboardEntry> = p_doomers
         .into_iter()
         .filter(|(_, entry)| {
-            people < 10 || !top_sloppers.iter().any(|slopper| slopper.name == entry.name)
+            people < 10
+                || !top_sloppers
+                    .iter()
+                    .any(|slopper| slopper.name == entry.name)
         })
         .take(5)
         .map(|(_, entry)| entry)
@@ -711,8 +714,7 @@ mod tests {
                 sender: "Fictional Colleague".to_string(),
                 subject_or_topic: "Synthetic month".to_string(),
                 body: "Ready for review.".to_string(),
-                timestamp: (now - Duration::days(day))
-                    .to_rfc3339_opts(SecondsFormat::Millis, true),
+                timestamp: (now - Duration::days(day)).to_rfc3339_opts(SecondsFormat::Millis, true),
             }));
         }
         assert_eq!(ledger.scorecard().recent_reports.len(), 30);
@@ -738,8 +740,8 @@ mod tests {
                 sender: sender.to_string(),
                 subject_or_topic: "Leaderboard fixture".to_string(),
                 body: body.to_string(),
-                timestamp: (now - Duration::minutes(index))
-                    .to_rfc3339_opts(SecondsFormat::Millis, true),
+                timestamp:
+                    (now - Duration::minutes(index)).to_rfc3339_opts(SecondsFormat::Millis, true),
             }));
         };
         // (sender, AI-written messages, human messages)
@@ -765,8 +767,39 @@ mod tests {
         record("Teams Colleague", &human);
 
         let card = ledger.scorecard();
-        assert_eq!(names(&card.top_sloppers), ["Ava", "Ben", "Cal", "Gus", "Dee"]);
-        assert_eq!(names(&card.top_p_doomers), ["Eli", "Fay", "Dee", "Cal", "Gus"]);
+        assert_eq!(
+            names(&card.top_sloppers),
+            ["Ava", "Ben", "Cal", "Gus", "Dee"]
+        );
+        assert_eq!(
+            names(&card.top_p_doomers),
+            ["Eli", "Fay", "Dee", "Cal", "Gus"]
+        );
+    }
+
+    #[test]
+    fn leaderboards_rank_near_equal_ai_shares_before_average_scores() {
+        let ledger = AwarenessLedger::new();
+        let detector = SlopDetector::new();
+        for (sender, ai_count, total, ai_preset) in [
+            ("Higher share", 50, 101, "innocent_fruit"),
+            ("Higher scores", 99, 200, "slop_grenade"),
+        ] {
+            for index in 0..total {
+                let preset = if index < ai_count {
+                    ai_preset
+                } else {
+                    "human_sparkle"
+                };
+                let mut sample = crate::presets::build_preset_sample(preset, index);
+                sample.message_id = format!("share-{sender}-{index}");
+                sample.sender = sender.to_string();
+                ledger.record(detector.analyze(&sample));
+            }
+        }
+        let card = ledger.scorecard();
+        assert_eq!(card.top_sloppers[0].name, "Higher share");
+        assert_eq!(card.top_p_doomers[0].name, "Higher scores");
     }
 
     #[test]
@@ -788,9 +821,9 @@ mod tests {
         let card = ledger.scorecard();
         assert_eq!(card.top_sloppers.len(), 5);
         assert_eq!(card.top_p_doomers.len(), 5);
-        assert!(card
-            .top_p_doomers
+        assert!(card.top_p_doomers.iter().all(|hero| card
+            .top_sloppers
             .iter()
-            .all(|hero| card.top_sloppers.iter().all(|slopper| slopper.name != hero.name)));
+            .all(|slopper| slopper.name != hero.name)));
     }
 }

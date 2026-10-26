@@ -148,6 +148,26 @@ async fn rejects_invalid_history_windows_and_remote_scoring_for_backfills() {
 }
 
 #[tokio::test]
+async fn history_accepts_every_window_from_one_to_thirty_days() {
+    let base = spawn_test_server().await;
+    let client = reqwest::Client::new();
+    for days in 1..=30 {
+        let response = client
+            .post(format!("{base}/api/v1/scan/now"))
+            .json(&json!({ "lookbackDays": days, "useLuna": false }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(body["ok"], false);
+        assert!(body["error"]
+            .as_str()
+            .is_some_and(|error| error.starts_with("WorkIQ identity lookup failed:")));
+    }
+}
+
+#[tokio::test]
 async fn health_and_auth_endpoints_confirm_standalone_user_auth() {
     let base = spawn_test_server().await;
     let client = reqwest::Client::new();

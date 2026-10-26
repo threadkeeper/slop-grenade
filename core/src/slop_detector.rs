@@ -592,18 +592,7 @@ const HUMAN_SLANG: &[&str] = &[
 ];
 
 /// Text emoticons (lower-case).
-const EMOTICONS: &[&str] = &[
-    ":)",
-    ":-)",
-    ":(",
-    ":-(",
-    ":d",
-    ";)",
-    ":p",
-    "xd",
-    "^^",
-    "<3",
-];
+const EMOTICONS: &[&str] = &[":)", ":-)", ":(", ":-(", ":d", ";)", ":p", "xd", "^^", "<3"];
 
 impl SlopDetector {
     /// Create a new [`SlopDetector`].

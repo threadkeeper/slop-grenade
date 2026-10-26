@@ -176,11 +176,14 @@ impl WorkIqClient {
     /// The window is fixed at request start. Historical edits and future-dated messages
     /// are excluded using each message's creation/receive timestamp.
     pub async fn poll_history(&self, days: u8) -> Result<Vec<MessageSample>, String> {
+        if !(1..=30).contains(&days) {
+            return Err("lookbackDays must be between 1 and 30.".to_string());
+        }
         let Some(ref bin) = self.binary_path else {
             return Err("WorkIQ binary not configured".to_string());
         };
         let until = Utc::now();
-        let since = until - ChronoDuration::days(i64::from(days.clamp(1, 30)));
+        let since = until - ChronoDuration::days(i64::from(days));
         let cutoff = since.to_rfc3339_opts(SecondsFormat::Millis, true);
         let identity = self
             .call_mcp_fetch(
@@ -1002,6 +1005,21 @@ mod tests {
     use super::*;
     use std::future::ready;
 
+    #[tokio::test]
+    async fn history_rejects_invalid_days_before_provider_access() {
+        let client = WorkIqClient::new(
+            Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml")),
+            None,
+        );
+        for days in [0, 31, u8::MAX] {
+            let error = client.poll_history(days).await.unwrap_err();
+            assert!(
+                error.contains("between 1 and 30"),
+                "Unexpected validation error: {error}"
+            );
+        }
+    }
+
     #[test]
     fn history_chat_list_filters_message_activity_not_membership_updates() {
         let since = "2026-10-17T12:00:00.000Z";
@@ -1269,7 +1287,10 @@ mod tests {
             "{cleaned:?}"
         );
         assert!(cleaned.ends_with("Let me know <insert name>"));
-        assert_eq!(strip_html_preserving_structure("AT&T &unknown; 5 &lt 6"), "AT&T &unknown; 5 &lt 6");
+        assert_eq!(
+            strip_html_preserving_structure("AT&T &unknown; 5 &lt 6"),
+            "AT&T &unknown; 5 &lt 6"
+        );
     }
 
     #[test]
