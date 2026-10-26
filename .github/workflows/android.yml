@@ -70,8 +70,8 @@ jobs:
         run: |
           set -euo pipefail
           npm --prefix web ci
-          npm --prefix web test
           npm --prefix web run check
+          npm --prefix web test
           npm --prefix web run build
       - name: JVM and packaging-policy tests
         shell: bash
