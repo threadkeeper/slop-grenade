@@ -15,13 +15,16 @@
 //       /out:slop-grenade-overlay.exe /recurse:desktop\*.cs
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
+using System.Globalization;
 using System.IO;
 using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
+using System.Web.Script.Serialization;
 using System.Windows.Forms;
 using Microsoft.Win32;
 
@@ -40,6 +43,8 @@ namespace SlopGrenadeDesktop
         private static Process _daemonProcess;
         private static volatile bool _running = true;
         private static long _lastSeq;
+        private static int _testSeq;
+        private static readonly HashSet<string> _seenMessageIds = new HashSet<string>();
         private static readonly string ApiBase = "http://127.0.0.1:8090";
 
         // time of the last squeegee started from this app, per side, so the
@@ -229,8 +234,8 @@ namespace SlopGrenadeDesktop
             menu.Items.Add("Open control panel", null, delegate { _flyout.ShowAboveTray(); });
             menu.Items.Add("Open dashboard (" + ApiBase + "/)", null, delegate { OpenDashboard(); });
             menu.Items.Add(new ToolStripSeparator());
-            menu.Items.Add("Lob a test grenade at the left edge", null, delegate { _overlay.Trigger(EffectTier.SlopGrenade, Side.Left); });
-            menu.Items.Add("Lob a test grenade at the right edge", null, delegate { _overlay.Trigger(EffectTier.SlopGrenade, Side.Right); });
+            menu.Items.Add("Lob a test grenade at the left edge", null, delegate { _overlay.Trigger(EffectTier.SlopGrenade, Side.Left, BuildTestEffectMessage(EffectTier.SlopGrenade, Side.Left)); });
+            menu.Items.Add("Lob a test grenade at the right edge", null, delegate { _overlay.Trigger(EffectTier.SlopGrenade, Side.Right, BuildTestEffectMessage(EffectTier.SlopGrenade, Side.Right)); });
             menu.Items.Add("Toss some fruit", null, delegate { BurstDesktopFruits(4); });
             menu.Items.Add("Full test fire", null, delegate { RunDesktopShowcase(); });
             menu.Items.Add(new ToolStripSeparator());
@@ -266,23 +271,64 @@ namespace SlopGrenadeDesktop
         {
             for (int i = 0; i < count; i++)
             {
-                _overlay.TriggerLater(i * 0.6f, EffectTier.InnocentFruit, i % 2 == 0 ? Side.Left : Side.Right);
+                Side side = i % 2 == 0 ? Side.Left : Side.Right;
+                _overlay.TriggerLater(i * 0.6f, EffectTier.InnocentFruit, side, BuildTestEffectMessage(EffectTier.InnocentFruit, side));
             }
         }
 
         /// <summary>A short "test fire" sequence showing every effect.</summary>
         private static void RunDesktopShowcase()
         {
-            _overlay.TriggerLater(0.0f, EffectTier.PeacefulCloud, Side.Right);
-            _overlay.TriggerLater(0.3f, EffectTier.SlopGrenade, Side.Left);
-            _overlay.TriggerLater(1.2f, EffectTier.SlopSplat, Side.Right);
-            _overlay.TriggerLater(2.0f, EffectTier.HumanSparkle, Side.Left);
-            _overlay.TriggerLater(4.2f, EffectTier.InnocentFruit, Side.Left);
-            _overlay.TriggerLater(4.8f, EffectTier.InnocentFruit, Side.Right);
-            _overlay.TriggerLater(5.6f, EffectTier.SlopGrenade, Side.Right);
-            _overlay.TriggerLater(6.4f, EffectTier.InnocentFruit, Side.Left);
-            _overlay.TriggerLater(7.5f, EffectTier.PeacefulCloud, Side.Left);
-            _overlay.TriggerLater(8.0f, EffectTier.HumanSparkle, Side.Right);
+            _overlay.TriggerLater(0.0f, EffectTier.PeacefulCloud, Side.Right, BuildTestEffectMessage(EffectTier.PeacefulCloud, Side.Right));
+            _overlay.TriggerLater(0.3f, EffectTier.SlopGrenade, Side.Left, BuildTestEffectMessage(EffectTier.SlopGrenade, Side.Left));
+            _overlay.TriggerLater(1.2f, EffectTier.SlopSplat, Side.Right, BuildTestEffectMessage(EffectTier.SlopSplat, Side.Right));
+            _overlay.TriggerLater(2.0f, EffectTier.HumanSparkle, Side.Left, BuildTestEffectMessage(EffectTier.HumanSparkle, Side.Left));
+            _overlay.TriggerLater(4.2f, EffectTier.InnocentFruit, Side.Left, BuildTestEffectMessage(EffectTier.InnocentFruit, Side.Left));
+            _overlay.TriggerLater(4.8f, EffectTier.InnocentFruit, Side.Right, BuildTestEffectMessage(EffectTier.InnocentFruit, Side.Right));
+            _overlay.TriggerLater(5.6f, EffectTier.SlopGrenade, Side.Right, BuildTestEffectMessage(EffectTier.SlopGrenade, Side.Right));
+            _overlay.TriggerLater(6.4f, EffectTier.InnocentFruit, Side.Left, BuildTestEffectMessage(EffectTier.InnocentFruit, Side.Left));
+            _overlay.TriggerLater(7.5f, EffectTier.PeacefulCloud, Side.Left, BuildTestEffectMessage(EffectTier.PeacefulCloud, Side.Left));
+            _overlay.TriggerLater(8.0f, EffectTier.HumanSparkle, Side.Right, BuildTestEffectMessage(EffectTier.HumanSparkle, Side.Right));
+        }
+
+        private static EffectMessage BuildTestEffectMessage(EffectTier tier, Side side)
+        {
+            int seq = Interlocked.Increment(ref _testSeq);
+            string tierName = tier == EffectTier.SlopGrenade ? "slop_grenade"
+                : tier == EffectTier.SlopSplat ? "slop_splat"
+                : tier == EffectTier.InnocentFruit ? "innocent_fruit"
+                : tier == EffectTier.PeacefulCloud ? "peaceful_cloud" : "human_sparkle";
+            int score = tier == EffectTier.SlopGrenade ? 88
+                : tier == EffectTier.SlopSplat ? 68
+                : tier == EffectTier.InnocentFruit ? 48
+                : tier == EffectTier.PeacefulCloud ? 28 : 8;
+            string subject = tier == EffectTier.SlopGrenade ? "Test Fire — Unedited AI Slop Grenade"
+                : tier == EffectTier.SlopSplat ? "Test Fire — Heavy AI Template Cannon"
+                : tier == EffectTier.InnocentFruit ? "Test Fire — Sprinkled AI Assist Fruit"
+                : tier == EffectTier.PeacefulCloud ? "Test Fire — Lightly Polished Prose"
+                : "Test Fire — Authentic Human Sparkle";
+            return new EffectMessage
+            {
+                MessageId = "test-fire-" + seq,
+                App = "outlook",
+                Direction = side == Side.Left ? "received" : "sent",
+                MonitorSide = side == Side.Left ? "left" : "right",
+                Sender = side == Side.Left ? "Proving Grounds (Incoming Test)" : "You (Outgoing Test)",
+                SubjectOrTopic = subject,
+                Timestamp = DateTimeOffset.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture),
+                WordCount = 96,
+                SlopScore = score,
+                Tier = tierName,
+                Breakdown = new EffectBreakdown
+                {
+                    LexicalScore = tier == EffectTier.SlopGrenade ? 36 : 12,
+                    StructuralScore = tier == EffectTier.SlopGrenade ? 28 : 14,
+                    BurstinessScore = 16,
+                    HandoffScore = tier == EffectTier.SlopGrenade ? 8 : 0
+                },
+                RedactedPreview = "Synthetic test effect triggered from the desktop tray control panel. Real Outlook and Teams messages show their live sender, subject, and preview here.",
+                Summary = "Desktop test fire preview."
+            };
         }
 
         // ------------------------------------------------------------------ daemon
@@ -361,10 +407,15 @@ namespace SlopGrenadeDesktop
 
         private static void SseListenerLoop()
         {
+            Thread ledgerSyncThread = new Thread(LedgerSyncLoop);
+            ledgerSyncThread.IsBackground = true;
+            ledgerSyncThread.Start();
+
             while (_running)
             {
                 try
                 {
+                    SyncLedgerReports();
                     HttpWebRequest req = (HttpWebRequest)WebRequest.Create(ApiBase + "/api/v1/events/stream");
                     req.Method = "GET";
                     req.Timeout = Timeout.Infinite;
@@ -387,6 +438,45 @@ namespace SlopGrenadeDesktop
             }
         }
 
+        private static void LedgerSyncLoop()
+        {
+            while (_running)
+            {
+                Thread.Sleep(5000);
+                if (!_running) break;
+                SyncLedgerReports();
+            }
+        }
+
+        private static void SyncLedgerReports()
+        {
+            try
+            {
+                HttpWebRequest req = (HttpWebRequest)WebRequest.Create(ApiBase + "/api/v1/ledger");
+                req.Method = "GET";
+                req.Timeout = 3000;
+                using (WebResponse resp = req.GetResponse())
+                using (Stream stream = resp.GetResponseStream())
+                using (StreamReader reader = new StreamReader(stream, Encoding.UTF8))
+                {
+                    EffectMessage[] reports = EffectNotice.ParseLedgerReports(reader.ReadToEnd());
+                    // Dispatch slop grenades and splats before fruits so fruits stick into the goop on the edge.
+                    for (int pass = 0; pass < 2; pass++)
+                    {
+                        for (int i = reports.Length - 1; i >= 0; i--)
+                        {
+                            EffectMessage report = reports[i];
+                            EffectTier tier = report.TierValue();
+                            bool isSplat = tier == EffectTier.SlopGrenade || tier == EffectTier.SlopSplat;
+                            if ((pass == 0) != isSplat) continue;
+                            DispatchMessageReport(report, false);
+                        }
+                    }
+                }
+            }
+            catch (Exception) { }
+        }
+
         private static void HandleSsePayload(string json)
         {
             try
@@ -405,30 +495,40 @@ namespace SlopGrenadeDesktop
                     }));
                     return;
                 }
-                EffectMessage message = notice.Report;
-                string appStr = message.App;
-                int score = message.SlopScore;
-                // Automated mail (no-reply, calendar responses, bots) is not anyone's writing.
-                bool automated = message.Summary.StartsWith("Automated / machine-generated response", StringComparison.Ordinal);
-                EffectTier tier = message.TierValue();
-                Side side = message.MonitorSide == "right" ? Side.Right : Side.Left;
-
-                _overlay.BeginInvoke(new Action(delegate
-                {
-                    if (!automated) RecordDailyMessageMetric(side, score);
-                    if (appStr == "teams" && !_settings.MonitorTeams) return;
-                    if (appStr == "outlook" && !_settings.MonitorOutlook) return;
-                    bool isSlop = tier == EffectTier.SlopGrenade || tier == EffectTier.SlopSplat;
-                    if (isSlop && !_settings.SlopEffects) return;
-                    if (!isSlop && !_settings.CalmEffects) return;
-                    _overlay.Trigger(tier, side, message);
-                }));
+                DispatchMessageReport(notice.Report, true);
             }
             catch (FormatException error) { DrawLog.Report("event metadata", error); }
             catch (InvalidOperationException)
             {
                 if (_running) DrawLog.Report("event dispatch", new InvalidOperationException("The overlay could not dispatch an animation event."));
             }
+        }
+
+        private static void DispatchMessageReport(EffectMessage message, bool triggerTransient)
+        {
+            lock (_seenMessageIds)
+            {
+                if (!_seenMessageIds.Add(message.MessageId)) return;
+            }
+            string appStr = message.App;
+            int score = message.SlopScore;
+            // Automated mail (no-reply, calendar responses, bots) is not anyone's writing.
+            bool automated = message.Summary.StartsWith("Automated / machine-generated response", StringComparison.Ordinal);
+            EffectTier tier = message.TierValue();
+            Side side = message.MonitorSide == "right" ? Side.Right : Side.Left;
+            bool isSticky = tier == EffectTier.SlopGrenade || tier == EffectTier.SlopSplat || tier == EffectTier.InnocentFruit;
+
+            _overlay.BeginInvoke(new Action(delegate
+            {
+                if (!automated) RecordDailyMessageMetric(side, score);
+                if (!triggerTransient && !isSticky) return;
+                if (appStr == "teams" && !_settings.MonitorTeams) return;
+                if (appStr == "outlook" && !_settings.MonitorOutlook) return;
+                bool isSlop = tier == EffectTier.SlopGrenade || tier == EffectTier.SlopSplat;
+                if (isSlop && !_settings.SlopEffects) return;
+                if (!isSlop && !_settings.CalmEffects) return;
+                _overlay.Trigger(tier, side, message);
+            }));
         }
 
         private static string ExtractJsonString(string json, string key)

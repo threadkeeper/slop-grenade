@@ -301,8 +301,8 @@ namespace SlopGrenadeDesktop
 
         private static void SelectMessage(float dx, float dy, float radius, EffectMessage candidate, ref float best, ref EffectMessage message)
         {
-            if (radius <= 0.2f) return;
-            float support = radius * Support;
+            if (candidate == null || radius <= 0.2f) return;
+            float support = radius * Support + 4f;
             float weight = 1f - (dx * dx + dy * dy) / (support * support);
             if (weight <= best) return;
             best = weight;

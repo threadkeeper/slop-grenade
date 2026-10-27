@@ -137,12 +137,12 @@ namespace SlopGrenadeDesktop
         }
 
         /// <summary>Queue an effect `delay` real seconds from now (used by the showcase).</summary>
-        public void TriggerLater(float delay, EffectTier tier, Side side)
+        public void TriggerLater(float delay, EffectTier tier, Side side, EffectMessage message = null)
         {
             Queued item;
             item.Tier = tier;
             item.Side = side;
-            item.Message = null;
+            item.Message = message;
             _scheduled.Add(new KeyValuePair<float, Queued>(_clockReal + delay, item));
         }
 
@@ -169,6 +169,7 @@ namespace SlopGrenadeDesktop
         {
             get
             {
+                foreach (KeyValuePair<float, Queued> pair in _scheduled) if (pair.Value.Message != null) return true;
                 foreach (Queued item in _queue) if (item.Message != null) return true;
                 foreach (Fruit fruit in Fruits) if (fruit.Message != null && fruit.State != FruitState.Gone) return true;
                 foreach (Grenade grenade in Grenades) if (grenade.Message != null && !grenade.Done) return true;
@@ -264,6 +265,16 @@ namespace SlopGrenadeDesktop
             }
         }
 
+        private bool HasPendingSplat(Side side)
+        {
+            foreach (Grenade g in Grenades) if (!g.Done && g.Side == side) return true;
+            foreach (CannonBall c in Cannon) if (!c.Done && c.Side == side) return true;
+            foreach (Queued q in _queue)
+                if (q.Side == side && (q.Tier == EffectTier.SlopGrenade || q.Tier == EffectTier.SlopSplat))
+                    return true;
+            return false;
+        }
+
         private void StartNext()
         {
             for (int i = 0; i < _queue.Count; i++)
@@ -281,6 +292,7 @@ namespace SlopGrenadeDesktop
                     int flying = 0;
                     foreach (Fruit f in Fruits) if (f.State == FruitState.Flying) flying++;
                     if (flying >= 3 || _sinceFruit < 0.45f) continue;
+                    if (Layer(q.Side).Splats.Count == 0 && HasPendingSplat(q.Side)) continue;
                     _queue.RemoveAt(i);
                     TossFruit(q.Side, q.Message);
                     return;

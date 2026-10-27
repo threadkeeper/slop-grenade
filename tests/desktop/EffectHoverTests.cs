@@ -143,9 +143,14 @@ namespace SlopGrenadeDesktop
                 world.Left.Flush(10000);
                 Point a = OpaquePoint(world.Left, 125, 175), b = OpaquePoint(world.Left, 440, 460);
                 Check(world.MessageAt(a.X, a.Y) == first && world.MessageAt(b.X, b.Y) == second, "Separate splats must show their own messages.");
+                world.Left.AddSplat(150, 1, world.Rng, 0, true, null);
+                world.Left.Flush(10000);
+                Check(world.MessageAt(a.X, a.Y) == first, "Unattributed splats must not shadow attributed splats.");
                 Check(world.MessageAt(400, 300) == null, "Empty screen must never show message details.");
                 world.Left.Clear(); world.Left.Flush(10000);
                 Check(world.MessageAt(a.X, a.Y) == null && !world.HasHoverTargets, "A wipe must remove its hover metadata.");
+                world.TriggerLater(0.2f, EffectTier.SlopGrenade, Side.Right, second);
+                Check(world.HasHoverTargets, "Scheduled effects with metadata must keep hover tracking active.");
             }
         }
 
@@ -177,7 +182,9 @@ namespace SlopGrenadeDesktop
             Check(hover.Update(message, point, 499) == null, "Hover dwell was too short.");
             Check(hover.Update(message, point, 500) == message, "Hover did not open after its dwell.");
             Check(hover.Update(message, point, 10501) == null, "Private details must not remain indefinitely.");
-            Check(hover.Update(null, point, 11000) == null, "Leaving the effect must hide details.");
+            Check(hover.Update(message, new Point(25, 200), 10600) == null, "Moving after expiry must restart dwell on the same blob.");
+            Check(hover.Update(message, new Point(25, 200), 11100) == message, "Moving after expiry must re-open details after dwell.");
+            Check(hover.Update(null, point, 11200) == null, "Leaving the effect must hide details.");
             Check(hover.Update(message, point, 12000) == null, "Re-entering must wait again.");
             Check(hover.Update(message, new Point(40, 200), 12400) == null, "Moving over an effect must restart dwell.");
             Check(hover.Update(message, new Point(40, 200), 12900) == message, "A deliberate second hover must work.");

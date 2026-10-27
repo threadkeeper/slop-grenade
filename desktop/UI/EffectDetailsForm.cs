@@ -48,6 +48,7 @@ namespace SlopGrenadeDesktop
             AccessibleDescription = _text;
             Invalidate();
             Show();
+            BringToFront();
         }
 
         public void ClearMessage()

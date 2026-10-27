@@ -26,7 +26,32 @@ namespace SlopGrenadeDesktop
             catch (InvalidCastException) { throw new FormatException(invalid); }
             if (notice == null || notice.Sequence < 1) throw new FormatException(invalid);
             if (notice.SqueegeeSide == "left" || notice.SqueegeeSide == "right") return notice;
-            EffectMessage message = notice.Report;
+            ValidateReport(notice.Report);
+            return notice;
+        }
+
+        public static EffectMessage[] ParseLedgerReports(string json)
+        {
+            const string invalid = "Invalid animation metadata.";
+            LedgerSnapshot snapshot;
+            try
+            {
+                snapshot = new JavaScriptSerializer { MaxJsonLength = 4194304, RecursionLimit = 32 }.Deserialize<LedgerSnapshot>(json);
+            }
+            catch (ArgumentException) { throw new FormatException(invalid); }
+            catch (InvalidOperationException) { throw new FormatException(invalid); }
+            catch (FormatException) { throw new FormatException(invalid); }
+            catch (OverflowException) { throw new FormatException(invalid); }
+            catch (InvalidCastException) { throw new FormatException(invalid); }
+            if (snapshot == null || snapshot.RecentReports == null) return new EffectMessage[0];
+            foreach (EffectMessage message in snapshot.RecentReports)
+                ValidateReport(message);
+            return snapshot.RecentReports;
+        }
+
+        public static void ValidateReport(EffectMessage message)
+        {
+            const string invalid = "Invalid animation metadata.";
             DateTimeOffset timestamp;
             if (message == null || string.IsNullOrEmpty(message.MessageId) || message.Breakdown == null ||
                 message.Sender == null || message.SubjectOrTopic == null || message.RedactedPreview == null ||
@@ -41,7 +66,6 @@ namespace SlopGrenadeDesktop
             message.RedactedPreview = Clean(message.RedactedPreview, 500);
             message.App = Clean(message.App, 40);
             message.Summary = Clean(message.Summary ?? "", 160);
-            return notice;
         }
 
         private static string Clean(string value, int limit)
@@ -52,6 +76,11 @@ namespace SlopGrenadeDesktop
             if (value.Length > limit) result.Append("...");
             return result.ToString();
         }
+    }
+
+    internal sealed class LedgerSnapshot
+    {
+        public EffectMessage[] RecentReports { get; set; }
     }
 
     internal sealed class EffectBreakdown

@@ -45,11 +45,15 @@ $StartMenuShortcut = Join-Path ([Environment]::GetFolderPath("StartMenu")) "Prog
 $DesktopShortcut = Join-Path ([Environment]::GetFolderPath("Desktop")) "Slop Grenade.lnk"
 
 foreach ($ShortcutPath in @($StartMenuShortcut, $DesktopShortcut)) {
-    $Shortcut = $WshShell.CreateShortcut($ShortcutPath)
-    $Shortcut.TargetPath = $OverlayExe
-    $Shortcut.WorkingDirectory = $BinDir
-    $Shortcut.Description = "Slop Grenade - Native Windows Desktop Overlay and M365 AI Slop Detector"
-    $Shortcut.Save()
+    try {
+        $Shortcut = $WshShell.CreateShortcut($ShortcutPath)
+        $Shortcut.TargetPath = $OverlayExe
+        $Shortcut.WorkingDirectory = $BinDir
+        $Shortcut.Description = "Slop Grenade - Native Windows Desktop Overlay and M365 AI Slop Detector"
+        $Shortcut.Save()
+    } catch {
+        Write-Host "  (Skipped locked shortcut: $ShortcutPath)" -ForegroundColor DarkGray
+    }
 }
 
 Write-Host "==> Configuring Slop Grenade to run automatically at Windows startup..." -ForegroundColor Cyan
@@ -68,7 +72,7 @@ Write-Host "================================================================" -F
 
 if (-not $NoLaunch) {
     Write-Host "==> Starting Native Windows Desktop Overlay + Background Daemon..." -ForegroundColor Cyan
-    Start-Process -FilePath $OverlayExe -ArgumentList "--showcase" -WorkingDirectory $BinDir
+    Start-Process -FilePath $OverlayExe -WorkingDirectory $BinDir
     if ($OpenDashboard) {
         Start-Sleep -Seconds 2
         Start-Process "http://127.0.0.1:8090/"

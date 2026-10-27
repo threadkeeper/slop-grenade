@@ -176,9 +176,10 @@ namespace SlopGrenadeDesktop
             Wake();
         }
 
-        public void TriggerLater(float delay, EffectTier tier, Side side)
+        public void TriggerLater(float delay, EffectTier tier, Side side, EffectMessage message = null)
         {
-            _world.TriggerLater(delay, tier, side);
+            _world.TriggerLater(delay, tier, side, message);
+            if (message != null) _hoverTimer.Start();
             Wake();
         }
 

@@ -11,7 +11,8 @@ namespace SlopGrenadeDesktop
 
         public EffectMessage Update(EffectMessage message, Point cursor, double milliseconds)
         {
-            if (message != _target || (!_shown && (System.Math.Abs(cursor.X - _anchor.X) > 6 || System.Math.Abs(cursor.Y - _anchor.Y) > 6)))
+            bool moved = System.Math.Abs(cursor.X - _anchor.X) > 6 || System.Math.Abs(cursor.Y - _anchor.Y) > 6;
+            if (message != _target || ((!_shown || milliseconds - _since > 10500) && moved))
             {
                 _target = message;
                 _anchor = cursor;
@@ -19,6 +20,7 @@ namespace SlopGrenadeDesktop
                 _shown = false;
             }
             if (message == null || milliseconds - _since < 500 || milliseconds - _since > 10500) return null;
+            if (!_shown) _anchor = cursor;
             _shown = true;
             return message;
         }
