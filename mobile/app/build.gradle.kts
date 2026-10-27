@@ -1,3 +1,5 @@
+import java.io.File
+
 plugins { id("com.android.application"); kotlin("android") }
 
 val signingNames = listOf("SLOP_ANDROID_KEYSTORE", "SLOP_ANDROID_STORE_PASSWORD",
@@ -101,7 +103,7 @@ tasks.register("verifyTestSigning") {
         require(testSigningNames.all { !System.getenv(it).isNullOrBlank() }) {
             "OAuth test APK packaging requires all test-signing environment variables"
         }
-        val keystore = java.io.File(System.getenv("SLOP_ANDROID_TEST_KEYSTORE"))
+        val keystore = File(System.getenv("SLOP_ANDROID_TEST_KEYSTORE"))
         require(keystore.isAbsolute && keystore.isFile) {
             "Test signing requires an existing absolute keystore path"
         }

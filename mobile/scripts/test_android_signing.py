@@ -27,6 +27,8 @@ class AndroidSigningPolicyTests(unittest.TestCase):
         self.assertIn('storeType = "PKCS12"', source)
         self.assertIn('signingConfig = signingConfigs.findByName("testing") ?: signingConfig', source)
         task = source.split('tasks.register("verifyTestSigning")', 1)[1]
+        self.assertIn("import java.io.File", source)
+        self.assertIn('val keystore = File(System.getenv("SLOP_ANDROID_TEST_KEYSTORE"))', task)
         self.assertIn('require(testSigningNames.all { !System.getenv(it).isNullOrBlank() })', task)
         self.assertIn("keystore.isAbsolute && keystore.isFile", task)
         self.assertIn('android.buildTypes.getByName("debug").signingConfig?.name == "testing"', task)
