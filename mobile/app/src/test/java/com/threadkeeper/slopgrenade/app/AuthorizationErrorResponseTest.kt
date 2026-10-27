@@ -20,7 +20,7 @@ class AuthorizationErrorResponseTest {
                 CompletionException(ExecutionException(GoogleAuthorizationFailure(category))))
             assertEquals(category.httpStatus, response.getInt("status"))
             val body = response.getJSONObject("body")
-            assertEquals(setOf("error", "code"), body.keySet())
+            assertEquals(setOf("error", "code"), body.keys().asSequence().toSet())
             assertEquals(category.code, body.getString("code"))
             assertEquals(category.message, body.getString("error"))
         }
