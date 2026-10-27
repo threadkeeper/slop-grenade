@@ -111,19 +111,19 @@ jobs:
         uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
         with:
           manifest-path: core/Cargo.toml
-          arguments: --all-features --config ${{ github.workspace }}/rust/deny.toml
+          arguments: --all-features --config /github/workspace/rust/deny.toml
 
       - name: cargo-deny (rust daemon)
         uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
         with:
           manifest-path: rust/Cargo.toml
-          arguments: --all-features --config ${{ github.workspace }}/rust/deny.toml
+          arguments: --all-features --config /github/workspace/rust/deny.toml
 
       - name: cargo-deny (mobile rust-bridge)
         uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
         with:
           manifest-path: mobile/rust-bridge/Cargo.toml
-          arguments: --all-features --config ${{ github.workspace }}/rust/deny.toml
+          arguments: --all-features --config /github/workspace/rust/deny.toml
 
   application-dependencies:
     name: Frontend & Infrastructure Audit
