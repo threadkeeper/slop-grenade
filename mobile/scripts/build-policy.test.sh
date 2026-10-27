@@ -46,6 +46,13 @@ gmail=(mobile/"gmail/src/main/java/com/threadkeeper/slopgrenade/gmail/GmailClien
 wrapper=(mobile/"gradle/wrapper/gradle-wrapper.properties").read_text()
 trusted=(mobile/"app/src/main/java/com/threadkeeper/slopgrenade/app/TrustedWebView.kt").read_text()
 manifest=(mobile/"app/src/main/AndroidManifest.xml").read_text()
+workflow=(mobile.parent/".github/workflows/android.yml").read_text()
+assert "release_tag:" in workflow
+assert "RELEASE_TAG: ${{ inputs.release_tag }}" in workflow
+assert "RELEASE_COMMIT: ${{ github.sha }}" in workflow
+assert workflow.index("name: Android unit tests and lint") < workflow.index("name: Publish requested Android release")
+assert "gh release create \"$RELEASE_TAG\" --target \"$RELEASE_COMMIT\" --draft" in workflow
+assert "gh release edit \"$RELEASE_TAG\" --draft=false" in workflow
 assert native.count("max-page-size=16384") == 2
 assert "cargo build --locked --release" in native
 assert "aarch64-linux-android:arm64-v8a" in native

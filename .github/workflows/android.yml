@@ -20,6 +20,11 @@ on:
       - "Dockerfile"
       - ".github/workflows/android.yml"
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "New Android-only release tag (leave empty to build only)"
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -33,6 +38,16 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
+      - name: Validate requested release tag
+        if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]] || {
+            echo "Expected a version tag such as v0.2.2" >&2
+            exit 1
+          }
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -104,3 +119,32 @@ jobs:
           HASH="$(awk '{print $1}' mobile/app/build/outputs/apk/debug/app-debug.apk.sha256)"
           printf "%s  slop-grenade-android-debug.apk" "$HASH" > slop-grenade-android-debug.apk.sha256
           gh release upload "$TAG" slop-grenade-android-debug.apk slop-grenade-android-debug.apk.sha256 --clobber
+      - name: Publish requested Android release
+        if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          cp mobile/app/build/outputs/apk/debug/app-debug.apk slop-grenade-android-debug.apk
+          HASH="$(awk '{print $1}' mobile/app/build/outputs/apk/debug/app-debug.apk.sha256)"
+          printf '%s  slop-grenade-android-debug.apk\n' "$HASH" > slop-grenade-android-debug.apk.sha256
+          cat > "$RUNNER_TEMP/android-release-notes.txt" <<EOF
+          Android-only experimental update built from $RELEASE_COMMIT.
+
+          Gmail connection failures now show privacy-safe, actionable diagnostics instead of a generic HTTP 409.
+          All automated Android workflow gates passed. Real-device Google authorization remains unverified.
+
+          This is a debug-signed APK, not a production-signed release. Its certificate may differ from an earlier APK; Android can require uninstalling that build first (which removes local app configuration).
+          Google OAuth registration must match this APK's package and signing certificate.
+
+          SHA-256: $HASH
+          EOF
+          gh release create "$RELEASE_TAG" --target "$RELEASE_COMMIT" --draft \
+            --title "Slop Grenade $RELEASE_TAG — Android Gmail diagnostics" \
+            --notes-file "$RUNNER_TEMP/android-release-notes.txt" \
+            slop-grenade-android-debug.apk slop-grenade-android-debug.apk.sha256
+          gh release edit "$RELEASE_TAG" --draft=false
