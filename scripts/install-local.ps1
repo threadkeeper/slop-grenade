@@ -16,6 +16,10 @@ Write-Host "==> [2/4] Building Release Rust Background Daemon (slop-grenade.exe)
 cargo build --manifest-path "$RepoRoot\rust\Cargo.toml" --release
 
 Write-Host "==> [3/4] Compiling Native Windows Desktop Screen Overlay (slop-grenade-overlay.exe)..." -ForegroundColor Cyan
+Get-Process slop-grenade-overlay, slop-grenade -ErrorAction SilentlyContinue | ForEach-Object {
+    Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+}
+Start-Sleep -Milliseconds 500
 New-Item -ItemType Directory -Force -Path $BinDir, $WebDir | Out-Null
 
 $CscPath = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"

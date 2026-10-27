@@ -307,6 +307,26 @@ impl WorkIqClient {
             while let Some(line) = reader.next_line().await.map_err(|e| e.to_string())? {
                 if let Ok(val) = serde_json::from_str::<Value>(&line) {
                     if val.get("id") == Some(&json!(2)) {
+                        if response_requires_eula_acceptance(&val) {
+                            let mut accept_req = build_mcp_accept_eula_request();
+                            accept_req["id"] = json!(3);
+                            let mut retry_req = second_request.clone();
+                            retry_req["id"] = json!(4);
+                            stdin
+                                .write_all(format!("{accept_req}\n{retry_req}\n").as_bytes())
+                                .await
+                                .map_err(|e| e.to_string())?;
+                            stdin.flush().await.map_err(|e| e.to_string())?;
+                            while let Some(retry_line) =
+                                reader.next_line().await.map_err(|e| e.to_string())?
+                            {
+                                if let Ok(retry_val) = serde_json::from_str::<Value>(&retry_line) {
+                                    if retry_val.get("id") == Some(&json!(4)) {
+                                        return Ok(retry_val);
+                                    }
+                                }
+                            }
+                        }
                         return Ok(val);
                     }
                 }
@@ -371,7 +391,7 @@ pub fn build_mcp_accept_eula_request() -> Value {
         "params": {
             "name": "accept_eula",
             "arguments": {
-                "eulaUrl": "https://github.com/microsoft/workiq-mcp"
+                "eulaUrl": "https://github.com/microsoft/work-iq"
             }
         }
     })
