@@ -29,6 +29,32 @@ afterEach(() => {
 });
 
 describe('dashboard ledger snapshots', () => {
+  it('resets the process-local generation on reconnect, so a restarted daemon can repopulate at zero', async () => {
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...snapshot(4), resetGeneration: 7 })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...snapshot(2), resetGeneration: 0 })));
+    const { controller, update } = setup(false, fetcher);
+    await vi.advanceTimersByTimeAsync(0);
+    controller.restart();
+    expect(update.mock.lastCall?.[0].sentByMe.totalMessages).toBe(0);
+    await expect(controller.refresh()).resolves.toBe(true);
+    expect(update).toHaveBeenLastCalledWith({ ...snapshot(2), resetGeneration: 0 });
+    expect(controller.acceptsEvent(0)).toBe(true);
+  });
+
+  it('does not clear existing metrics merely because SSE reconnects to the same generation', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async () =>
+      new Response(JSON.stringify({ ...snapshot(4), resetGeneration: 7 })));
+    const { controller, update } = setup(false, fetcher);
+    await vi.advanceTimersByTimeAsync(0);
+    const count = update.mock.calls.length;
+    controller.restart(false);
+    expect(update).toHaveBeenCalledTimes(count);
+    await expect(controller.refresh()).resolves.toBe(true);
+    expect(update).toHaveBeenCalledTimes(count + 1);
+    expect(controller.reset(7)).toBe(false);
+  });
+
   it('clears immediately and rejects delayed pre-wipe HTTP snapshots even without generation metadata', async () => {
     let finish!: (response: Response) => void;
     const fetcher = vi.fn<typeof fetch>(() => new Promise((resolve) => { finish = resolve; }));

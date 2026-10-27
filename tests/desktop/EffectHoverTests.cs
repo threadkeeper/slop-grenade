@@ -122,7 +122,7 @@ namespace SlopGrenadeDesktop
             const BindingFlags flags = BindingFlags.Static | BindingFlags.NonPublic;
             Type program = typeof(Program);
             string[] fields = { "_overlay", "_settings", "_lastSeq", "_resetEpoch", "_resetGeneration",
-                "_dailyRecAi", "_dailyRecCount", "_dailySentAi", "_dailySentCount" };
+                "_dailyRecAi", "_dailyRecCount", "_dailySentAi", "_dailySentCount", "_restartAllowed", "_resetPending" };
             object[] saved = new object[fields.Length];
             for (int i = 0; i < fields.Length; i++) saved[i] = program.GetField(fields[i], flags).GetValue(null);
             System.Collections.Generic.HashSet<string> seen = (System.Collections.Generic.HashSet<string>)
@@ -139,6 +139,8 @@ namespace SlopGrenadeDesktop
                     program.GetField("_settings", flags).SetValue(null, settings);
                     foreach (string field in new[] { "_lastSeq", "_resetEpoch", "_resetGeneration" })
                         program.GetField(field, flags).SetValue(null, 0L);
+                    program.GetField("_restartAllowed", flags).SetValue(null, false);
+                    program.GetField("_resetPending", flags).SetValue(null, false);
                     seen.Clear();
                     EffectMessage stale = Message("stale", "slop_grenade", "left");
                     // This represents a completed HTTP read whose UI callback has not run yet.
@@ -166,6 +168,33 @@ namespace SlopGrenadeDesktop
                     System.Windows.Forms.Application.DoEvents();
                     Check(seen.Count == 0 && !overlay.World.HasHoverTargets,
                         "A newer snapshot must reconcile a missed SSE wipe.");
+                    program.GetMethod("RestartOverlaySession", flags).Invoke(null, null);
+                    queue.Invoke(null, new object[] { new LedgerSnapshot { ResetGeneration = 3,
+                        RecentReports = new[] { stale } }, 2L });
+                    queue.Invoke(null, new object[] { new LedgerSnapshot { ResetGeneration = 0,
+                        RecentReports = new[] { Message("new-daemon", "slop_splat", "right") } }, 3L });
+                    System.Windows.Forms.Application.DoEvents();
+                    Check(seen.Count == 1 && seen.Contains("new-daemon"),
+                        "A restarted daemon may repopulate at generation zero, but old in-flight responses must remain invalid.");
+                    program.GetMethod("RestartOverlaySession", flags).Invoke(null, null);
+                    long currentEpoch = (long)program.GetField("_resetEpoch", flags).GetValue(null);
+                    queue.Invoke(null, new object[] { new LedgerSnapshot { ResetGeneration = 0,
+                        RecentReports = new[] { Message("same-daemon", "slop_splat", "right") } }, currentEpoch });
+                    System.Windows.Forms.Application.DoEvents();
+                    Check(seen.Count == 2 && seen.Contains("new-daemon") && seen.Contains("same-daemon"),
+                        "A same-generation reconnect must not erase later scans.");
+                    receive.Invoke(null, new object[] { "{\"sequence\":1,\"dataWiped\":true,\"resetGeneration\":1}" });
+                    // Reconnect before the queued wipe callback executes.
+                    program.GetMethod("RestartOverlaySession", flags).Invoke(null, null);
+                    System.Windows.Forms.Application.DoEvents();
+                    Check(seen.Count == 0 && !overlay.World.HasHoverTargets,
+                        "A pending wipe must still clear immediately on reconnect, even before a fresh HTTP response.");
+                    currentEpoch = (long)program.GetField("_resetEpoch", flags).GetValue(null);
+                    queue.Invoke(null, new object[] { new LedgerSnapshot { ResetGeneration = 1,
+                        RecentReports = new EffectMessage[0] }, currentEpoch });
+                    System.Windows.Forms.Application.DoEvents();
+                    Check(seen.Count == 0 && !overlay.World.HasHoverTargets,
+                        "A reconnect must not cancel an unapplied wipe merely because the refreshed snapshot has the same generation.");
                     Check(settings.MonitorTeams && settings.MonitorOutlook && settings.MonitorGmail,
                         "Reset must preserve all source preferences.");
                 }

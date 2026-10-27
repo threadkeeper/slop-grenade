@@ -48,6 +48,7 @@ namespace SlopGrenadeDesktop
         private static readonly HashSet<string> _seenMessageIds = new HashSet<string>();
         private static readonly object _resetLock = new object();
         private static long _resetEpoch, _resetGeneration;
+        private static bool _restartAllowed, _resetPending;
         private static readonly LocalDashboard Dashboard = new LocalDashboard(Environment.GetEnvironmentVariable("HTTP_BIND"));
         private static readonly string ApiBase = Dashboard.ApiBase;
 
@@ -474,7 +475,6 @@ namespace SlopGrenadeDesktop
             {
                 try
                 {
-                    SyncLedgerReports();
                     HttpWebRequest req = (HttpWebRequest)WebRequest.Create(ApiBase + "/api/v1/events/stream");
                     req.Method = "GET";
                     req.Timeout = Timeout.Infinite;
@@ -483,7 +483,8 @@ namespace SlopGrenadeDesktop
                     using (Stream stream = resp.GetResponseStream())
                     using (StreamReader reader = new StreamReader(stream, Encoding.UTF8))
                     {
-                        _lastSeq = 0;
+                        RestartOverlaySession();
+                        SyncLedgerReports();
                         while (_running && !reader.EndOfStream)
                         {
                             string line = reader.ReadLine();
@@ -539,20 +540,33 @@ namespace SlopGrenadeDesktop
             catch (Exception) { }
         }
 
+        private static void RestartOverlaySession()
+        {
+            lock (_resetLock)
+            {
+                _lastSeq = 0;
+                _restartAllowed = true;
+                ++_resetEpoch;
+                if (_resetPending) QueueOverlayAction(_resetEpoch, ResetCommunicationState);
+            }
+        }
+
         private static void QueueLedgerSnapshot(LedgerSnapshot snapshot, long epoch)
         {
             lock (_resetLock)
             {
-                if (epoch != _resetEpoch || snapshot.ResetGeneration < _resetGeneration) return;
-                bool reset = snapshot.ResetGeneration > _resetGeneration;
+                if (epoch != _resetEpoch || (snapshot.ResetGeneration < _resetGeneration && !_restartAllowed)) return;
+                bool reset = snapshot.ResetGeneration != _resetGeneration;
+                _restartAllowed = false;
                 if (reset)
                 {
                     _resetGeneration = snapshot.ResetGeneration;
                     epoch = ++_resetEpoch;
+                    _resetPending = true;
                 }
                 QueueOverlayAction(epoch, delegate
                 {
-                    if (reset) ResetCommunicationState();
+                    if (_resetPending) ResetCommunicationState();
                     // Splats precede fruit so fruit can stick to freshly restored goop.
                     for (int pass = 0; pass < 2; pass++)
                         for (int i = snapshot.RecentReports.Length - 1; i >= 0; i--)
@@ -580,6 +594,7 @@ namespace SlopGrenadeDesktop
 
         private static void ResetCommunicationState()
         {
+            _resetPending = false;
             _seenMessageIds.Clear();
             _activeDay = DateTime.Now.Date;
             _dailyRecAi = _dailyRecCount = _dailySentAi = _dailySentCount = 0;
@@ -599,26 +614,35 @@ namespace SlopGrenadeDesktop
                     {
                         if (notice.ResetGeneration.GetValueOrDefault() > 0)
                         {
-                            if (notice.ResetGeneration.Value <= _resetGeneration) return;
+                            if (notice.ResetGeneration.Value == _resetGeneration ||
+                                (notice.ResetGeneration.Value < _resetGeneration && !_restartAllowed))
+                            {
+                                _restartAllowed = false;
+                                return;
+                            }
                             _resetGeneration = notice.ResetGeneration.Value;
                         }
                         else if (notice.Sequence <= _lastSeq) return;
+                        _restartAllowed = false;
+                        _resetPending = true;
                         _lastSeq = Math.Max(_lastSeq, notice.Sequence);
                         QueueOverlayAction(++_resetEpoch, ResetCommunicationState);
                         return;
                     }
                     if (notice.Sequence <= _lastSeq) return;
                     _lastSeq = notice.Sequence;
-                    if (notice.ResetGeneration.HasValue && notice.ResetGeneration.Value < _resetGeneration) return;
-                    bool reset = notice.ResetGeneration.GetValueOrDefault() > _resetGeneration;
+                    if (notice.ResetGeneration.HasValue && notice.ResetGeneration.Value < _resetGeneration && !_restartAllowed) return;
+                    bool reset = notice.ResetGeneration.HasValue && notice.ResetGeneration.Value != _resetGeneration;
+                    _restartAllowed = false;
                     if (reset)
                     {
                         _resetGeneration = notice.ResetGeneration.Value;
                         ++_resetEpoch;
+                        _resetPending = true;
                     }
                     QueueOverlayAction(_resetEpoch, delegate
                     {
-                        if (reset) ResetCommunicationState();
+                        if (_resetPending) ResetCommunicationState();
                         if (notice.SqueegeeSide == "left" || notice.SqueegeeSide == "right")
                         {
                             Side side = notice.SqueegeeSide == "right" ? Side.Right : Side.Left;

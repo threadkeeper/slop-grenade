@@ -64,6 +64,14 @@ export function createLedger(
 
   return {
     refresh,
+    restart: (confirmed = true) => {
+      if (disposed) return;
+      if (confirmed) boundary.restart();
+      else boundary.reconnect();
+      ++generation;
+      pending?.abort();
+      pending = undefined;
+    },
     reset: (resetGeneration?: number) => {
       if (disposed || !boundary.wipe(resetGeneration)) return false;
       ++generation;

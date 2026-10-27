@@ -335,6 +335,9 @@
         ? { seq, side: animEvent.squeegeeSide, squeegee: true }
         : { seq, side: animEvent.report.monitorSide, tier: animEvent.report.tier };
       void loadLedger();
+    }, (restarted) => {
+      ledger?.restart(restarted);
+      void loadLedger();
     });
 
     return () => {

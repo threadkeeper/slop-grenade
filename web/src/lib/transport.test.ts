@@ -280,6 +280,26 @@ describe('local API transport', () => {
 });
 
 describe('animation subscriptions', () => {
+  it('notifies the consumer on every desktop reconnect before delivering the new process events', () => {
+    vi.stubGlobal('window', new EventTarget());
+    const handlers = new Map<string, (event: { data: string }) => void>();
+    vi.stubGlobal('EventSource', vi.fn(function () {
+      return { close: vi.fn(), addEventListener(name: string, callback: (event: { data: string }) => void) {
+        handlers.set(name, callback);
+      } };
+    }));
+    const restarted = vi.fn();
+    const listener = vi.fn();
+    const stop = subscribeAnimations(listener, restarted);
+    handlers.get('open')!({ data: '' });
+    handlers.get('animation')!({ data: JSON.stringify({ ...event(100), resetGeneration: 7 }) });
+    handlers.get('open')!({ data: '' });
+    handlers.get('animation')!({ data: JSON.stringify({ ...event(1), resetGeneration: 0 }) });
+    expect(restarted).toHaveBeenCalledTimes(2);
+    expect(listener.mock.calls.map(([value]) => value.resetGeneration)).toEqual([7, 0]);
+    stop();
+  });
+
   it('accepts report-free wipe markers with optional legacy generations and rejects malformed generations', () => {
     vi.stubGlobal('window', new EventTarget());
     let receive = (_event: { data: string }) => {};
@@ -330,7 +350,8 @@ describe('animation subscriptions', () => {
     });
     let phase = 0;
     const listener = vi.fn();
-    const stop = subscribeAnimations(listener);
+    const restarted = vi.fn();
+    const stop = subscribeAnimations(listener, restarted);
     await vi.advanceTimersByTimeAsync(0);
     expect(listener.mock.calls.map(([e]) => e.sequence)).toEqual([8, 9]);
     phase = 1;
@@ -341,6 +362,7 @@ describe('animation subscriptions', () => {
     await vi.advanceTimersByTimeAsync(1000);
     expect(sent(5).path).toBe('/api/v1/events?after=0');
     expect(listener.mock.calls.map(([e]) => e.sequence)).toEqual([8, 9, 10, 1]);
+    expect(restarted).toHaveBeenCalledTimes(2);
     stop();
     const count = host.SlopAndroid.postMessage.mock.calls.length;
     await vi.advanceTimersByTimeAsync(5000);

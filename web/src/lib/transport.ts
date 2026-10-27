@@ -212,7 +212,7 @@ function animation(value: unknown): value is AnimationEvent {
 }
 
 /** Subscribe to animations; returned cleanup cancels timers, listeners and in-flight polls. */
-export function subscribeAnimations(receive: (event: AnimationEvent) => void): () => void {
+export function subscribeAnimations(receive: (event: AnimationEvent) => void, onSession?: (restarted: boolean) => void): () => void {
   let cursor = 0;
   const deliver = (event: AnimationEvent) => {
     if (event.sequence <= cursor) return;
@@ -221,6 +221,8 @@ export function subscribeAnimations(receive: (event: AnimationEvent) => void): (
   };
   if (!isNativeMobile()) {
     const source = new EventSource('/api/v1/events/stream');
+    // Generations, like sequences, are process-local. A reconnect may be a new daemon.
+    if (onSession) source.addEventListener('open', () => onSession(false));
     source.addEventListener('animation', (event: MessageEvent) => {
       try {
         const value: unknown = JSON.parse(event.data);
@@ -247,7 +249,10 @@ export function subscribeAnimations(receive: (event: AnimationEvent) => void): (
         throw new Error('Invalid native session.');
       }
       if (stopped) return;
-      if (sessionId !== session.sessionId) cursor = 0;
+      if (sessionId !== session.sessionId) {
+        cursor = 0;
+        onSession?.(true);
+      }
       sessionId = session.sessionId;
       const response = await requestApi(`/api/v1/events?after=${cursor}`, init);
       if (!response.ok) throw new Error('Native events unavailable.');

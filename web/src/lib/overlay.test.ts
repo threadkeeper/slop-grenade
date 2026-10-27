@@ -14,17 +14,22 @@ function setup(fetcher: typeof fetch) {
   };
   let receive = (_event: AnimationEvent) => {};
   const stop = vi.fn();
-  const connection = connectOverlay(stage, () => true, fetcher, (callback) => {
+  let onSession: ((restarted: boolean) => void) | undefined;
+  const connection = connectOverlay(stage, () => true, fetcher, (callback, restart) => {
     receive = callback;
+    onSession = restart;
     return stop;
   });
-  return { world, stage, connection, stop, send: (event: Partial<AnimationEvent>) => receive(event as AnimationEvent) };
+  return { world, stage, connection, stop, open: (restarted = false) => onSession?.(restarted),
+    send: (event: Partial<AnimationEvent>) => receive(event as AnimationEvent) };
 }
 
 describe('shared browser/macOS overlay reset boundary', () => {
   it.each([undefined, 0])('discards a pre-wipe delayed ledger HTTP response (legacy generation %s)', async (resetGeneration) => {
     let finish!: (response: Response) => void;
-    const fetcher = vi.fn<typeof fetch>(() => new Promise((resolve) => { finish = resolve; }));
+    const fetcher = vi.fn<typeof fetch>()
+      .mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }))
+      .mockResolvedValue(new Response(JSON.stringify({ resetGeneration, recentReports: [] })));
     const { world, stage, connection, send } = setup(fetcher);
     for (let i = 0; i < 10; ++i) send({ sequence: i + 1, report: report(`old-${i}`) });
     world.update(0.05);
@@ -69,5 +74,44 @@ describe('shared browser/macOS overlay reset boundary', () => {
     expect(stop).toHaveBeenCalledOnce();
     expect(fetcher.mock.calls[0][1]?.signal?.aborted).toBe(true);
     expect(world.isIdle()).toBe(true);
+  });
+
+  it('preserves later scans when reconnecting to the same daemon and receiving its duplicate wipe marker', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async () =>
+      new Response(JSON.stringify({ resetGeneration: 7, recentReports: [] })));
+    const { world, stage, connection, send, open } = setup(fetcher);
+    await connection.initial;
+    send({ sequence: 10, resetGeneration: 7, report: report('later-scan') });
+    world.update(0.05);
+    open();
+    send({ sequence: 1, dataWiped: true, resetGeneration: 7 });
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+    expect(stage.reset).toHaveBeenCalledOnce();
+    expect(world.grenades).toHaveLength(1);
+    connection.dispose();
+  });
+
+  it('accepts generation-zero snapshots/events after a daemon restart and rejects old in-flight work', async () => {
+    let finish!: (response: Response) => void;
+    const fetcher = vi.fn<typeof fetch>()
+      .mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ resetGeneration: 0, recentReports: [report('new-daemon')] })));
+    const { world, connection, send, open } = setup(fetcher);
+    const trigger = vi.spyOn(world, 'trigger');
+    // A generation-positive event can arrive while the initial read is pending.
+    send({ sequence: 100, resetGeneration: 7, report: report('old-daemon') });
+    open();
+    finish(new Response(JSON.stringify({ resetGeneration: 7, recentReports: [report('late-old-daemon')] })));
+    await connection.initial;
+    await vi.waitFor(() => expect(trigger).toHaveBeenCalledTimes(2));
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    world.update(0.05);
+    expect(world.grenades).toHaveLength(1);
+    send({ sequence: 1, resetGeneration: 0, report: report('new-live') });
+    expect(trigger).toHaveBeenCalledTimes(3);
+    world.update(0.05);
+    // One grenade remains in flight while the second waits for the director.
+    expect(world.grenades).toHaveLength(1);
+    connection.dispose();
   });
 });
