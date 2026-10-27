@@ -34,6 +34,7 @@ ignore = true
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
+allow-wildcard-paths = true
 deny = [
     { name = "openssl", reason = "prefer rustls-tls for zero native OpenSSL surface" },
 ]
