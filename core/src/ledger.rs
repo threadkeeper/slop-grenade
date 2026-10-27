@@ -168,7 +168,7 @@ impl AwarenessLedger {
         });
     }
 
-    /// Seed baseline multi-day M365 history so time-span charts (`Today`, `7d`, `30d`) and
+    /// Seed baseline multi-day history so time-span charts (`Today`, `3d`, `7d`) and
     /// the Top 5 Sloppers / Top 5 P-Doomers leaderboards are immediately populated.
     pub fn seed_baseline_history(&self) {
         let detector = SlopDetector::new();

@@ -14,6 +14,7 @@ namespace SlopGrenadeDesktop
 {
     internal sealed class CannonBall
     {
+        public EffectMessage Message;
         public float X, Y, Vx, Vy, Age;
         public readonly float R, TargetY;
         public readonly Side Side;
@@ -41,6 +42,7 @@ namespace SlopGrenadeDesktop
         {
             public EffectTier Tier;
             public Side Side;
+            public EffectMessage Message;
         }
 
         private sealed class Emitter
@@ -115,7 +117,7 @@ namespace SlopGrenadeDesktop
             if (Sfx != null) Sfx.Loop(id, name, pan, gain, rate);
         }
 
-        public void Trigger(EffectTier tier, Side side)
+        public void Trigger(EffectTier tier, Side side, EffectMessage message = null)
         {
             if (tier == EffectTier.SlopGrenade)
             {
@@ -123,13 +125,14 @@ namespace SlopGrenadeDesktop
                 foreach (Queued q in _queue) if (q.Tier == EffectTier.SlopGrenade) queued++;
                 if (queued >= 12)
                 {
-                    Layer(side).AddSplat(H * Rng.Range(0.15f, 0.8f), 0.8f, Rng, Now, true);
+                    Layer(side).AddSplat(H * Rng.Range(0.15f, 0.8f), 0.8f, Rng, Now, true, message);
                     return;
                 }
             }
             Queued item;
             item.Tier = tier;
             item.Side = side;
+            item.Message = message;
             _queue.Add(item);
         }
 
@@ -139,6 +142,7 @@ namespace SlopGrenadeDesktop
             Queued item;
             item.Tier = tier;
             item.Side = side;
+            item.Message = null;
             _scheduled.Add(new KeyValuePair<float, Queued>(_clockReal + delay, item));
         }
 
@@ -159,6 +163,69 @@ namespace SlopGrenadeDesktop
             }
             left = Left.PieceCount + lf;
             right = Right.PieceCount + rf;
+        }
+
+        public bool HasHoverTargets
+        {
+            get
+            {
+                foreach (Queued item in _queue) if (item.Message != null) return true;
+                foreach (Fruit fruit in Fruits) if (fruit.Message != null && fruit.State != FruitState.Gone) return true;
+                foreach (Grenade grenade in Grenades) if (grenade.Message != null && !grenade.Done) return true;
+                foreach (CannonBall cannon in Cannon) if (cannon.Message != null && !cannon.Done) return true;
+                foreach (Twinkle twinkle in Twinkles) if (twinkle.Message != null && !twinkle.Done) return true;
+                foreach (Particle particle in Particles.Items) if (particle.Message != null && !particle.Dead) return true;
+                return Left.HasHoverTargets || Right.HasHoverTargets;
+            }
+        }
+
+        public EffectMessage MessageAt(float x, float y)
+        {
+            if (x < 0 || y < 0 || x >= W || y >= H) return null;
+            for (int i = Twinkles.Count - 1; i >= 0; i--)
+            {
+                Twinkle twinkle = Twinkles[i];
+                if (!twinkle.Done && twinkle.Envelope() > 0.01f && HitCircle(x - twinkle.X, y - twinkle.Y, twinkle.Size))
+                    return twinkle.Message;
+            }
+            for (int i = Particles.Items.Count - 1; i >= 0; i--)
+            {
+                Particle particle = Particles.Items[i];
+                if (particle.Kind == ParticleKind.Glob && !particle.Dead &&
+                    HitCircle(x - particle.X - _shakeX, y - particle.Y - _shakeY, particle.R))
+                    return particle.Message;
+            }
+            for (int i = Grenades.Count - 1; i >= 0; i--)
+            {
+                Grenade grenade = Grenades[i];
+                if (!grenade.Done && HitCircle(x - grenade.X - _shakeX, y - grenade.Y - _shakeY, 56f * S))
+                    return grenade.Message;
+            }
+            for (int i = Cannon.Count - 1; i >= 0; i--)
+            {
+                CannonBall cannon = Cannon[i];
+                if (!cannon.Done && HitCircle(x - cannon.X - _shakeX, y - cannon.Y - _shakeY, cannon.R * 1.25f))
+                    return cannon.Message;
+            }
+            for (int pass = 0; pass < 2; pass++)
+                for (int i = Fruits.Count - 1; i >= 0; i--)
+                {
+                    Fruit fruit = Fruits[i];
+                    if (fruit.State == FruitState.Gone || fruit.Sprite == null ||
+                        (pass == 1) != (fruit.State == FruitState.Stuck)) continue;
+                    float squish = fruit.Squish;
+                    int px = (int)Math.Floor((x - fruit.X) / squish + fruit.Sprite.Width / 2);
+                    int py = (int)Math.Floor((y - fruit.Y) / (2f - squish) + fruit.Sprite.Height / 2);
+                    if (px >= 0 && py >= 0 && px < fruit.Sprite.Width && py < fruit.Sprite.Height &&
+                        ((uint)fruit.Sprite.Pixels[py * fruit.Sprite.Width + px] >> 24) != 0) return fruit.Message;
+                }
+            EffectMessage left = Left.MessageAt(x, y);
+            return left ?? Right.MessageAt(x, y);
+        }
+
+        private static bool HitCircle(float x, float y, float radius)
+        {
+            return x * x + y * y <= radius * radius;
         }
 
         public bool IsIdle
@@ -206,7 +273,7 @@ namespace SlopGrenadeDesktop
                 {
                     if (Grenades.Count >= 2 || _sinceGrenade < 1.1f) continue;
                     _queue.RemoveAt(i);
-                    LaunchGrenade(q.Side);
+                    LaunchGrenade(q.Side, q.Message);
                     return;
                 }
                 if (q.Tier == EffectTier.InnocentFruit)
@@ -215,20 +282,21 @@ namespace SlopGrenadeDesktop
                     foreach (Fruit f in Fruits) if (f.State == FruitState.Flying) flying++;
                     if (flying >= 3 || _sinceFruit < 0.45f) continue;
                     _queue.RemoveAt(i);
-                    TossFruit(q.Side);
+                    TossFruit(q.Side, q.Message);
                     return;
                 }
                 _queue.RemoveAt(i);
-                if (q.Tier == EffectTier.SlopSplat) FireCannon(q.Side);
+                if (q.Tier == EffectTier.SlopSplat) FireCannon(q.Side, q.Message);
                 else if (q.Tier == EffectTier.PeacefulCloud) PlumeSmoke(q.Side);
-                else DoTwinkle(q.Side);
+                else DoTwinkle(q.Side, q.Message);
                 return;
             }
         }
 
-        private void LaunchGrenade(Side side)
+        private void LaunchGrenade(Side side, EffectMessage message)
         {
             Grenade g = new Grenade(side, Palette.ForSide(side), W, H, S, Rng);
+            g.Message = message;
             Grenades.Add(g);
             _sinceGrenade = 0f;
             Particle ring = Particles.Spawn(ParticleKind.Ring);
@@ -243,7 +311,7 @@ namespace SlopGrenadeDesktop
             Play("throw", Pan(side) * 0.3f, 0.8f, 1f);
         }
 
-        private void TossFruit(Side side)
+        private void TossFruit(Side side, EffectMessage message)
         {
             SlopLayer L = Layer(side);
             float ty = H * Rng.Range(0.18f, 0.78f);
@@ -252,14 +320,14 @@ namespace SlopGrenadeDesktop
                 Splat sp = L.Splats[Rng.Int(L.Splats.Count)];
                 ty = sp.Y + Rng.Range(-50f, 60f) * S;
             }
-            Fruits.Add(new Fruit(Rng.Int(FruitModels.Count), side, W, H, S, Rng, ty));
+            Fruits.Add(new Fruit(Rng.Int(FruitModels.Count), side, W, H, S, Rng, ty) { Message = message });
             _sinceFruit = 0f;
             Play("whoosh", Pan(side) * 0.4f, 0.5f, 0.7f);
         }
 
-        private void FireCannon(Side side)
+        private void FireCannon(Side side, EffectMessage message)
         {
-            Cannon.Add(new CannonBall(side, W, H, S, Rng));
+            Cannon.Add(new CannonBall(side, W, H, S, Rng) { Message = message });
             Play("cannon", Pan(side) * 0.4f, 0.7f, 1f);
         }
 
@@ -285,7 +353,7 @@ namespace SlopGrenadeDesktop
             Play("smoke", Pan(side), 0.55f, 1f);
         }
 
-        private void DoTwinkle(Side side)
+        private void DoTwinkle(Side side, EffectMessage message)
         {
             float inward = side == Side.Left ? 1f : -1f;
             float ex = side == Side.Left ? 0f : W;
@@ -297,7 +365,7 @@ namespace SlopGrenadeDesktop
             {
                 float dx = i == 0 ? 0f : inward * Rng.Range(20f, 60f) * UI;
                 float dy = i == 0 ? 0f : Rng.Range(-55f, 55f) * UI;
-                Twinkles.Add(new Twinkle(x0 + dx, y + dy, i * Rng.Range(0.25f, 0.45f), UI, Rng, i == 0));
+                Twinkles.Add(new Twinkle(x0 + dx, y + dy, i * Rng.Range(0.25f, 0.45f), UI, Rng, i == 0) { Message = message });
             }
             Play("twinkle", Pan(side), 0.4f, Rng.Range(0.9f, 1.15f));
         }
@@ -309,10 +377,11 @@ namespace SlopGrenadeDesktop
             SlopLayer L = Layer(side);
             // kept modest: this runs on people's work screens
             Explosions.Add(new Explosion(g.X, g.Y, inward, S, Rng, side == Side.Right, ExplosionSize));
-            L.AddSplat(g.Y, 1f, Rng, Now, true);
+            L.AddSplat(g.Y, 1f, Rng, Now, true, g.Message);
             for (int i = 0; i < 16; i++)
             {
                 Particle p = Particles.Spawn(ParticleKind.Glob);
+                p.Message = g.Message;
                 bool toEdge = i < 7;
                 float a = toEdge ? (inward > 0f ? M.PI : 0f) + Rng.Range(-1.1f, 1.1f) : (inward > 0f ? 0f : M.PI) + Rng.Range(-1.4f, 1.4f);
                 float sp = Rng.Range(300f, 750f) * S;
@@ -341,7 +410,7 @@ namespace SlopGrenadeDesktop
             f.State = FruitState.Stuck;
             f.StuckT = 0f;
             float inward = f.Side == Side.Left ? 1f : -1f;
-            L.AddGlob(f.Y + f.R * 0.2f, f.R * 0.5f, Rng);
+            L.AddGlob(f.Y + f.R * 0.2f, f.R * 0.5f, Rng, f.Message);
             int juice = FruitModels.Juice(f.Kind);
             for (int i = 0; i < 10; i++)
             {
@@ -363,7 +432,7 @@ namespace SlopGrenadeDesktop
         private void OnGlobStick(Particle p)
         {
             Side side = p.Sticky == 0 ? Side.Left : Side.Right;
-            Layer(side).AddGlob(p.Y, p.R * 1.3f, Rng);
+            Layer(side).AddGlob(p.Y, p.R * 1.3f, Rng, p.Message);
         }
 
         public void Update(float dtReal)
@@ -376,7 +445,7 @@ namespace SlopGrenadeDesktop
                 {
                     Queued q = _scheduled[i].Value;
                     _scheduled.RemoveAt(i);
-                    Trigger(q.Tier, q.Side);
+                    Trigger(q.Tier, q.Side, q.Message);
                 }
             }
             float target = 1f;
@@ -479,11 +548,12 @@ namespace SlopGrenadeDesktop
                 if ((c.Side == Side.Left && c.X <= L.EdgeX + c.R * 0.6f) || (c.Side == Side.Right && c.X >= L.EdgeX - c.R * 0.6f))
                 {
                     c.Done = true;
-                    L.AddSplat(c.Y, 0.62f, Rng, Now, false);
+                    L.AddSplat(c.Y, 0.62f, Rng, Now, false, c.Message);
                     float inward = c.Side == Side.Left ? 1f : -1f;
                     for (int i = 0; i < 12; i++)
                     {
                         Particle p = Particles.Spawn(ParticleKind.Glob);
+                        p.Message = c.Message;
                         float a = (inward > 0f ? 0f : M.PI) + Rng.Range(-1.2f, 1.2f);
                         float sp = Rng.Range(200f, 600f) * S;
                         p.X = c.X;

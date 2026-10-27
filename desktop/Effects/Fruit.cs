@@ -17,6 +17,7 @@ namespace SlopGrenadeDesktop
 
     internal sealed class Fruit : IDisposable
     {
+        public EffectMessage Message;
         public readonly int Kind;
         public readonly Side Side;
         public float X, Y, Vx, Vy, Angle, StuckT;

@@ -168,6 +168,81 @@ async fn history_accepts_every_window_from_one_to_thirty_days() {
 }
 
 #[tokio::test]
+async fn refresh_progress_is_correlated_metadata_and_surfaces_a_failed_scan() {
+    let base = spawn_test_server().await;
+    let client = reqwest::Client::new();
+    let endpoint = format!("{base}/api/v1/scan/progress?refreshId=fixture-refresh");
+    let response = client.get(&endpoint).send().await.unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    let before: Value = response.json().await.unwrap();
+    assert_eq!(before, json!({ "progress": null }));
+
+    let result: Value = client
+        .post(format!("{base}/api/v1/scan/now"))
+        .json(&json!({ "lookbackDays": 7, "useLuna": false, "refreshId": "fixture-refresh" }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(result["ok"], false);
+    let after: Value = client
+        .get(&endpoint)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(after["progress"]["refreshId"], "fixture-refresh");
+    assert_eq!(after["progress"]["lookbackDays"], 7);
+    assert_eq!(after["progress"]["phase"], "failed");
+    assert_eq!(after["progress"]["outlookScanned"], 0);
+    assert_eq!(after["progress"]["outlookTotal"], Value::Null);
+    assert_eq!(after["progress"]["teamsScanned"], 0);
+    assert_eq!(after["progress"]["teamsTotal"], Value::Null);
+    for forbidden in ["test@contoso.com", "reports", "body", "sender", "subject"] {
+        assert!(!after.to_string().contains(forbidden));
+    }
+    let other: Value = client
+        .get(format!(
+            "{base}/api/v1/scan/progress?refreshId=another-refresh"
+        ))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(other, json!({ "progress": null }));
+}
+
+#[tokio::test]
+async fn refresh_ids_require_a_history_window_and_a_bounded_opaque_identifier() {
+    let base = spawn_test_server().await;
+    let client = reqwest::Client::new();
+    for payload in [
+        json!({ "refreshId": "fixture-refresh" }),
+        json!({ "lookbackDays": 7, "refreshId": "" }),
+        json!({ "lookbackDays": 7, "refreshId": "x".repeat(65) }),
+        json!({ "lookbackDays": 7, "refreshId": "private@example.invalid" }),
+    ] {
+        let response = client
+            .post(format!("{base}/api/v1/scan/now"))
+            .json(&payload)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
+        let error: Value = response.json().await.unwrap();
+        assert_eq!(error["ok"], false);
+        assert!(!error.to_string().contains("private@example.invalid"));
+    }
+}
+
+#[tokio::test]
 async fn health_and_auth_endpoints_confirm_standalone_user_auth() {
     let base = spawn_test_server().await;
     let client = reqwest::Client::new();

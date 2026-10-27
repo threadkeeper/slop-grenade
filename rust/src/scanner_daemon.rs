@@ -14,6 +14,8 @@ use serde::{Deserialize, Serialize};
 use crate::event_bus::{AnimationEvent, AnimationEventBus};
 use crate::ledger::AwarenessLedger;
 use crate::llm_luna::LunaClient;
+use crate::refresh_phase::RefreshPhase;
+use crate::refresh_progress::RefreshProgress;
 use crate::slop_detector::{MessageSample, SlopDetector, SlopReport};
 use crate::workiq_mcp::WorkIqClient;
 
@@ -39,6 +41,9 @@ pub struct ScannerDaemon {
     ledger: Arc<AwarenessLedger>,
     bus: Arc<AnimationEventBus>,
     seen_ids: Mutex<HashSet<String>>,
+    poll_lock: tokio::sync::Mutex<()>,
+    history_lock: tokio::sync::Mutex<()>,
+    refresh_progress: Mutex<Option<RefreshProgress>>,
 }
 
 impl ScannerDaemon {
@@ -56,6 +61,9 @@ impl ScannerDaemon {
             ledger,
             bus,
             seen_ids: Mutex::new(HashSet::new()),
+            poll_lock: tokio::sync::Mutex::new(()),
+            history_lock: tokio::sync::Mutex::new(()),
+            refresh_progress: Mutex::new(None),
         }
     }
 
@@ -91,6 +99,7 @@ impl ScannerDaemon {
 
     /// Poll WorkIQ MCP once for new M365 messages, deduplicating by `message_id`.
     pub async fn poll_workiq_once(&self, use_luna: bool) -> Result<ScanBatchResult, String> {
+        let _guard = self.poll_lock.lock().await;
         let fetched = self.workiq.poll_recent_m365_messages().await?;
         self.ingest_samples(fetched, use_luna).await
     }
@@ -98,9 +107,67 @@ impl ScannerDaemon {
     /// Merge a complete WorkIQ backfill of the last `days` days (`1..=30`) using local scoring
     /// without replaying animations.
     pub async fn refresh_history(&self, days: u8) -> Result<ScanBatchResult, String> {
-        let fetched = self.workiq.poll_history(days).await?;
-        self.ingest_samples_with_animation(fetched, false, false)
-            .await
+        self.refresh_history_with_id(days, None).await
+    }
+
+    /// Refresh history with an opaque ID so the caller can poll its own progress.
+    pub async fn refresh_history_with_id(
+        &self,
+        days: u8,
+        refresh_id: Option<String>,
+    ) -> Result<ScanBatchResult, String> {
+        let _guard = self
+            .history_lock
+            .try_lock()
+            .map_err(|_| "A history refresh is already running.".to_string())?;
+        let mut progress = RefreshProgress::new(days, refresh_id);
+        self.store_progress(&progress)?;
+        let fetched = self
+            .workiq
+            .poll_history_with_progress(days, |mut update| {
+                update.refresh_id = progress.refresh_id.clone();
+                progress = update;
+                self.store_progress(&progress)
+            })
+            .await;
+        let batch = match fetched {
+            Ok(samples) => {
+                self.ingest_samples_with_animation(samples, false, false, Some(&mut progress))
+                    .await
+            }
+            Err(error) => Err(error),
+        };
+        progress.phase = if batch.is_ok() {
+            RefreshPhase::Completed
+        } else {
+            RefreshPhase::Failed
+        };
+        self.store_progress(&progress)?;
+        batch
+    }
+
+    /// Read the last history snapshot, returning none for an unrelated refresh ID.
+    pub fn refresh_progress(
+        &self,
+        refresh_id: Option<&str>,
+    ) -> Result<Option<RefreshProgress>, String> {
+        let guard = self
+            .refresh_progress
+            .lock()
+            .map_err(|_| "Refresh progress state is unavailable.".to_string())?;
+        Ok(guard
+            .as_ref()
+            .filter(|progress| refresh_id.is_none() || progress.refresh_id.as_deref() == refresh_id)
+            .cloned())
+    }
+
+    fn store_progress(&self, progress: &RefreshProgress) -> Result<(), String> {
+        *self
+            .refresh_progress
+            .lock()
+            .map_err(|_| "Refresh progress state is unavailable.".to_string())? =
+            Some(progress.clone());
+        Ok(())
     }
 
     /// Ingest a batch of [`MessageSample`] items with deduplication (used by both live WorkIQ polling and tests).
@@ -109,7 +176,7 @@ impl ScannerDaemon {
         samples: Vec<MessageSample>,
         use_luna: bool,
     ) -> Result<ScanBatchResult, String> {
-        self.ingest_samples_with_animation(samples, use_luna, true)
+        self.ingest_samples_with_animation(samples, use_luna, true, None)
             .await
     }
 
@@ -118,6 +185,7 @@ impl ScannerDaemon {
         samples: Vec<MessageSample>,
         use_luna: bool,
         trigger_animation: bool,
+        mut progress: Option<&mut RefreshProgress>,
     ) -> Result<ScanBatchResult, String> {
         let fetched_count = samples.len();
         let mut new_samples = Vec::new();
@@ -136,6 +204,12 @@ impl ScannerDaemon {
 
         let mut reports = Vec::with_capacity(new_samples.len());
         let mut grenades_triggered = 0;
+        if let Some(progress) = progress.as_deref_mut() {
+            progress.phase = RefreshPhase::Analyzing;
+            progress.analysis_total = Some(new_samples.len());
+            progress.analyzed_count = 0;
+            self.store_progress(progress)?;
+        }
 
         for sample in &new_samples {
             let (report, _) = self
@@ -145,6 +219,12 @@ impl ScannerDaemon {
                 grenades_triggered += 1;
             }
             reports.push(report);
+            if let Some(progress) = progress.as_deref_mut() {
+                progress.analyzed_count = reports.len();
+                if reports.len() % 50 == 0 || reports.len() == new_samples.len() {
+                    self.store_progress(progress)?;
+                }
+            }
         }
 
         Ok(ScanBatchResult {
@@ -158,13 +238,34 @@ impl ScannerDaemon {
     /// Spawn the background M365 polling loop at the configured interval.
     pub fn spawn_background_loop(self: Arc<Self>, poll_interval_secs: u64) {
         tokio::spawn(async move {
-            let mut ticker = tokio::time::interval(Duration::from_secs(poll_interval_secs.max(5)));
+            let mut ticker = live_poll_ticker(poll_interval_secs);
+            let mut failed = false;
             loop {
                 ticker.tick().await;
-                let _ = self.poll_workiq_once(false).await;
+                match self.poll_workiq_once(false).await {
+                    Ok(_) => {
+                        if failed {
+                            eprintln!("Live WorkIQ scanning recovered.");
+                        }
+                        failed = false;
+                    }
+                    Err(_) => {
+                        // Provider errors may contain personal content; keep background logs generic.
+                        if !failed {
+                            eprintln!("Live WorkIQ scan failed; check the dashboard connection status or use Scan now for details.");
+                        }
+                        failed = true;
+                    }
+                }
             }
         });
     }
+}
+
+fn live_poll_ticker(poll_interval_secs: u64) -> tokio::time::Interval {
+    let mut ticker = tokio::time::interval(Duration::from_secs(poll_interval_secs.max(3)));
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    ticker
 }
 
 pub use slop_grenade_core::presets::build_preset_sample;
@@ -173,6 +274,93 @@ pub use slop_grenade_core::presets::build_preset_sample;
 mod tests {
     use super::*;
     use crate::slop_detector::AnimationTier;
+
+    #[tokio::test(start_paused = true)]
+    async fn live_polling_checks_every_three_seconds_without_catch_up_bursts() {
+        let mut ticker = live_poll_ticker(3);
+        ticker.tick().await;
+        let started = tokio::time::Instant::now();
+        ticker.tick().await;
+        assert_eq!(started.elapsed(), Duration::from_secs(3));
+        tokio::time::advance(Duration::from_secs(12)).await;
+        ticker.tick().await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(1), ticker.tick())
+                .await
+                .is_err(),
+            "A slow provider must not cause a burst of queued polls"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn simultaneous_live_checks_wait_instead_of_starting_duplicate_provider_scans() {
+        let workiq = Arc::new(WorkIqClient::new(
+            Some(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml")),
+            None,
+        ));
+        let luna = Arc::new(LunaClient::new(
+            "https://api.githubcopilot.com/responses".to_string(),
+            "gpt-5.6-luna".to_string(),
+            false,
+        ));
+        let daemon = ScannerDaemon::new(
+            workiq,
+            luna,
+            Arc::new(AwarenessLedger::new()),
+            Arc::new(AnimationEventBus::new()),
+        );
+        let guard = daemon.poll_lock.lock().await;
+        let mut attempt = Box::pin(daemon.poll_workiq_once(false));
+        assert!(tokio::time::timeout(Duration::from_millis(1), &mut attempt)
+            .await
+            .is_err());
+        drop(guard);
+        assert!(
+            attempt.await.is_err(),
+            "Only the non-executable fixture may be accessed"
+        );
+    }
+
+    #[tokio::test]
+    async fn concurrent_history_refresh_is_rejected_without_blocking_live_checks_or_losing_progress(
+    ) {
+        let daemon = ScannerDaemon::new(
+            Arc::new(WorkIqClient::new(
+                Some(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml")),
+                None,
+            )),
+            Arc::new(LunaClient::new(
+                "https://api.githubcopilot.com/responses".to_string(),
+                "gpt-5.6-luna".to_string(),
+                false,
+            )),
+            Arc::new(AwarenessLedger::new()),
+            Arc::new(AnimationEventBus::new()),
+        );
+        let _guard = daemon.history_lock.lock().await;
+        let original = RefreshProgress::new(7, Some("original-refresh".to_string()));
+        daemon.store_progress(&original).unwrap();
+        let error = daemon
+            .refresh_history_with_id(3, Some("another-refresh".to_string()))
+            .await
+            .unwrap_err();
+        assert_eq!(error, "A history refresh is already running.");
+        assert_eq!(
+            daemon.refresh_progress(Some("original-refresh")).unwrap(),
+            Some(original)
+        );
+        assert_eq!(
+            daemon.refresh_progress(Some("another-refresh")).unwrap(),
+            None
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_secs(2), daemon.poll_workiq_once(false))
+                .await
+                .unwrap()
+                .is_err(),
+            "History must not block a live check of the non-executable fixture"
+        );
+    }
 
     #[tokio::test]
     async fn history_backfills_merge_without_duplicates_or_replaying_effects() {
@@ -191,19 +379,38 @@ mod tests {
             .ingest_samples(vec![existing.clone()], false)
             .await
             .unwrap();
+        let mut progress = RefreshProgress::new(7, Some("fixture-refresh".to_string()));
         let batch = daemon
-            .ingest_samples_with_animation(vec![existing.clone(), historical.clone()], false, false)
+            .ingest_samples_with_animation(
+                vec![existing.clone(), historical.clone()],
+                false,
+                false,
+                Some(&mut progress),
+            )
             .await
             .unwrap();
         assert_eq!(batch.new_messages_analyzed, 1);
         assert_eq!(batch.grenades_triggered, 0);
         assert_eq!(bus.recent_events().len(), 1);
         assert_eq!(ledger.scorecard().received_by_me.total_messages, 2);
+        assert_eq!(progress.analysis_total, Some(1));
+        assert_eq!(progress.analyzed_count, 1);
+        assert_eq!(
+            daemon.refresh_progress(Some("fixture-refresh")).unwrap(),
+            Some(progress.clone())
+        );
         let again = daemon
-            .ingest_samples_with_animation(vec![existing, historical], false, false)
+            .ingest_samples_with_animation(
+                vec![existing, historical],
+                false,
+                false,
+                Some(&mut progress),
+            )
             .await
             .unwrap();
         assert_eq!(again.new_messages_analyzed, 0);
+        assert_eq!(progress.analysis_total, Some(0));
+        assert_eq!(progress.analyzed_count, 0);
         assert_eq!(ledger.scorecard().received_by_me.total_messages, 2);
     }
 

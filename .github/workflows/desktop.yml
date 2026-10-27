@@ -1,0 +1,37 @@
+name: Windows desktop compatibility
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "desktop/**"
+      - "tests/desktop/**"
+      - "scripts/test-desktop.ps1"
+      - ".github/workflows/desktop.yml"
+  pull_request:
+    paths:
+      - "desktop/**"
+      - "tests/desktop/**"
+      - "scripts/test-desktop.ps1"
+      - ".github/workflows/desktop.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  hover:
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: C# 5 hover regression and window tests
+        shell: pwsh
+        run: .\scripts\test-desktop.ps1
+      - name: Compile the production overlay
+        shell: pwsh
+        run: |
+          & 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe' /nologo /langversion:5 /target:winexe /optimize+ /r:System.dll,System.Drawing.dll,System.Windows.Forms.dll,System.Web.Extensions.dll /out:desktop\slop-grenade-overlay.exe '/recurse:desktop\*.cs'
+          if ($LASTEXITCODE -ne 0) { throw 'Desktop compilation failed.' }

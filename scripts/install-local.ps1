@@ -25,7 +25,7 @@ if (-not (Test-Path $CscPath)) {
 
 $OverlayExe = Join-Path $BinDir "slop-grenade-overlay.exe"
 & $CscPath /nologo /target:winexe /optimize+ `
-    /r:System.dll,System.Drawing.dll,System.Windows.Forms.dll `
+    /r:System.dll,System.Drawing.dll,System.Windows.Forms.dll,System.Web.Extensions.dll `
     /out:$OverlayExe `
     "/recurse:$RepoRoot\desktop\*.cs"
 if ($LASTEXITCODE -ne 0) {

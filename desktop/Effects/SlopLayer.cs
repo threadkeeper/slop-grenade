@@ -12,6 +12,7 @@ namespace SlopGrenadeDesktop
 {
     internal sealed class GooBlob
     {
+        public EffectMessage Message;
         public float X, Y, R, Age;
     }
 
@@ -21,6 +22,7 @@ namespace SlopGrenadeDesktop
     /// </summary>
     internal sealed class Drip
     {
+        public EffectMessage Message;
         public float X, Y0, Len, R;
         /// <summary>Length at which the swollen tip lets a drop go, and the typical length.</summary>
         public float MaxLen, BaseLen;
@@ -33,11 +35,13 @@ namespace SlopGrenadeDesktop
     /// <summary>A drop of goo that has let go of a drip and is falling.</summary>
     internal sealed class GooDrop
     {
+        public EffectMessage Message;
         public float X, Y, R, Vy;
     }
 
     internal sealed class Swirl
     {
+        public EffectMessage Message;
         public float X, Y, Size, Flip, Age;
     }
 
@@ -93,13 +97,14 @@ namespace SlopGrenadeDesktop
         public bool IsAnimating { get { return Drips.Count > 0 || Drops.Count > 0; } }
 
         /// <summary>Start a drip at (x, y0). Skipped when there is no room above the screen bottom.</summary>
-        private void AddDrip(float x, float y0, float baseLen, float r, Rng rng)
+        private void AddDrip(float x, float y0, float baseLen, float r, Rng rng, EffectMessage message)
         {
             float room = ViewH - 10f * S - y0;
             if (room < 12f * S) return;
             float b = Math.Min(baseLen, room);
             Drips.Add(new Drip
             {
+                Message = message,
                 X = x,
                 Y0 = y0,
                 Len = 0f,
@@ -140,7 +145,7 @@ namespace SlopGrenadeDesktop
             }
         }
 
-        public int AddSplat(float y, float size, Rng rng, float now, bool withSwirl)
+        public int AddSplat(float y, float size, Rng rng, float now, bool withSwirl, EffectMessage message = null)
         {
             float s = S * size;
             float inw = Inward, ex = EdgeX;
@@ -151,6 +156,7 @@ namespace SlopGrenadeDesktop
                 float d = rng.Range(0f, 40f) * s;
                 Blobs.Add(new GooBlob
                 {
+                    Message = message,
                     X = ex + inw * (M.Cos(a) * d + 6f * s),
                     Y = y + M.Sin(a) * d * 1.6f + rng.Range(-24f, 24f) * s,
                     R = (34f + rng.Range(0f, 30f)) * s,
@@ -164,6 +170,7 @@ namespace SlopGrenadeDesktop
                 float d = rng.Range(60f, 112f) * s;
                 Blobs.Add(new GooBlob
                 {
+                    Message = message,
                     X = ex + inw * M.Cos(a) * d,
                     Y = y + M.Sin(a) * d * 1.15f,
                     R = rng.Range(13f, 24f) * s,
@@ -178,6 +185,7 @@ namespace SlopGrenadeDesktop
                 float r = rng.Range(4f, 14f) * s * (1.25f - d / (270f * s));
                 Blobs.Add(new GooBlob
                 {
+                    Message = message,
                     X = ex + inw * M.Cos(a) * d,
                     Y = y + M.Sin(a) * d * 1.15f,
                     R = Math.Max(2.6f * S, r),
@@ -192,11 +200,11 @@ namespace SlopGrenadeDesktop
                     y + rng.Range(30f, 70f) * s,
                     rng.Range(90f, 300f) * s,
                     rng.Range(4.5f, 8f) * S * (0.7f + 0.3f * size),
-                    rng);
+                    rng, message);
             }
             if (withSwirl)
             {
-                Swirls.Add(new Swirl { X = ex + inw * 44f * s, Y = y - 30f * s, Size = (0.85f + rng.Range(0f, 0.3f)) * s, Flip = rng.Sign(), Age = 0f });
+                Swirls.Add(new Swirl { Message = message, X = ex + inw * 44f * s, Y = y - 30f * s, Size = (0.85f + rng.Range(0f, 0.3f)) * s, Flip = rng.Sign(), Age = 0f });
             }
             MarkDirty(y - 320f * s, y + 520f * s);
             int id = _nextSplatId++;
@@ -204,13 +212,13 @@ namespace SlopGrenadeDesktop
             return id;
         }
 
-        public void AddGlob(float y, float r, Rng rng)
+        public void AddGlob(float y, float r, Rng rng, EffectMessage message = null)
         {
             float inw = Inward, ex = EdgeX;
-            Blobs.Add(new GooBlob { X = ex + inw * rng.Range(-2f, 10f) * S, Y = y, R = r, Age = 0f });
+            Blobs.Add(new GooBlob { Message = message, X = ex + inw * rng.Range(-2f, 10f) * S, Y = y, R = r, Age = 0f });
             if (rng.Chance(0.55f))
             {
-                AddDrip(ex + inw * rng.Range(2f, 9f) * S, y, rng.Range(50f, 150f) * S, Math.Max(2.5f * S, r * 0.45f), rng);
+                AddDrip(ex + inw * rng.Range(2f, 9f) * S, y, rng.Range(50f, 150f) * S, Math.Max(2.5f * S, r * 0.45f), rng, message);
             }
             MarkDirty(y - r * 3f, y + 130f * S);
         }
@@ -221,6 +229,96 @@ namespace SlopGrenadeDesktop
             int ly = (int)Math.Round(sy);
             if (lx < 0 || lx >= StripW || ly < 0 || ly >= ViewH) return 0f;
             return Field[ly * StripW + lx];
+        }
+
+        public bool HasHoverTargets
+        {
+            get
+            {
+                foreach (GooBlob blob in Blobs) if (blob.Message != null) return true;
+                foreach (Drip drip in Drips) if (drip.Message != null) return true;
+                foreach (GooDrop drop in Drops) if (drop.Message != null) return true;
+                foreach (Swirl swirl in Swirls) if (swirl.Message != null) return true;
+                return false;
+            }
+        }
+
+        public EffectMessage MessageAt(float x, float y)
+        {
+            for (int i = Swirls.Count - 1; i >= 0; i--)
+            {
+                Swirl swirl = Swirls[i];
+                float pop = swirl.Age >= 0.4f ? 1f : M.EaseOutBack(Math.Max(0f, swirl.Age) / 0.4f);
+                if (pop <= 0.01f) continue;
+                float size = 104f * swirl.Size * pop;
+                float angle = Inward * 0.42f;
+                float dx = x - swirl.X, dy = y - swirl.Y;
+                float localX = (dx * M.Cos(angle) + dy * M.Sin(angle)) / size;
+                float localY = (-dx * M.Sin(angle) + dy * M.Cos(angle)) / size;
+                for (int tier = Tiers.Length - 1; tier >= 0; tier--)
+                {
+                    float[] t = Tiers[tier];
+                    float wob = tier % 2 == 0 ? swirl.Flip : -swirl.Flip;
+                    float ex = (localX - wob * 0.04f) / t[1], ey = (localY - t[0]) / t[2];
+                    if (ex * ex + ey * ey <= 1f) return swirl.Message;
+                }
+                if (new RectangleF(-0.14f, -0.84f, 0.28f, 0.27f).Contains(localX, localY)) return swirl.Message;
+            }
+            int sx = (int)Math.Floor(x - StripX), sy = (int)Math.Floor(y);
+            if (sx < 0 || sx >= StripW || sy < 0 || sy >= ViewH ||
+                ((uint)Sprite.Pixels[sy * StripW + sx] >> 24) == 0) return null;
+
+            // Merged goop has no single owner; use the strongest local contributor.
+            float best = 0f;
+            EffectMessage message = null;
+            for (int i = Blobs.Count - 1; i >= 0; i--)
+            {
+                GooBlob blob = Blobs[i];
+                SelectMessage(x - blob.X, y - blob.Y, BlobRadius(blob), blob.Message, ref best, ref message);
+            }
+            for (int i = Drips.Count - 1; i >= 0; i--)
+            {
+                Drip drip = Drips[i];
+                if (y < drip.Y0 - drip.R * 3.5f || y > drip.Y0 + drip.Len + drip.R * 3.5f) continue;
+                float step = Math.Max(1.5f, drip.R * 0.55f);
+                int count = Math.Max(1, (int)Math.Ceiling(drip.Len / step));
+                for (int k = 0; k <= count; k++)
+                {
+                    float fraction = (float)k / count;
+                    SelectMessage(x - drip.X, y - drip.Y0 - drip.Len * fraction,
+                        DripRadius(drip, fraction), drip.Message, ref best, ref message);
+                }
+            }
+            for (int i = Drops.Count - 1; i >= 0; i--)
+            {
+                GooDrop drop = Drops[i];
+                SelectMessage(x - drop.X, y - drop.Y, drop.R, drop.Message, ref best, ref message);
+                float stretch = Math.Min(1.8f, 0.6f + drop.Vy / (420f * S));
+                SelectMessage(x - drop.X, y - drop.Y + drop.R * 0.95f * stretch, drop.R * 0.62f, drop.Message, ref best, ref message);
+            }
+            return message;
+        }
+
+        private static void SelectMessage(float dx, float dy, float radius, EffectMessage candidate, ref float best, ref EffectMessage message)
+        {
+            if (radius <= 0.2f) return;
+            float support = radius * Support;
+            float weight = 1f - (dx * dx + dy * dy) / (support * support);
+            if (weight <= best) return;
+            best = weight;
+            message = candidate;
+        }
+
+        private static float DripRadius(Drip drip, float fraction)
+        {
+            float ripe = drip.Recoil > 0f ? 0f : M.Clamp01(drip.Len / drip.MaxLen);
+            float swell = 0.45f + 0.75f * ripe;
+            float scale = 1f - 0.18f * fraction;
+            if (fraction > 0.55f && fraction < 0.88f)
+                scale *= 1f - 0.55f * ripe * ripe * M.Sin((fraction - 0.55f) / 0.33f * M.PI);
+            if (fraction > 0.82f)
+                scale = Math.Max(scale, 1f + swell * M.Sin((fraction - 0.82f) / 0.18f * M.PI * 0.5f));
+            return drip.R * scale * 0.82f;
         }
 
         /// <summary>Screen x of the goo surface at height y, or NaN when there is none.</summary>
@@ -276,7 +374,7 @@ namespace SlopGrenadeDesktop
                     if (d.Len >= d.MaxLen)
                     {
                         // the neck gives way: a drop lets go and the drip snaps back
-                        Drops.Add(new GooDrop { X = d.X, Y = d.Y0 + d.Len + d.R * 0.8f, R = d.R * _rng.Range(1.2f, 1.5f), Vy = d.Speed * 1.5f });
+                        Drops.Add(new GooDrop { Message = d.Message, X = d.X, Y = d.Y0 + d.Len + d.R * 0.8f, R = d.R * _rng.Range(1.2f, 1.5f), Vy = d.Speed * 1.5f });
                         d.Rest = d.Len * _rng.Range(0.3f, 0.55f);
                         d.Recoil = 0.7f;
                         d.Lv = 0f;
@@ -458,21 +556,15 @@ namespace SlopGrenadeDesktop
                 float top = d.Y0, bot = d.Y0 + d.Len;
                 float reach = d.R * Support * 2.2f;
                 if (bot + reach < y0 || top - reach > y1) continue;
-                // how heavy the tip is: the neck thins and the bulb swells before it lets go
-                float ripe = d.Recoil > 0f ? 0f : M.Clamp01(d.Len / d.MaxLen);
-                float swell = 0.45f + 0.75f * ripe;
                 float step = Math.Max(1.5f, d.R * 0.55f);
                 int n = Math.Max(1, (int)Math.Ceiling(d.Len / step));
                 for (int k = 0; k <= n; k++)
                 {
                     float f = (float)k / n;
                     float yy = top + d.Len * f;
-                    float kk = 1f - 0.18f * f;
-                    if (f > 0.55f && f < 0.88f) kk *= 1f - 0.55f * ripe * ripe * M.Sin((f - 0.55f) / 0.33f * M.PI);
-                    if (f > 0.82f) kk = Math.Max(kk, 1f + swell * M.Sin((f - 0.82f) / 0.18f * M.PI * 0.5f));
-                    float rr = d.R * kk;
-                    if (yy + rr * Support < y0 || yy - rr * Support > y1) continue;
-                    SplatKernel(d.X, yy, rr * 0.82f, y0, y1);
+                    float radius = DripRadius(d, f);
+                    if (yy + radius * Support < y0 || yy - radius * Support > y1) continue;
+                    SplatKernel(d.X, yy, radius, y0, y1);
                 }
             }
             for (int i = 0; i < Drops.Count; i++)

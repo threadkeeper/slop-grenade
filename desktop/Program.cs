@@ -11,7 +11,7 @@
 // Incoming slop lands on the LEFT edge (pink), your own on the RIGHT (blue).
 //
 // Build (C# 5 / .NET Framework 4, no extra packages):
-//   csc /target:winexe /optimize+ /r:System.dll,System.Drawing.dll,System.Windows.Forms.dll
+//   csc /target:winexe /optimize+ /r:System.dll,System.Drawing.dll,System.Windows.Forms.dll,System.Web.Extensions.dll
 //       /out:slop-grenade-overlay.exe /recurse:desktop\*.cs
 
 using System;
@@ -91,13 +91,6 @@ namespace SlopGrenadeDesktop
             midnight.Interval = 30000;
             midnight.Tick += delegate { CheckMidnightReset(); };
             midnight.Start();
-
-            // Ping WorkIQ through the daemon every minute so each new message animates.
-            System.Windows.Forms.Timer poll = new System.Windows.Forms.Timer();
-            poll.Interval = 60000;
-            poll.Tick += delegate { TriggerPostAsync("/api/v1/scan/now", "{\"useLuna\":false}"); };
-            poll.Start();
-            TriggerPostAsync("/api/v1/scan/now", "{\"useLuna\":false}");
 
             Thread sse = new Thread(SseListenerLoop);
             sse.IsBackground = true;
@@ -398,17 +391,12 @@ namespace SlopGrenadeDesktop
         {
             try
             {
-                Match seqMatch = Regex.Match(json, "\"sequence\"\\s*:\\s*(\\d+)");
-                if (seqMatch.Success)
+                EffectNotice notice = EffectNotice.Parse(json);
+                if (notice.Sequence <= _lastSeq) return;
+                _lastSeq = notice.Sequence;
+                if (notice.SqueegeeSide == "left" || notice.SqueegeeSide == "right")
                 {
-                    long seq = long.Parse(seqMatch.Groups[1].Value);
-                    if (seq <= _lastSeq) return;
-                    _lastSeq = seq;
-                }
-                Match sq = Regex.Match(json, "\"squeegeeSide\"\\s*:\\s*\"(left|right)\"");
-                if (sq.Success)
-                {
-                    Side sSide = sq.Groups[1].Value == "right" ? Side.Right : Side.Left;
+                    Side sSide = notice.SqueegeeSide == "right" ? Side.Right : Side.Left;
                     _overlay.BeginInvoke(new Action(delegate
                     {
                         // skip the echo of a wipe this app just started itself
@@ -417,19 +405,13 @@ namespace SlopGrenadeDesktop
                     }));
                     return;
                 }
-                string tierStr = ExtractJsonString(json, "tier");
-                string sideStr = ExtractJsonString(json, "monitorSide");
-                string appStr = ExtractJsonString(json, "app");
-                int score = ExtractJsonInt(json, "slopScore", 50);
+                EffectMessage message = notice.Report;
+                string appStr = message.App;
+                int score = message.SlopScore;
                 // Automated mail (no-reply, calendar responses, bots) is not anyone's writing.
-                bool automated = ExtractJsonString(json, "summary").StartsWith("Automated / machine-generated response", StringComparison.Ordinal);
-
-                EffectTier tier = EffectTier.HumanSparkle;
-                if (tierStr == "slop_grenade") tier = EffectTier.SlopGrenade;
-                else if (tierStr == "slop_splat") tier = EffectTier.SlopSplat;
-                else if (tierStr == "innocent_fruit") tier = EffectTier.InnocentFruit;
-                else if (tierStr == "peaceful_cloud") tier = EffectTier.PeacefulCloud;
-                Side side = sideStr == "right" ? Side.Right : Side.Left;
+                bool automated = message.Summary.StartsWith("Automated / machine-generated response", StringComparison.Ordinal);
+                EffectTier tier = message.TierValue();
+                Side side = message.MonitorSide == "right" ? Side.Right : Side.Left;
 
                 _overlay.BeginInvoke(new Action(delegate
                 {
@@ -439,10 +421,14 @@ namespace SlopGrenadeDesktop
                     bool isSlop = tier == EffectTier.SlopGrenade || tier == EffectTier.SlopSplat;
                     if (isSlop && !_settings.SlopEffects) return;
                     if (!isSlop && !_settings.CalmEffects) return;
-                    _overlay.Trigger(tier, side);
+                    _overlay.Trigger(tier, side, message);
                 }));
             }
-            catch (Exception) { }
+            catch (FormatException error) { DrawLog.Report("event metadata", error); }
+            catch (InvalidOperationException)
+            {
+                if (_running) DrawLog.Report("event dispatch", new InvalidOperationException("The overlay could not dispatch an animation event."));
+            }
         }
 
         private static string ExtractJsonString(string json, string key)

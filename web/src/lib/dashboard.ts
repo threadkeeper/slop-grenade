@@ -1,12 +1,14 @@
 import type { AnimationTier, M365App, PersonLeaderboardEntry, SlopReport } from './types';
 
-export type TimeSpanFilter = 'today' | '7d' | '30d' | 'all';
+export type TimeSpanFilter = 'today' | '3d' | '7d';
 
 export interface DashboardFilterState {
   timeSpan: TimeSpanFilter;
   teams: boolean;
   outlook: boolean;
   gmail?: boolean;
+  received?: boolean;
+  sent?: boolean;
   tiers: Record<AnimationTier, boolean>;
 }
 
@@ -60,20 +62,21 @@ export interface BarBucket {
 }
 
 /**
- * Filter reports according to the active time span, channel (Teams / Outlook / Gmail),
- * and slop / non-slop tier toggles.
+ * Apply the local Today or rolling three/seven-day window, direction, channel and tiers.
  */
 export function filterReports(
   reports: SlopReport[],
   filters: DashboardFilterState,
   referenceIsoDate?: string
 ): SlopReport[] {
-  const refDay = (
-    referenceIsoDate ??
-    reports[0]?.timestamp?.slice(0, 10) ??
-    new Date().toISOString().slice(0, 10)
-  ).slice(0, 10);
-  const refMs = Date.parse(`${refDay}T23:59:59Z`);
+  const reference = referenceIsoDate
+    ? new Date(referenceIsoDate.length === 10 ? `${referenceIsoDate}T23:59:59.999` : referenceIsoDate)
+    : new Date();
+  const refMs = reference.getTime();
+  if (!Number.isFinite(refMs)) throw new RangeError('Invalid dashboard reference date.');
+  const startMs = filters.timeSpan === 'today'
+    ? new Date(reference.getFullYear(), reference.getMonth(), reference.getDate()).getTime()
+    : refMs - (filters.timeSpan === '3d' ? 3 : 7) * 86400000;
 
   return reports.filter((r) => {
     // 1. Distinct channel identities; omitted Gmail toggle preserves existing callers.
@@ -81,21 +84,14 @@ export function filterReports(
     if (app === 'teams' && !filters.teams) return false;
     if (app === 'outlook' && !filters.outlook) return false;
     if (app === 'gmail' && filters.gmail === false) return false;
+    if (r.direction === 'received' && filters.received === false) return false;
+    if (r.direction === 'sent' && filters.sent === false) return false;
 
     // 2. Slop / Non-Slop tier filter
     if (!filters.tiers[r.tier]) return false;
 
-    // 3. Time span filter (Today resets at midnight)
-    const dayStr = r.timestamp.slice(0, 10);
-    if (filters.timeSpan === 'today') {
-      return dayStr === refDay;
-    }
     const msgMs = Date.parse(r.timestamp);
-    if (Number.isNaN(msgMs) || Number.isNaN(refMs)) return true;
-    const diffDays = (refMs - msgMs) / (1000 * 60 * 60 * 24);
-    if (filters.timeSpan === '7d') return diffDays <= 7 && diffDays >= -1;
-    if (filters.timeSpan === '30d') return diffDays <= 30 && diffDays >= -1;
-    return true;
+    return msgMs >= startMs && msgMs <= refMs;
   });
 }
 
@@ -158,10 +154,7 @@ export function computeBarChartBuckets(
 
   const ordered = [...reports].reverse();
   for (const r of ordered) {
-    const key =
-      timeSpan === 'today'
-        ? `${r.timestamp.slice(11, 13) || '12'}:00`
-        : r.timestamp.slice(5, 10) || '10-23';
+    const key = bucketKeyForReport(r, timeSpan);
 
     const cur = bucketMap.get(key) ?? {
       recSum: 0,
@@ -311,20 +304,38 @@ export function gaugeWhiteToPurpleColor(scorePercent: number): string {
  * Compute the chart bucket key for a single report so clicking a bar filters the bottom grid.
  */
 export function bucketKeyForReport(r: SlopReport, timeSpan: TimeSpanFilter): string {
+  const date = new Date(r.timestamp);
+  if (!Number.isFinite(date.getTime())) throw new RangeError('Invalid chart timestamp.');
+  const pad = (value: number) => String(value).padStart(2, '0');
   return timeSpan === 'today'
-    ? `${r.timestamp.slice(11, 13) || '12'}:00`
-    : r.timestamp.slice(5, 10) || '10-23';
+    ? `${pad(date.getHours())}:00`
+    : `${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
 }
 
-/**
- * Filter by optional chart selection (bucket / person) and sort descending by slopScore
- * for the Power BI-style drill-down grid at the bottom of the dashboard.
- */
+export interface LedgerSort {
+  column: 'slop' | 'timestamp';
+  direction: 'asc' | 'desc';
+}
+
+export const LEDGER_PAGE_SIZE = 50;
+
+const ledgerDateTime = new Intl.DateTimeFormat(undefined, {
+  year: 'numeric', month: 'short', day: '2-digit',
+  hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false
+});
+
+export function formatLedgerTimestamp(timestamp: string): string {
+  const date = new Date(timestamp);
+  return Number.isFinite(date.getTime()) ? ledgerDateTime.format(date) : 'Invalid timestamp';
+}
+
+/** Apply cross-filters and sort the full result before pagination, without mutating it. */
 export function rankGridReports(
   reports: SlopReport[],
   selectedBucket: string | null,
   selectedPerson: string | null,
-  timeSpan: TimeSpanFilter
+  timeSpan: TimeSpanFilter,
+  sort: LedgerSort = { column: 'slop', direction: 'desc' }
 ): SlopReport[] {
   return reports
     .filter((r) => {
@@ -332,6 +343,28 @@ export function rankGridReports(
       if (selectedPerson && r.sender.trim() !== selectedPerson) return false;
       return true;
     })
-    .slice()
-    .sort((a, b) => b.slopScore - a.slopScore);
+    .sort((a, b) => {
+      const time = Date.parse(a.timestamp) - Date.parse(b.timestamp);
+      const primary = sort.column === 'slop' ? a.slopScore - b.slopScore : time;
+      return (sort.direction === 'desc' ? -primary : primary) ||
+        -time || b.slopScore - a.slopScore || a.messageId.localeCompare(b.messageId);
+    });
+}
+
+/** Clamp the current page after data changes and retain every record across 50-row pages. */
+export function paginateLedger(rows: SlopReport[], pageIndex: number) {
+  if (!Number.isSafeInteger(pageIndex) || pageIndex < 0) {
+    throw new RangeError('Page must be a nonnegative integer.');
+  }
+  const pageCount = Math.max(1, Math.ceil(rows.length / LEDGER_PAGE_SIZE));
+  const current = Math.min(pageIndex, pageCount - 1);
+  const offset = current * LEDGER_PAGE_SIZE;
+  return {
+    rows: rows.slice(offset, offset + LEDGER_PAGE_SIZE),
+    pageIndex: current,
+    pageCount,
+    totalRows: rows.length,
+    start: rows.length ? offset + 1 : 0,
+    end: Math.min(offset + LEDGER_PAGE_SIZE, rows.length)
+  };
 }

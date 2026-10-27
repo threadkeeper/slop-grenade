@@ -14,7 +14,7 @@ pub struct AppConfig {
     pub http_bind: String,
     /// Path to the built SvelteKit static assets directory (`web/build`).
     pub web_asset_dir: PathBuf,
-    /// Poll interval in seconds for the background M365 WorkIQ scanner daemon.
+    /// Background WorkIQ poll interval in seconds (default and minimum: three).
     pub poll_interval_secs: u64,
     /// Whether automatic background polling of WorkIQ MCP is enabled on startup.
     pub auto_poll_enabled: bool,
@@ -37,7 +37,7 @@ impl Default for AppConfig {
         Self {
             http_bind: "127.0.0.1:8090".to_string(),
             web_asset_dir: PathBuf::from("../web/build"),
-            poll_interval_secs: 60,
+            poll_interval_secs: 3,
             auto_poll_enabled: true,
             demo_data_enabled: false,
             luna_enabled: true,
@@ -74,7 +74,7 @@ impl AppConfig {
         let poll_interval_secs = env::var("SLOP_POLL_INTERVAL_SECS")
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
-            .filter(|&v| v >= 5)
+            .filter(|&v| v >= 3)
             .unwrap_or(defaults.poll_interval_secs);
 
         let auto_poll_enabled = env::var("SLOP_AUTO_POLL")
@@ -134,6 +134,7 @@ mod tests {
     fn default_config_uses_gpt_5_6_luna_and_port_8090() {
         let cfg = AppConfig::default();
         assert_eq!(cfg.http_bind, "127.0.0.1:8090");
+        assert_eq!(cfg.poll_interval_secs, 3);
         assert_eq!(cfg.luna_model, "gpt-5.6-luna");
         assert_eq!(cfg.luna_endpoint, "https://api.githubcopilot.com/responses");
         assert!(cfg.luna_enabled);

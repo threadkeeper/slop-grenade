@@ -5,16 +5,22 @@
     computeInOutGauges,
     computeTopFiveLists,
     filterReports,
+    formatLedgerTimestamp,
     gaugeWhiteToPurpleColor,
+    paginateLedger,
     rankGridReports,
     tierDisplayName,
     type BarBucket,
     type DashboardFilterState,
+    type LedgerSort,
     type TimeSpanFilter
   } from '$lib/dashboard';
-  import type { AnimationTier, AwarenessScorecard } from '$lib/types';
+  import type { AnimationTier, AwarenessScorecard, MessageDirection } from '$lib/types';
   import { WebAudioSfx, type StageCue } from '$lib/engine';
-  import { refreshDaysForSpan, refreshHistory as requestHistoryRefresh } from '$lib/refresh';
+  import {
+    createRefreshProgress, formatRefreshCount, refreshDaysForSpan,
+    refreshHistory as requestHistoryRefresh, type RefreshProgress
+  } from '$lib/refresh';
   import { isNativeMobile, subscribeAnimations } from '$lib/transport';
   import { createLedger } from '$lib/ledger';
   import Mailbox from '$lib/components/Mailbox.svelte';
@@ -45,8 +51,14 @@
   let refreshing = $state(false);
   let refreshNotice = $state('');
   let refreshError = $state<string | null>(null);
+  let refreshProgress = $state<RefreshProgress | null>(null);
+  let refreshProgressError = $state<string | null>(null);
+  let progressWatcher: ReturnType<typeof createRefreshProgress> | undefined;
   let ledgerError = $state<string | null>(null);
   let ledger: ReturnType<typeof createLedger> | undefined;
+  let ledgerSort = $state<LedgerSort>({ column: 'slop', direction: 'desc' });
+  let ledgerPageIndex = $state(0);
+  let referenceNow = $state(new Date().toISOString());
 
   function readPref(key: string, fallback: string): string {
     try {
@@ -67,6 +79,8 @@
     teams: true,
     outlook: true,
     gmail: true,
+    received: true,
+    sent: true,
     tiers: {
       slop_grenade: true,
       slop_splat: true,
@@ -77,7 +91,7 @@
   });
 
   const allReports = $derived(scorecard?.recentReports ?? []);
-  const filteredReports = $derived(filterReports(allReports, filters));
+  const filteredReports = $derived(filterReports(allReports, filters, referenceNow));
   const gauges = $derived(computeInOutGauges(filteredReports));
   const buckets = $derived(computeBarChartBuckets(filteredReports, filters.timeSpan));
   const maxBucketTotal = $derived(Math.max(1, ...buckets.map((b) => b.totalCount)));
@@ -89,16 +103,51 @@
       filters.tiers.human_sparkle
   );
   const leaderboards = $derived(computeTopFiveLists(filteredReports));
-  /** Days the Refresh button reads: follows the Span filter, at most 30 (Android: always 7). */
+  /** Android refresh remains seven days regardless of the displayed span. */
   const refreshDays = $derived(refreshDaysForSpan(filters.timeSpan, mobile));
   const refreshWindow = $derived(refreshDays === 1 ? 'the last day' : `the last ${refreshDays} days`);
+  const REFRESH_PHASE_LABEL: Record<RefreshProgress['phase'], string> = {
+    connecting: 'Connecting to WorkIQ',
+    outlook: 'Scanning Outlook',
+    teams: 'Scanning Teams',
+    analyzing: 'Scoring new messages',
+    completed: 'Scan complete; updating the dashboard',
+    failed: 'Refresh failed; waiting for details'
+  };
   const SPAN_LABEL: Record<TimeSpanFilter, string> = {
     today: 'Today · resets 00:00',
-    '7d': 'Last 7 days',
-    '30d': 'Last 30 days',
-    all: 'All loaded history'
+    '3d': 'Last 3 days',
+    '7d': 'Last 7 days'
   };
-  const gridRows = $derived(rankGridReports(filteredReports, selectedBucket, selectedPerson, filters.timeSpan));
+  const gridRows = $derived(rankGridReports(filteredReports, selectedBucket, selectedPerson, filters.timeSpan, ledgerSort));
+  const ledgerPage = $derived(paginateLedger(gridRows, ledgerPageIndex));
+
+  $effect(() => {
+    if (ledgerPageIndex !== ledgerPage.pageIndex) ledgerPageIndex = ledgerPage.pageIndex;
+  });
+
+  function resetLedgerPage() {
+    ledgerPageIndex = 0;
+    referenceNow = new Date().toISOString();
+  }
+
+  function sortLedger(column: LedgerSort['column']) {
+    ledgerSort = {
+      column,
+      direction: ledgerSort.column === column && ledgerSort.direction === 'desc' ? 'asc' : 'desc'
+    };
+    resetLedgerPage();
+  }
+
+  function toggleDirection(direction: MessageDirection) {
+    filters[direction] = filters[direction] === false;
+    resetLedgerPage();
+  }
+
+  function toggleSource(source: 'teams' | 'outlook' | 'gmail') {
+    filters[source] = filters[source] === false;
+    resetLedgerPage();
+  }
 
   async function loadLedger() {
     return ledger?.refresh() ?? false;
@@ -110,9 +159,19 @@
     const windowLabel = refreshWindow;
     refreshing = true;
     refreshError = null;
+    refreshProgress = null;
+    refreshProgressError = null;
     refreshNotice = `Reading ${windowLabel} from ${mobile ? 'Gmail' : 'Outlook and Teams'}. This can take a few minutes.`;
     try {
-      const batch = await requestHistoryRefresh(days);
+      const refreshId = mobile ? undefined : crypto.randomUUID();
+      if (refreshId) {
+        progressWatcher = createRefreshProgress(
+          refreshId, days,
+          (progress) => { refreshProgress = progress; },
+          (error) => { refreshProgressError = error; }
+        );
+      }
+      const batch = await requestHistoryRefresh(days, undefined, refreshId);
       if (!(await loadLedger())) {
         refreshNotice = '';
         return;
@@ -123,6 +182,8 @@
       refreshNotice = '';
       refreshError = error instanceof Error ? error.message : 'The refresh failed.';
     } finally {
+      progressWatcher?.dispose();
+      progressWatcher = undefined;
       refreshing = false;
     }
   }
@@ -130,19 +191,23 @@
   function setTimeSpan(span: TimeSpanFilter) {
     filters.timeSpan = span;
     selectedBucket = null;
+    resetLedgerPage();
   }
 
   function toggleBucketSelection(label: string) {
     selectedBucket = selectedBucket === label ? null : label;
+    resetLedgerPage();
   }
 
   function togglePersonSelection(name: string) {
     selectedPerson = selectedPerson === name ? null : name;
+    resetLedgerPage();
   }
 
   function clearCrossFilters() {
     selectedBucket = null;
     selectedPerson = null;
+    resetLedgerPage();
   }
 
   function shortWords(text: string, maxWords = 9): string {
@@ -153,6 +218,7 @@
 
   function toggleTier(tier: AnimationTier) {
     filters.tiers[tier] = !filters.tiers[tier];
+    resetLedgerPage();
   }
 
   function toggleAllTiers() {
@@ -164,6 +230,7 @@
       peaceful_cloud: next,
       human_sparkle: next
     };
+    resetLedgerPage();
   }
 
   function bucketCount(b: BarBucket, tier: AnimationTier): number {
@@ -223,10 +290,11 @@
     window.addEventListener('pointerdown', arm, { once: true });
 
     ledger = createLedger(
-      (snapshot) => { scorecard = snapshot; },
+      (snapshot) => { referenceNow = new Date().toISOString(); scorecard = snapshot; },
       (error) => { ledgerError = error; },
       { native: mobile }
     );
+    const clock = setInterval(() => { referenceNow = new Date().toISOString(); }, 60000);
 
     const stopEvents = subscribeAnimations((animEvent) => {
       // Local cue IDs stay monotonic even when the native core process restarts.
@@ -240,7 +308,9 @@
     return () => {
       window.removeEventListener('pointerdown', arm);
       stopEvents();
+      clearInterval(clock);
       ledger?.dispose();
+      progressWatcher?.dispose();
       sfx.setEnabled(false);
     };
   });
@@ -275,7 +345,7 @@
       <div class="header-tools">
         <button
           class="brass small refresh-btn"
-          title={`Read ${refreshWindow} of ${mobile ? 'Gmail' : 'Outlook and Teams (follows the Span filter, up to 30 days)'} without duplicates or replaying effects`}
+          title={`Read ${refreshWindow} of ${mobile ? 'Gmail' : 'Outlook and Teams (follows the Span filter, up to 7 days)'} without duplicates or replaying effects`}
           aria-busy={refreshing}
           disabled={refreshing}
           onclick={refreshHistory}
@@ -320,28 +390,57 @@
       <p class="refresh-feedback" role="status" aria-live="polite">{refreshNotice}</p>
     {/if}
 
+    {#if refreshing && !mobile}
+      <div class="refresh-feedback refresh-progress" role="status" aria-label="History refresh progress" aria-live="polite">
+        <strong>{REFRESH_PHASE_LABEL[refreshProgress?.phase ?? 'connecting']}</strong>
+        <div class="refresh-counters">
+          <div><strong>Outlook</strong><span>{formatRefreshCount(refreshProgress?.outlookScanned ?? 0, refreshProgress?.outlookTotal ?? null)}</span></div>
+          <div><strong>Teams</strong><span>{formatRefreshCount(refreshProgress?.teamsScanned ?? 0, refreshProgress?.teamsTotal ?? null)}</span></div>
+        </div>
+        {#if refreshProgress?.phase === 'teams'}
+          <small>
+            {#if refreshProgress.teamsChatsTotal === null}
+              {refreshProgress.teamsChatsDiscovered.toLocaleString()} chats found; discovering active conversations.
+            {:else}
+              {refreshProgress.teamsChatsScanned.toLocaleString()} / {refreshProgress.teamsChatsTotal.toLocaleString()} chats scanned.
+            {/if}
+          </small>
+        {:else if refreshProgress?.phase === 'analyzing'}
+          <small>{refreshProgress.analyzedCount.toLocaleString()} / {refreshProgress.analysisTotal?.toLocaleString() ?? '?'} new messages scored.</small>
+        {/if}
+      </div>
+      {#if refreshProgressError}
+        <p class="refresh-feedback error" role="alert">Progress counters unavailable: {refreshProgressError} The refresh request is still running.</p>
+      {/if}
+    {/if}
+
     <nav class="filters" aria-label="Filters">
       <div class="filter-group" role="group" aria-label="Time span">
         <span class="group-label">Span</span>
         <button class="brass small" class:active={filters.timeSpan === 'today'} onclick={() => setTimeSpan('today')}>
           Today
         </button>
-        <button class="brass small" class:active={filters.timeSpan === '7d'} onclick={() => setTimeSpan('7d')}>7d</button>
-        <button class="brass small" class:active={filters.timeSpan === '30d'} onclick={() => setTimeSpan('30d')}>30d</button>
-        <button class="brass small" class:active={filters.timeSpan === 'all'} onclick={() => setTimeSpan('all')}>All</button>
+        <button class="brass small" class:active={filters.timeSpan === '3d'} onclick={() => setTimeSpan('3d')}>Last 3 days</button>
+        <button class="brass small" class:active={filters.timeSpan === '7d'} onclick={() => setTimeSpan('7d')}>Last 7 days</button>
+      </div>
+
+      <div class="filter-group" role="group" aria-label="Message direction">
+        <span class="group-label">Direction</span>
+        <button class="brass small" class:active={filters.received !== false} aria-pressed={filters.received !== false} onclick={() => toggleDirection('received')}>Incoming</button>
+        <button class="brass small" class:active={filters.sent !== false} aria-pressed={filters.sent !== false} onclick={() => toggleDirection('sent')}>Outgoing</button>
       </div>
 
       <div class="filter-group" role="group" aria-label="Source channels">
         <span class="group-label">Source</span>
         {#if mobile}
-          <button class="brass small" class:active={filters.gmail} onclick={() => (filters.gmail = !filters.gmail)}>
+          <button class="brass small" class:active={filters.gmail} onclick={() => toggleSource('gmail')}>
             Gmail
           </button>
         {:else}
-          <button class="brass small" class:active={filters.teams} onclick={() => (filters.teams = !filters.teams)}>
+          <button class="brass small" class:active={filters.teams} onclick={() => toggleSource('teams')}>
             Teams
           </button>
-          <button class="brass small" class:active={filters.outlook} onclick={() => (filters.outlook = !filters.outlook)}>
+          <button class="brass small" class:active={filters.outlook} onclick={() => toggleSource('outlook')}>
             Outlook
           </button>
         {/if}
@@ -519,7 +618,7 @@
             </span>
             <button class="brass small" onclick={clearCrossFilters}>Clear</button>
           {:else}
-            <span class="meta">Highest slop first &middot; click a bar or person to filter</span>
+            <span class="meta">Click Slop % or Date &amp; time to sort &middot; click a bar or person to filter</span>
           {/if}
         </div>
       </div>
@@ -528,7 +627,12 @@
         <table class="data-grid">
           <thead>
             <tr>
-              <th class="num">Slop %</th>
+              <th class="num" aria-sort={ledgerSort.column === 'slop' ? (ledgerSort.direction === 'desc' ? 'descending' : 'ascending') : 'none'}>
+                <button class="sort-button" onclick={() => sortLedger('slop')}>Slop % {ledgerSort.column === 'slop' ? (ledgerSort.direction === 'desc' ? '↓' : '↑') : '↕'}</button>
+              </th>
+              <th aria-sort={ledgerSort.column === 'timestamp' ? (ledgerSort.direction === 'desc' ? 'descending' : 'ascending') : 'none'}>
+                <button class="sort-button" onclick={() => sortLedger('timestamp')}>Date &amp; time {ledgerSort.column === 'timestamp' ? (ledgerSort.direction === 'desc' ? '↓' : '↑') : '↕'}</button>
+              </th>
               <th>Type</th>
               <th>Source</th>
               <th>Lex / Struct / Burst / Handoff &middot; Words</th>
@@ -539,11 +643,12 @@
             </tr>
           </thead>
           <tbody>
-            {#each gridRows as row (row.messageId)}
+            {#each ledgerPage.rows as row (row.messageId)}
               <tr>
                 <td class="num">
                   <span class="score-pill" style="--pill: {gaugeWhiteToPurpleColor(row.slopScore)}">{row.slopScore}%</span>
                 </td>
+                <td><time datetime={row.timestamp} title={row.timestamp}>{formatLedgerTimestamp(row.timestamp)}</time></td>
                 <td><span class="type-tag" style="background: {TIER_COLOR[row.tier]}">{tierDisplayName(row.tier)}</span></td>
                 <td class="cap">{row.app}</td>
                 <td class="metrics-cell">
@@ -555,10 +660,20 @@
                 <td>{row.subjectOrTopic}</td>
                 <td class="preview-cell">{shortWords(row.redactedPreview, 10)}</td>
               </tr>
+            {:else}
+              <tr><td colspan="9">No messages match these filters.</td></tr>
             {/each}
           </tbody>
         </table>
       </div>
+      <nav class="ledger-pagination" aria-label="Ledger pages">
+        <span class="meta">{ledgerPage.start}–{ledgerPage.end} of {ledgerPage.totalRows} messages &middot; 50 per page</span>
+        <div class="page-controls">
+          <button class="brass small" aria-label="Previous ledger page" disabled={ledgerPage.pageIndex === 0} onclick={() => (ledgerPageIndex = ledgerPage.pageIndex - 1)}>&lt;&lt;</button>
+          <span class="meta">Page {ledgerPage.pageIndex + 1} of {ledgerPage.pageCount}</span>
+          <button class="brass small" aria-label="Next ledger page" disabled={ledgerPage.pageIndex + 1 >= ledgerPage.pageCount} onclick={() => (ledgerPageIndex = ledgerPage.pageIndex + 1)}>&gt;&gt;</button>
+        </div>
+      </nav>
     </section>
 
     {#if rangeOpen}
@@ -688,6 +803,24 @@
 
   .refresh-feedback.error {
     border-color: var(--hot);
+  }
+
+  .refresh-counters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 28px;
+    margin: 8px 0;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .refresh-counters > div {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+  }
+
+  .refresh-progress small {
+    opacity: 0.8;
   }
 
   @keyframes refresh-spin {
@@ -987,6 +1120,34 @@
     border: 2px solid var(--ink);
     border-radius: 6px;
     background: rgba(255, 252, 240, 0.6);
+  }
+
+  .ledger-pagination,
+  .page-controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .ledger-pagination {
+    justify-content: space-between;
+    margin-top: 12px;
+  }
+
+  .sort-button {
+    border: 0;
+    padding: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .sort-button:focus-visible {
+    outline: 2px solid var(--brass-hi);
+    outline-offset: 3px;
   }
 
   .data-grid {

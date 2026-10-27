@@ -14,13 +14,14 @@ Slop Grenade consists of three coordinated components:
    - Layout:
      | Folder | Contents |
      | :--- | :--- |
-     | `Program.cs` | Entry point, tray icon and menu, daemon start-up, SSE listener, WorkIQ poll, daily gauges, run-at-startup |
+     | `Program.cs` | Entry point, tray icon and menu, daemon start-up, SSE listener, daily gauges, run-at-startup |
      | `Settings.cs` | Preferences in `HKCU\Software\SlopGrenade` (sound on/off, volume, Teams/Outlook, slop/calm effects, fly delay) |
      | `Native.cs` | Win32 P/Invoke (layered window, DIB section, `waveOut`) |
      | `Engine/` | `World` (director queue, short slow-motion moment, hit-stop, slight shake, render order; each effect is drawn in isolation so one failure cannot affect the rest), `OverlayForm` (presenter), dirty-rect tracking, software toon 3D renderer, ink and palette helpers |
      | `Effects/` | Grenade, explosion, particles, slop goo (metaball field with drips and soft-serve swirls), 20 tumbling 3D fruit models, fluid smoke, flies, crystal twinkle, squeegee |
      | `Audio/` | Procedurally synthesised sound bank and a small `waveOut` mixer (stereo pan, loops, soft limiter) |
      | `UI/` | Steampunk tray control panel and its brass/ink drawing helpers |
+   - Live solid effects carry only their existing sanitized ledger report. Hovering a fruit, grenade, cannonball, sparkle, splat or drip for 500 ms displays a non-activating, layered, click-through details card. Fruit hit testing uses sprite alpha; goop requires a visible pixel and selects the strongest local contributing shape where splats have merged. Metadata follows queued effects and their child goop/drops, and disappears with the effects or a squeegee. Diffuse shared smoke, ambient flies and test shots do not invent message attribution. Details are memory-only, use the existing redacted preview, hide immediately on leaving and expire after ten seconds. A low-frequency cursor timer runs only while attributed effects remain, so the animation loop can still sleep.
    - The effects are a 1:1 port of the TypeScript engine in `web/src/lib/engine/`, which is the visual reference and is covered by unit tests.
    - Message tiers map to effects as follows (incoming lands on the left edge in pink, your own messages on the right edge in blue):
      | Tier | Score | Effect |
@@ -45,16 +46,19 @@ Slop Grenade consists of three coordinated components:
      - `llm_luna.rs`: GitHub Copilot Responses API client (`POST https://api.githubcopilot.com/responses` with `model: "gpt-5.6-luna"`).
      - `ledger.rs`: In-memory directional habit ledger tracking daily midnight-resetting gauges, historical reports, **Top 5 Sloppers**, and **Top 5 P-Doomers**. The lists rank people by their share of AI-written messages (score 40 or more), then average score, then message count; both fill to five whenever five people are known, may overlap only below ten people, and leave out automated mail and placeholder senders. Retains the full UTC days covering the rolling 31-day window plus up to 360 older reports, and returns reports newest first.
      - `event_bus.rs`: Broadcast channel for real-time desktop overlay animations and squeegee wipes.
-     - `scanner_daemon.rs`: Background M365 polling and deduplication loop.
+     - `scanner_daemon.rs`: Background WorkIQ polling and deduplication, serialized live scans, and separately locked history refreshes.
+     - `refresh_progress.rs` & `refresh_phase.rs`: Metadata-only history counters and stages, kept separate from animation events.
      - `server.rs` & `static_files.rs`: REST API, SSE stream, and static asset server.
    - Real-account mode is the default: startup never seeds synthetic ledger history unless `SLOP_DEMO_DATA=1` (or `true` / `yes`) is explicitly set. For an offline dashboard demo, also set `SLOP_AUTO_POLL=0` so sample and live messages are not mixed.
    - WorkIQ fetch accepts both MCP `structuredContent` and legacy JSON text content. Protocol errors, tool errors, and failed per-entity HTTP statuses are reported as scan failures without including raw response content; they are not treated as empty successful scans.
+   - The daemon alone owns live message polling: `SLOP_POLL_INTERVAL_SECS` defaults to **3** (minimum **3**). Missed ticks are skipped, and manual/background recent polls cannot overlap. The Windows overlay listens to SSE instead of starting a second scan timer. `SLOP_AUTO_POLL=0` therefore disables automatic scans even with the overlay open. Provider calls may take longer than three seconds; this is a target cadence, not a guaranteed message-to-animation deadline. Background outage/recovery logs contain no provider errors or message content.
 
 3. **Habit Monitoring Web Dashboard (`web/`)**:
    - Built with Svelte 5 runes (`$state`, `$derived`), SvelteKit (`@sveltejs/adapter-static`), strict TypeScript, and Vite. Theme in `web/src/app.css` (brass, ink and parchment).
-   - Displays the incoming and outgoing % AI dials (share of person-written messages scoring 40 or more in the selected span), the stacked daily breakdown by type, time span / channel / type filters, the Most Wanted and Hand-Crafted Heroes lists (computed from the filtered reports by AI share, see `computeTopFiveLists`), and the drill-down ledger.
+   - Displays the incoming and outgoing % AI dials (share of person-written messages scoring 40 or more in the selected span), the stacked daily breakdown by type, time span / direction / channel / type filters, the Most Wanted and Hand-Crafted Heroes lists (computed from the filtered reports by AI share, see `computeTopFiveLists`), and the drill-down ledger. Spans are **Today** (local midnight), **Last 3 days** (rolling 72 hours), and **Last 7 days** (rolling 168 hours); future-dated reports are excluded. Every metric uses the same filtered slice.
+   - The ledger displays local timestamps with seconds and their original ISO value in a `<time>` element. Slop % and date/time sort both ways over the full filtered result before 50-row pagination. Filter, sort and drill-down changes reset the page; shrinking results clamp it.
    - **Effects test range**: opened from the target icon in the header, a pop-up monitor running the effects engine (`web/src/lib/engine/`). Live messages replay there while it is open, and the buttons fire test effects without calling the API, so test shots do not change your stats.
-   - **Refresh**: merges a paginated Outlook/Teams backfill for the selected span (`Today` 1 day, `7d` 7, `30d` and `All` 30; the Android app always uses 7), then reloads the ledger and clears chart/person cross-filters, keeping the selected span. The button is disabled while pending; HTTP, protocol, application, and reload failures are shown visibly. Backfills always use local scoring and do not publish historical animation events.
+   - **Refresh**: merges a paginated Outlook/Teams backfill for the selected span (`Today` 1 day, **Last 3 days** 3, **Last 7 days** 7; Android always uses 7), then reloads the ledger and clears chart/person cross-filters, keeping the selected span. While the POST is pending, desktop clients poll correlated metadata about once a second and show separate Outlook/Teams counts, chat discovery and scoring stages. Progress requests never overlap, stop on completion/failure or unmount, and expose temporary errors without aborting the valid refresh. The button is disabled while pending; HTTP, protocol, application, and reload failures are shown visibly. Backfills always use local scoring and do not publish historical animation events.
    - **Sound**: optional WebAudio output of the same synthesised effects (`engine/audio.ts`), switched on from the header and remembered per browser.
    - **Overlay mode**: `/?mode=overlay` renders only a transparent full-window effects layer driven by the SSE stream (for example as an OBS browser source). Add `&sound=1` for sound.
 
@@ -89,6 +93,7 @@ A score of 40 or more counts as AI-written for the dashboard dials, the tray gau
 | `POST` | `/api/v1/simulate` | Triggers a preset animation (`human_sparkle`, `peaceful_cloud`, `innocent_fruit`, `slop_splat`, `slop_grenade`, `my_outgoing_grenade`) |
 | `POST` | `/api/v1/squeegee` | Broadcasts a left or right bezel squeegee wipe to all connected overlays |
 | `POST` | `/api/v1/scan/now` | Recent poll by default; `{"lookbackDays":N,"useLuna":false}` with `N` from 1 to 30 performs a complete quiet merge of the last `N` days |
+| `GET` | `/api/v1/scan/progress?refreshId=ID` | Latest metadata-only history counters for that opaque ID, or `{"progress":null}` before it starts or for another job |
 | `GET` | `/api/v1/events/stream` | Server-Sent Events stream for real-time desktop overlay animations |
 
 ---
@@ -97,6 +102,10 @@ A score of 40 or more counts as AI-written for the dashboard dials, the tray gau
 
 `POST /api/v1/scan/now` accepts optional `lookbackDays` from 1 to 30. Values outside that range, or combining a history refresh with `useLuna: true`, return HTTP 400 with `ok: false`. The Android app accepts only `lookbackDays: 7`.
 A successful history response includes `ok: true`, the requested `lookbackDays`, and `batch` counts/reports. Clients must inspect `ok`, not merely HTTP status; WorkIQ scan failures retain the existing HTTP-200 error envelope.
+
+Desktop clients may also send `refreshId`, an opaque 1-64-character ASCII letter/digit/hyphen identifier (normally a UUID). It requires a history window; invalid IDs return HTTP 400 without echoing their contents. Legacy and Android requests are unchanged, and Android does not use the desktop progress endpoint.
+`GET /api/v1/scan/progress?refreshId=ID` returns `{"progress":null}` or a `no-store` snapshot containing `refreshId`, `lookbackDays`, `phase` (`connecting`, `outlook`, `teams`, `analyzing`, `completed`, `failed`), `outlookScanned` / `outlookTotal`, `teamsScanned` / `teamsTotal`, `teamsChatsDiscovered` / `teamsChatsScanned` / `teamsChatsTotal`, and `analyzedCount` / `analysisTotal`. There are no subjects, senders, account identities, bodies or provider URLs. Only the latest job is retained, and ID filtering prevents another job's counters from replacing the caller's progress.
+Counters update after every existing provider page; messages are not fetched a second time for totals. Outlook requests `$count=true`, but missing or stale totals remain `null` until paging establishes an exact total. The Teams total stays unknown until all remaining chats' sizes are known; a single chat's size is never presented as the total for all Teams. The UI renders `345 / 982 scanned` when reliable, or `345 scanned · discovering total` otherwise. Analysis counts include only new, deduplicated messages. Concurrent history jobs fail explicitly without overwriting active progress, while live polling remains independently available.
 
 The UTC window is fixed when fetching starts: `start < message timestamp <= end`, with `start = end - lookbackDays`.
 Mailbox queries exclude drafts. Teams uses matched `$orderby=lastModifiedDateTime desc` and `$filter=lastModifiedDateTime gt ...`, then filters actual creation timestamps locally so edits to older messages are not imported as new history.
@@ -136,12 +145,20 @@ npm --prefix web run test
 npm --prefix web run check
 npm --prefix web run build
 ```
-Unit tests: `web/src/lib/dashboard.test.ts` (filters, gauges, leaderboards), `web/src/lib/refresh.test.ts` (span-to-days mapping, 1 to 30 day request/response contracts and visible failure paths), and `web/src/lib/engine.test.ts` (grenade slow-motion moment and edge splat, cannon side, fruit sticks only on slop, squeegee clears one side, flies arrive and leave, smoke and twinkles fade, 20 fruit models with no labels, sound bank levels).
+Unit tests: `web/src/lib/dashboard.test.ts` (time/direction filters, local timestamps, full-result sorting, 50-row pages, gauges and leaderboards), `web/src/lib/refresh.test.ts` (span-to-days mapping, legacy/Android compatibility, correlated live counters, non-overlap, disposal and visible failures), and `web/src/lib/engine.test.ts` (grenade slow-motion moment and edge splat, cannon side, fruit sticks only on slop, squeegee clears one side, flies arrive and leave, smoke and twinkles fade, 20 fruit models with no labels, sound bank levels).
 
 ### Native Windows Desktop Overlay (`desktop/`)
+
+Run the C# 5 metadata, attribution, hover timing, screen-boundary, focus and click-through regressions (using fictional messages only):
+
+```powershell
+.\scripts\test-desktop.ps1
+```
+
+The Windows desktop compatibility workflow runs the same tests and production compilation.
 ```powershell
 & "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:winexe /optimize+ `
-    /r:System.dll,System.Drawing.dll,System.Windows.Forms.dll `
+    /r:System.dll,System.Drawing.dll,System.Windows.Forms.dll,System.Web.Extensions.dll `
     /out:desktop\slop-grenade-overlay.exe /recurse:desktop\*.cs
 ```
 

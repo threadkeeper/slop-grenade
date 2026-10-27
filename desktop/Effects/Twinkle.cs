@@ -11,6 +11,7 @@ namespace SlopGrenadeDesktop
 {
     internal sealed class Twinkle
     {
+        public EffectMessage Message;
         public readonly float X, Y, Life, Size, Rot, Spin;
         public float Age;
         public bool Done;

@@ -20,6 +20,7 @@ namespace SlopGrenadeDesktop
 
     internal sealed class Particle
     {
+        public EffectMessage Message;
         public ParticleKind Kind;
         public float X, Y, Vx, Vy, R = 1f, Rot, Spin, Age, Life = 1f, Gravity, Drag;
         public int Color = 0xffffff;

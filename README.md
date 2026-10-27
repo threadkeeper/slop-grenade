@@ -164,7 +164,7 @@ What this does automatically:
 
 ### 1. The System Tray Icon (Bright Pink Hand Grenade)
 Look for the **Bright Pink Hand Grenade** icon in your Windows System Tray (bottom-right taskbar near the clock):
-- Slop Grenade pings your **WorkIQ MCP** server every **1 minute** and triggers a desktop animation for each and every new message that comes through (automated and machine-generated system replies are always classified as the gentle `human` sparkle type).
+- Slop Grenade checks your **WorkIQ MCP** server every **3 seconds** by default and triggers desktop animations as new messages are found (automated and machine-generated system replies are always classified as the gentle `human` sparkle type). Slow provider calls finish before another live scan starts, so provider latency can delay an effect.
 - **Left-click the Tray Icon** to open the brass control panel where you can:
   - Read today's **Incoming** and **Outgoing** % AI gauges: the share of today's messages that read as AI-written (they reset automatically at `00:00`).
   - Click **Squeegee** (left or right) to wipe your monitor edges clean.
@@ -172,16 +172,17 @@ Look for the **Bright Pink Hand Grenade** icon in your Windows System Tray (bott
   - Switch **Sound FX** on or off and pick a volume (**Soft**, **Med**, **Loud**).
   - Click **Test Fire!** to see every effect, or **Dashboard** to open the habit dashboard.
 - **Right-click the Tray Icon** for quick test shots (a grenade at either edge, some fruit) and the squeegees.
+- **Hover a live fruit, grenade, sparkle or patch of slop** for half a second to see its ledger details: local date/time, slop %, type, source, direction, sender/recipient, score breakdown, subject and the existing redacted preview. The card never steals focus or blocks clicks in your other apps. Move away to hide it; it also closes after ten seconds. Test shots have no message attached.
 
 ### 2. The Habit Dashboard (`http://127.0.0.1:8090/`)
 Clicking **Dashboard** in the tray opens the habit tracker in your browser, styled to match (brass, ink and parchment), featuring:
 - **Incoming / Outgoing % AI dials**: the share of messages in the selected span that read as AI-written (score 40 or more), with the message, AI-written and grenade counts underneath. Automated mail is left out of the share. The dials vent steam when you are in the red.
-- **Refresh**: reads the span selected in the filters (`Today` 1 day, `7d` 7 days, `30d` and `All` 30 days, the maximum) and merges it without duplicates or replaying historical effects. The refresh uses local scoring. History is in memory and resets when the background daemon restarts, so restart the app after an update and press **Refresh** to re-score with the latest rules.
+- **Refresh**: reads the selected span (`Today` 1 day, **Last 3 days**, or **Last 7 days**) and merges it without duplicates or replaying historical effects. Live **Outlook** and **Teams** counters show progress, such as `345 / 982 scanned`; if the provider has not supplied a reliable total, the counter says **discovering total** instead. The refresh uses local scoring. History is in memory and resets when the background daemon restarts, so restart the app after an update and press **Refresh** to re-score with the latest rules.
 - **Effects test range**: click the target icon in the header to open a small monitor where you can test fire every effect (test shots are not recorded in your stats). The **Sound** switch and volume slider sit next to it.
 - **Per-Day Stacked Bar Chart** broken down by type (`slop-grenade` in pink, `ai-cannon` in orange, `sprinkled` in yellow, `polish` in smoke grey, and `human` in cream).
-- **Filters** for time span (`Today`, `7d`, `30d`, `All`), source (`Teams` vs. `Outlook`), and message type (`All`, `slop-grenade`, `ai-cannon`, `sprinkled`, `polish`, `human`).
+- **Filters** for **Today**, **Last 3 days**, or **Last 7 days**, **Incoming / Outgoing**, source (`Teams` vs. `Outlook`), and message type (`All`, `slop-grenade`, `ai-cannon`, `sprinkled`, `polish`, `human`). Today starts at your local midnight; the other spans are rolling 72- and 168-hour windows. Direction filters apply to the dials, charts, leaderboards and ledger together.
 - **Most Wanted** and **Hand-Crafted Heroes**: the five people with the highest and the lowest share of AI-written messages in the selected span, with their message count and AI %. Both lists always show five people once five are known; automated mail and bots are left out.
-- **Interactive Drill-Down Grid** at the bottom ranked by highest slop score, showing the score, type, source, core metrics, sender, recipient, subject, and a short preview of each message.
+- **Interactive Drill-Down Ledger** with local **date and time**, score, type, source, core metrics, sender, recipient, subject, and a short preview. Click **Slop %** or **Date & time** to sort either way. Browse **50 messages per page** using **<< / >>**; sorting applies to the whole filtered result, not just the page you are viewing.
 
 ---
 

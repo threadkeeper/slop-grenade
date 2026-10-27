@@ -3,9 +3,14 @@ import {
   computeBarChartBuckets,
   computeInOutGauges,
   computeTopFiveLists,
+  bucketKeyForReport,
   filterReports,
+  formatLedgerTimestamp,
   gaugeWhiteToPurpleColor,
   isAutomatedReport,
+  LEDGER_PAGE_SIZE,
+  paginateLedger,
+  rankGridReports,
   tierDisplayName,
   type DashboardFilterState
 } from './dashboard';
@@ -17,12 +22,12 @@ describe('Slop Grenade dashboard', () => {
       app, tier: 'human_sparkle', timestamp: '2026-10-23T09:00:00Z'
     })) as SlopReport[];
     const filters: DashboardFilterState = {
-      timeSpan: 'all', teams: false, outlook: false,
+      timeSpan: '7d', teams: false, outlook: false,
       tiers: { human_sparkle: true, peaceful_cloud: true, innocent_fruit: true, slop_splat: true, slop_grenade: true }
     };
-    expect(filterReports(reports, filters).map((r) => r.app)).toEqual(['gmail']);
-    expect(filterReports(reports, { ...filters, gmail: false })).toEqual([]);
-    expect(filterReports(reports, { ...filters, gmail: false, outlook: true }).map((r) => r.app)).toEqual(['outlook']);
+    expect(filterReports(reports, filters, '2026-10-23').map((r) => r.app)).toEqual(['gmail']);
+    expect(filterReports(reports, { ...filters, gmail: false }, '2026-10-23')).toEqual([]);
+    expect(filterReports(reports, { ...filters, gmail: false, outlook: true }, '2026-10-23').map((r) => r.app)).toEqual(['outlook']);
   });
   it('names the five message types and colours the gauge from white to purple', () => {
     expect(tierDisplayName('slop_grenade')).toBe('slop-grenade');
@@ -209,5 +214,101 @@ describe('Slop Grenade dashboard', () => {
   it('recognises automated reports by their summary', () => {
     expect(isAutomatedReport(report('x', 4, { summary: 'Automated / machine-generated response classified as sparkle (human).' }))).toBe(true);
     expect(isAutomatedReport(report('x', 4))).toBe(false);
+  });
+
+  const allSourcesAndTiers = {
+    teams: true, outlook: true, gmail: true,
+    tiers: { human_sparkle: true, peaceful_cloud: true, innocent_fruit: true, slop_splat: true, slop_grenade: true }
+  };
+
+  it.each([
+    { received: true, sent: true, expected: ['in', 'out'] },
+    { received: true, sent: false, expected: ['in'] },
+    { received: false, sent: true, expected: ['out'] },
+    { received: false, sent: false, expected: [] }
+  ])('filters incoming and outgoing messages consistently: %j', ({ received, sent, expected }) => {
+    const samples = [
+      report('Incoming', 75, { messageId: 'in' }),
+      report('Outgoing', 45, { messageId: 'out', direction: 'sent', monitorSide: 'right' })
+    ];
+    const rows = filterReports(samples, { ...allSourcesAndTiers, timeSpan: '7d', received, sent }, '2026-10-23');
+    expect(rows.map((row) => row.messageId)).toEqual(expected);
+    const gauges = computeInOutGauges(rows);
+    expect(gauges.received.messageCount).toBe(received ? 1 : 0);
+    expect(gauges.sent.messageCount).toBe(sent ? 1 : 0);
+    expect(computeBarChartBuckets(rows, '7d').reduce((sum, bucket) => sum + bucket.totalCount, 0)).toBe(expected.length);
+    expect(computeTopFiveLists(rows).topSloppers.map((person) => person.name).sort()).toEqual(
+      samples.filter((row) => expected.includes(row.messageId)).map((row) => row.sender).sort()
+    );
+  });
+
+  it.each([3, 7] as const)('limits the last %i days to the exact rolling window, not the newest loaded message', (days) => {
+    const now = new Date('2026-10-26T12:00:00Z');
+    const cutoff = now.getTime() - days * 86400000;
+    const samples = [
+      report('Inside', 40, { messageId: 'inside', timestamp: new Date(cutoff + 1).toISOString() }),
+      report('Boundary', 50, { messageId: 'boundary', timestamp: new Date(cutoff).toISOString() }),
+      report('Old', 60, { messageId: 'old', timestamp: new Date(cutoff - 1).toISOString() }),
+      report('Future', 70, { messageId: 'future', timestamp: new Date(now.getTime() + 1).toISOString() })
+    ];
+    const result = filterReports(samples, { ...allSourcesAndTiers, timeSpan: days === 3 ? '3d' : '7d' }, now.toISOString());
+    expect(result.map((row) => row.messageId)).toEqual(['inside', 'boundary']);
+  });
+
+  it('uses local midnight for Today and does not show yesterday as today when that is the newest report', () => {
+    const now = new Date(2026, 9, 26, 12, 0, 0);
+    const midnight = new Date(2026, 9, 26).getTime();
+    const samples = [
+      report('Yesterday', 40, { messageId: 'yesterday', timestamp: new Date(midnight - 1).toISOString() }),
+      report('Today', 40, { messageId: 'today', timestamp: new Date(midnight).toISOString() })
+    ];
+    expect(filterReports(samples, { ...allSourcesAndTiers, timeSpan: 'today' }, now.toISOString()).map((row) => row.messageId)).toEqual(['today']);
+    expect(filterReports(samples.slice(0, 1), { ...allSourcesAndTiers, timeSpan: 'today' }, now.toISOString())).toEqual([]);
+  });
+
+  it('sorts the entire filtered ledger by slop or timestamp in either direction without changing the snapshot', () => {
+    const samples = [
+      report('A', 65, { messageId: 'a', timestamp: '2026-10-25T09:00:00Z' }),
+      report('B', 95, { messageId: 'b', timestamp: '2026-10-24T09:00:00Z' }),
+      report('C', 65, { messageId: 'c', timestamp: '2026-10-26T09:00:00Z' }),
+      report('D', 5, { messageId: 'd', timestamp: '2026-10-23T09:00:00Z' })
+    ];
+    const ids = (column: 'slop' | 'timestamp', direction: 'asc' | 'desc') =>
+      rankGridReports(samples, null, null, '7d', { column, direction }).map((row) => row.messageId);
+    expect(ids('slop', 'desc')).toEqual(['b', 'c', 'a', 'd']);
+    expect(ids('slop', 'asc')).toEqual(['d', 'c', 'a', 'b']);
+    expect(ids('timestamp', 'desc')).toEqual(['c', 'a', 'b', 'd']);
+    expect(ids('timestamp', 'asc')).toEqual(['d', 'b', 'a', 'c']);
+    expect(samples.map((row) => row.messageId)).toEqual(['a', 'b', 'c', 'd']);
+    const bucket = bucketKeyForReport(samples[0], '7d');
+    expect(rankGridReports(samples, bucket, 'A', '7d', { column: 'timestamp', direction: 'desc' }).map((row) => row.messageId)).toEqual(['a']);
+  });
+
+  it('shows exactly 50 records per page without losing or duplicating the final record', () => {
+    const rows = Array.from({ length: 101 }, (_, index) => report('Fixture', index % 100, { messageId: `row-${index}` }));
+    const pages = [0, 1, 2].map((page) => paginateLedger(rows, page));
+    expect(LEDGER_PAGE_SIZE).toBe(50);
+    expect(pages.map((page) => page.rows.length)).toEqual([50, 50, 1]);
+    expect(pages.map((page) => [page.start, page.end])).toEqual([[1, 50], [51, 100], [101, 101]]);
+    expect(pages.every((page) => page.pageCount === 3 && page.totalRows === 101)).toBe(true);
+    expect(pages.flatMap((page) => page.rows.map((row) => row.messageId))).toEqual(rows.map((row) => row.messageId));
+    expect(paginateLedger(rows, 99)).toMatchObject({ pageIndex: 2, start: 101, end: 101 });
+    expect(paginateLedger([], 4)).toMatchObject({ rows: [], pageIndex: 0, pageCount: 1, start: 0, end: 0 });
+  });
+
+  it.each([50, 100])('does not add a blank page after %i records', (count) => {
+    const rows = Array.from({ length: count }, (_, index) => report('Fixture', 40, { messageId: `${index}` }));
+    expect(paginateLedger(rows, 99)).toMatchObject({ pageCount: count / 50, pageIndex: count / 50 - 1, end: count });
+  });
+
+  it.each([-1, 0.5, Number.NaN])('rejects an invalid page index %s', (index) => {
+    expect(() => paginateLedger([], index)).toThrow('Page must be a nonnegative integer');
+  });
+
+  it('formats a full local date and time, including seconds, and visibly identifies invalid timestamps', () => {
+    const label = formatLedgerTimestamp('2026-10-26T12:34:56Z');
+    expect(label).toContain('2026');
+    expect(label).toMatch(/\d{1,2}:\d{2}:\d{2}/);
+    expect(formatLedgerTimestamp('invalid')).toBe('Invalid timestamp');
   });
 });

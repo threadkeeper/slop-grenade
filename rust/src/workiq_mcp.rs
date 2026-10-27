@@ -19,6 +19,8 @@ use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 
+use crate::refresh_phase::RefreshPhase;
+use crate::refresh_progress::RefreshProgress;
 use crate::slop_detector::{M365App, MessageDirection, MessageSample};
 
 /// Timeout for a single WorkIQ MCP or CLI subprocess invocation.
@@ -176,48 +178,31 @@ impl WorkIqClient {
     /// The window is fixed at request start. Historical edits and future-dated messages
     /// are excluded using each message's creation/receive timestamp.
     pub async fn poll_history(&self, days: u8) -> Result<Vec<MessageSample>, String> {
+        self.poll_history_with_progress(days, |_| Ok(())).await
+    }
+
+    /// Fetch history while reporting metadata-only counters after every provider page.
+    pub async fn poll_history_with_progress<P>(
+        &self,
+        days: u8,
+        progress: P,
+    ) -> Result<Vec<MessageSample>, String>
+    where
+        P: FnMut(RefreshProgress) -> Result<(), String>,
+    {
         if !(1..=30).contains(&days) {
             return Err("lookbackDays must be between 1 and 30.".to_string());
         }
         let Some(ref bin) = self.binary_path else {
             return Err("WorkIQ binary not configured".to_string());
         };
-        let until = Utc::now();
-        let since = until - ChronoDuration::days(i64::from(days));
-        let cutoff = since.to_rfc3339_opts(SecondsFormat::Millis, true);
-        let identity = self
-            .call_mcp_fetch(
-                bin,
-                &["/me?$select=id,displayName,mail,userPrincipalName".to_string()],
-            )
-            .await
-            .map_err(|error| format!("WorkIQ identity lookup failed: {error}"))?;
-        let me_email = extract_me_email(&identity).or_else(|| self.account());
-        let me = extract_me_user_id(&identity).or_else(|| me_email.clone());
-
-        let mail = self
-            .fetch_history_pages(bin, history_mail_query(&cutoff))
-            .await
-            .map_err(|error| format!("Outlook history fetch failed: {error}"))?;
-        let mut samples = parse_workiq_fetch_bundle(&mail, me_email.as_deref());
-        let chats = self
-            .fetch_history_pages(bin, history_chat_list_query(&cutoff))
-            .await
-            .map_err(|error| format!("Teams chat list fetch failed: {error}"))?;
-        for id in extract_chat_ids(&chats) {
-            let messages = self
-                .fetch_history_pages(bin, history_chat_query(&id, &cutoff))
-                .await
-                .map_err(|error| format!("Teams message history fetch failed: {error}"))?;
-            samples.extend(parse_chat_messages(&messages, me.as_deref(), Some(&id)));
-        }
-        filter_history_samples(samples, since, until)
-    }
-
-    async fn fetch_history_pages(&self, bin: &Path, first: String) -> Result<Value, String> {
-        fetch_all_pages(first, |path| async move {
-            self.call_mcp_fetch(bin, &[path]).await
-        })
+        fetch_history_with_progress(
+            days,
+            self.account(),
+            Utc::now(),
+            |paths| async move { self.call_mcp_fetch(bin, &paths).await },
+            progress,
+        )
         .await
     }
 
@@ -386,6 +371,90 @@ fn chat_messages_path(chat_id: &str) -> String {
     relative_graph_url(&url)
 }
 
+async fn fetch_history_with_progress<F, Fut, P>(
+    days: u8,
+    account: Option<String>,
+    until: DateTime<Utc>,
+    mut fetch: F,
+    mut observe: P,
+) -> Result<Vec<MessageSample>, String>
+where
+    F: FnMut(Vec<String>) -> Fut,
+    Fut: Future<Output = Result<Value, String>>,
+    P: FnMut(RefreshProgress) -> Result<(), String>,
+{
+    let since = until - ChronoDuration::days(i64::from(days));
+    let cutoff = since.to_rfc3339_opts(SecondsFormat::Millis, true);
+    let mut progress = RefreshProgress::new(days, None);
+    observe(progress.clone())?;
+    let identity = fetch(vec![
+        "/me?$select=id,displayName,mail,userPrincipalName".to_string()
+    ])
+    .await
+    .map_err(|error| format!("WorkIQ identity lookup failed: {error}"))?;
+    let me_email = extract_me_email(&identity).or(account);
+    let me = extract_me_user_id(&identity).or_else(|| me_email.clone());
+
+    progress.phase = RefreshPhase::Outlook;
+    observe(progress.clone())?;
+    let mail = fetch_all_pages(
+        history_mail_query(&cutoff),
+        |path| fetch(vec![path]),
+        |scanned, total, _| {
+            progress.outlook_scanned = scanned;
+            progress.outlook_total = total;
+            observe(progress.clone())
+        },
+    )
+    .await
+    .map_err(|error| format!("Outlook history fetch failed: {error}"))?;
+    let mut samples = parse_workiq_fetch_bundle(&mail, me_email.as_deref());
+
+    progress.phase = RefreshPhase::Teams;
+    observe(progress.clone())?;
+    let chats = fetch_all_pages(
+        history_chat_list_query(&cutoff),
+        |path| fetch(vec![path]),
+        |scanned, _, _| {
+            progress.teams_chats_discovered = scanned;
+            observe(progress.clone())
+        },
+    )
+    .await
+    .map_err(|error| format!("Teams chat list fetch failed: {error}"))?;
+    let mut chat_ids = extract_chat_ids(&chats);
+    let mut distinct = HashSet::new();
+    chat_ids.retain(|id| distinct.insert(id.clone()));
+    progress.teams_chats_total = Some(chat_ids.len());
+    if chat_ids.is_empty() {
+        progress.teams_total = Some(0);
+    }
+    observe(progress.clone())?;
+    for (index, id) in chat_ids.iter().enumerate() {
+        let previous = progress.teams_scanned;
+        let last_chat = index + 1 == chat_ids.len();
+        let messages = fetch_all_pages(
+            history_chat_query(id, &cutoff),
+            |path| fetch(vec![path]),
+            |scanned, total, _| {
+                progress.teams_scanned = previous + scanned;
+                progress.teams_total = if last_chat {
+                    total.map(|count| previous + count)
+                } else {
+                    None
+                };
+                observe(progress.clone())
+            },
+        )
+        .await
+        .map_err(|error| format!("Teams message history fetch failed: {error}"))?;
+        samples.extend(parse_chat_messages(&messages, me.as_deref(), Some(id)));
+        progress.teams_chats_scanned = index + 1;
+        observe(progress.clone())?;
+    }
+    filter_history_samples(samples, since, until)
+}
+
 fn history_mail_query(since: &str) -> String {
     let mut url = reqwest::Url::parse("https://graph.microsoft.com/me/messages")
         .expect("fixed Microsoft Graph URL is valid");
@@ -395,6 +464,7 @@ fn history_mail_query(since: &str) -> String {
             "id,subject,from,bodyPreview,body,receivedDateTime,sentDateTime,isDraft",
         )
         .append_pair("$top", "50")
+        .append_pair("$count", "true")
         .append_pair(
             "$filter",
             &format!(
@@ -460,14 +530,21 @@ fn normalize_graph_page_url(path: &str) -> Result<String, String> {
     Ok(relative_graph_url(&url))
 }
 
-async fn fetch_all_pages<F, Fut>(first: String, mut fetch: F) -> Result<Value, String>
+async fn fetch_all_pages<F, Fut, P>(
+    first: String,
+    mut fetch: F,
+    mut progress: P,
+) -> Result<Value, String>
 where
     F: FnMut(String) -> Fut,
     Fut: Future<Output = Result<Value, String>>,
+    P: FnMut(usize, Option<usize>, bool) -> Result<(), String>,
 {
     let mut pending = VecDeque::from([normalize_graph_page_url(&first)?]);
     let mut visited = HashSet::new();
     let mut pages = Vec::new();
+    let mut scanned = 0_usize;
+    let mut total = None;
     while let Some(path) = pending.pop_front() {
         if !visited.insert(path.clone()) {
             return Err(
@@ -476,6 +553,19 @@ where
         }
         let payload = fetch(path).await?;
         for object in collect_entity_objects(&payload) {
+            if let Some(values) = object.get("value").and_then(Value::as_array) {
+                scanned = scanned
+                    .checked_add(values.len())
+                    .ok_or_else(|| "WorkIQ returned too many history records.".to_string())?;
+            }
+            if let Some(reported) = object.get("@odata.count").filter(|value| !value.is_null()) {
+                total = Some(
+                    reported
+                        .as_u64()
+                        .and_then(|value| usize::try_from(value).ok())
+                        .ok_or_else(|| "WorkIQ returned an invalid history total.".to_string())?,
+                );
+            }
             if let Some(next) = object
                 .get("@odata.nextLink")
                 .filter(|value| !value.is_null())
@@ -486,6 +576,13 @@ where
                 pending.push_back(normalize_graph_page_url(next)?);
             }
         }
+        if total.is_some_and(|value| value < scanned) {
+            total = None;
+        }
+        if pending.is_empty() {
+            total = Some(scanned);
+        }
+        progress(scanned, total, pending.is_empty())?;
         pages.push(payload);
     }
     Ok(Value::Array(pages))
@@ -1097,10 +1194,14 @@ mod tests {
             json!({ "value": [{ "id": 100 }] }),
         ]);
         let mut requests = Vec::new();
-        let payload = fetch_all_pages(first.clone(), |path| {
-            requests.push(path);
-            ready(Ok(responses.pop_front().unwrap()))
-        })
+        let payload = fetch_all_pages(
+            first.clone(),
+            |path| {
+                requests.push(path);
+                ready(Ok(responses.pop_front().unwrap()))
+            },
+            |_, _, _| Ok(()),
+        )
         .await
         .unwrap();
         assert_eq!(requests, vec![first, second, third]);
@@ -1124,10 +1225,14 @@ mod tests {
             json!({ "value": [{ "id": "active-chat", "chatType": "group" }] }),
         ]);
         let mut requests = Vec::new();
-        let payload = fetch_all_pages(first.clone(), |path| {
-            requests.push(path);
-            ready(Ok(responses.pop_front().unwrap()))
-        })
+        let payload = fetch_all_pages(
+            first.clone(),
+            |path| {
+                requests.push(path);
+                ready(Ok(responses.pop_front().unwrap()))
+            },
+            |_, _, _| Ok(()),
+        )
         .await
         .unwrap();
         assert_eq!(requests, vec![first, second]);
@@ -1150,7 +1255,7 @@ mod tests {
                     {"id": "chat-6", "chatType": "group"}
                 ] })
             }))
-        })
+        }, |_, _, _| Ok(()))
         .await
         .unwrap();
         assert_eq!(extract_chat_ids(&payload).len(), 7);
@@ -1158,21 +1263,186 @@ mod tests {
 
     #[tokio::test]
     async fn history_pagination_rejects_cycles_and_propagates_page_failures() {
-        let cycle = fetch_all_pages("/me/messages".to_string(), |_| {
-            ready(Ok(
-                json!({ "@odata.nextLink": "/me/messages", "value": [] }),
-            ))
-        })
+        let cycle = fetch_all_pages(
+            "/me/messages".to_string(),
+            |_| {
+                ready(Ok(
+                    json!({ "@odata.nextLink": "/me/messages", "value": [] }),
+                ))
+            },
+            |_, _, _| Ok(()),
+        )
         .await
         .unwrap_err();
         assert!(cycle.contains("repeated"));
 
-        let failure = fetch_all_pages("/me/messages".to_string(), |_| {
-            ready(Err("WorkIQ page failed.".to_string()))
-        })
+        let failure = fetch_all_pages(
+            "/me/messages".to_string(),
+            |_| ready(Err("WorkIQ page failed.".to_string())),
+            |_, _, _| Ok(()),
+        )
         .await
         .unwrap_err();
         assert_eq!(failure, "WorkIQ page failed.");
+    }
+
+    #[tokio::test]
+    async fn history_progress_reports_each_page_and_an_exact_final_total() {
+        let mut responses = VecDeque::from([
+            json!({ "results": [{ "data": {
+                "value": [{ "id": "a" }, { "id": "b" }],
+                "@odata.count": 5,
+                "@odata.nextLink": "/me/messages?$skiptoken=second"
+            }}]}),
+            json!({ "value": [{ "id": "c" }, { "id": "d" }],
+                "@odata.nextLink": "/me/messages?$skiptoken=third" }),
+            json!({ "value": [{ "id": "e" }] }),
+        ]);
+        let mut progress = Vec::new();
+        fetch_all_pages(
+            "/me/messages".to_string(),
+            |_| ready(Ok(responses.pop_front().unwrap())),
+            |scanned, total, finished| {
+                progress.push((scanned, total, finished));
+                Ok(())
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            progress,
+            vec![(2, Some(5), false), (4, Some(5), false), (5, Some(5), true)]
+        );
+    }
+
+    #[tokio::test]
+    async fn history_progress_never_invents_a_total_while_more_pages_remain() {
+        for reported in [Value::Null, json!(1)] {
+            let mut responses = VecDeque::from([
+                json!({ "value": [{ "id": "a" }, { "id": "b" }],
+                    "@odata.count": reported, "@odata.nextLink": "/me/messages?$skiptoken=second" }),
+                json!({ "value": [] }),
+            ]);
+            let mut progress = Vec::new();
+            fetch_all_pages(
+                "/me/messages".to_string(),
+                |_| ready(Ok(responses.pop_front().unwrap())),
+                |scanned, total, finished| {
+                    progress.push((scanned, total, finished));
+                    Ok(())
+                },
+            )
+            .await
+            .unwrap();
+            assert_eq!(progress, vec![(2, None, false), (2, Some(2), true)]);
+        }
+    }
+
+    #[tokio::test]
+    async fn history_progress_rejects_invalid_provider_totals_and_observer_failures() {
+        let invalid = fetch_all_pages(
+            "/me/messages".to_string(),
+            |_| ready(Ok(json!({ "value": [], "@odata.count": "secret-value" }))),
+            |_, _, _| Ok(()),
+        )
+        .await
+        .unwrap_err();
+        assert!(invalid.contains("invalid history total"));
+        assert!(!invalid.contains("secret-value"));
+        let observer_error = fetch_all_pages(
+            "/me/messages".to_string(),
+            |_| ready(Ok(json!({ "value": [] }))),
+            |_, _, _| Err("Progress state is unavailable.".to_string()),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(observer_error, "Progress state is unavailable.");
+    }
+
+    #[tokio::test]
+    async fn history_refresh_progress_tracks_both_providers_without_extra_reads_or_content() {
+        use crate::refresh_phase::RefreshPhase;
+
+        let until = DateTime::parse_from_rfc3339("2026-10-26T12:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let mail = |id: &str| {
+            json!({
+                "id": id, "subject": "Fixture-only subject",
+                "from": { "emailAddress": { "name": "Fictional sender", "address": "fictional@example.invalid" }},
+                "body": { "content": "Fixture-only private body" },
+                "receivedDateTime": "2026-10-25T09:00:00Z"
+            })
+        };
+        let team = |id: &str| {
+            json!({
+                "id": id, "from": { "user": { "id": "other", "displayName": "Fictional sender" }},
+                "body": { "content": "Fixture-only private body" },
+                "createdDateTime": "2026-10-25T09:00:00Z"
+            })
+        };
+        let mut responses = VecDeque::from([
+            json!({ "id": "me", "mail": "me@example.invalid" }),
+            json!({ "value": [mail("mail-1")], "@odata.count": 2, "@odata.nextLink": "/me/messages?$skiptoken=second" }),
+            json!({ "value": [mail("mail-2")] }),
+            json!({ "value": [
+                { "id": "chat-1", "chatType": "group" },
+                { "id": "chat-2", "chatType": "group" }
+            ]}),
+            json!({ "value": [team("team-1")], "@odata.nextLink": "/me/chats/chat-1/messages?$skiptoken=second" }),
+            json!({ "value": [team("team-2")] }),
+            json!({ "value": [team("team-3")] }),
+        ]);
+        let mut requests = Vec::new();
+        let mut updates = Vec::new();
+        let messages = fetch_history_with_progress(
+            7,
+            None,
+            until,
+            |paths| {
+                requests.push(paths);
+                ready(Ok(responses.pop_front().unwrap()))
+            },
+            |snapshot| {
+                updates.push(snapshot);
+                Ok(())
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(messages.len(), 5);
+        assert_eq!(
+            requests.len(),
+            7,
+            "Progress must not fetch message bodies twice"
+        );
+        let mail_url =
+            reqwest::Url::parse(&format!("https://graph.microsoft.com{}", requests[1][0])).unwrap();
+        assert!(mail_url
+            .query_pairs()
+            .any(|(key, value)| key == "$count" && value == "true"));
+        assert!(updates.iter().any(|p| p.phase == RefreshPhase::Outlook
+            && p.outlook_scanned == 1
+            && p.outlook_total == Some(2)));
+        assert!(updates.iter().any(|p| p.phase == RefreshPhase::Teams
+            && p.teams_scanned == 1
+            && p.teams_total.is_none()
+            && p.teams_chats_total == Some(2)));
+        let last = updates.last().unwrap();
+        assert_eq!(last.outlook_scanned, 2);
+        assert_eq!(last.teams_scanned, 3);
+        assert_eq!(last.teams_total, Some(3));
+        assert_eq!(last.teams_chats_scanned, 2);
+        let serialized = serde_json::to_string(&updates).unwrap();
+        for forbidden in [
+            "Fixture-only",
+            "Fictional sender",
+            "fictional@example.invalid",
+            "subject",
+            "body",
+        ] {
+            assert!(!serialized.contains(forbidden));
+        }
     }
 
     #[test]

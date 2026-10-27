@@ -25,6 +25,10 @@ namespace SlopGrenadeDesktop
         private Bitmap _surface;
         private Graphics _g;
         private readonly System.Windows.Forms.Timer _timer;
+        private readonly System.Windows.Forms.Timer _hoverTimer;
+        private readonly EffectHoverTracker _hover = new EffectHoverTracker();
+        private readonly EffectDetailsForm _details = new EffectDetailsForm();
+        private readonly Func<Point> _cursorPosition;
         private readonly Stopwatch _clock = Stopwatch.StartNew();
         private long _lastTicks;
         private bool _highRes;
@@ -40,9 +44,10 @@ namespace SlopGrenadeDesktop
 
         public ISfxSink Sfx { get; set; }
 
-        public OverlayForm(float flyDelaySeconds)
+        public OverlayForm(float flyDelaySeconds, Func<Point> cursorPosition = null)
         {
             _flyDelay = flyDelaySeconds;
+            _cursorPosition = cursorPosition ?? delegate { return Cursor.Position; };
             FormBorderStyle = FormBorderStyle.None;
             ShowInTaskbar = false;
             StartPosition = FormStartPosition.Manual;
@@ -52,6 +57,9 @@ namespace SlopGrenadeDesktop
             _timer = new System.Windows.Forms.Timer();
             _timer.Interval = 15;
             _timer.Tick += OnTick;
+            _hoverTimer = new System.Windows.Forms.Timer();
+            _hoverTimer.Interval = 100;
+            _hoverTimer.Tick += OnHoverTick;
             _ptDst = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(NativeMethods.POINT)));
             _ptSrc = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(NativeMethods.POINT)));
             _size = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(NativeMethods.SIZE)));
@@ -78,6 +86,8 @@ namespace SlopGrenadeDesktop
 
         private void BuildSurface(Rectangle screen)
         {
+            _details.ClearMessage();
+            _hover.Update(null, Point.Empty, _clock.Elapsed.TotalMilliseconds);
             ReleaseSurface();
             _w = Math.Max(1, screen.Width);
             _h = Math.Max(1, screen.Height);
@@ -159,9 +169,10 @@ namespace SlopGrenadeDesktop
             if (_highRes) { NativeMethods.timeEndPeriod(1); _highRes = false; }
         }
 
-        public void Trigger(EffectTier tier, Side side)
+        public void Trigger(EffectTier tier, Side side, EffectMessage message = null)
         {
-            _world.Trigger(tier, side);
+            _world.Trigger(tier, side, message);
+            if (message != null) _hoverTimer.Start();
             Wake();
         }
 
@@ -180,6 +191,17 @@ namespace SlopGrenadeDesktop
         public void GetSlopCounts(out int left, out int right)
         {
             _world.SlopCounts(out left, out right);
+        }
+
+        private void OnHoverTick(object sender, EventArgs e)
+        {
+            if (IsDisposed || _world == null) return;
+            Point cursor = _cursorPosition();
+            EffectMessage message = _hover.Update(
+                _world.MessageAt(cursor.X - Left, cursor.Y - Top), cursor, _clock.Elapsed.TotalMilliseconds);
+            if (message == null) _details.ClearMessage();
+            else _details.ShowMessage(message, cursor, Screen.PrimaryScreen.WorkingArea);
+            if (!_world.HasHoverTargets) _hoverTimer.Stop();
         }
 
         private void OnTick(object sender, EventArgs e)
@@ -305,6 +327,8 @@ namespace SlopGrenadeDesktop
                 Microsoft.Win32.SystemEvents.DisplaySettingsChanged -= OnDisplayChanged;
                 Sleep();
                 _timer.Dispose();
+                _hoverTimer.Dispose();
+                _details.Dispose();
                 if (_world != null) _world.Dispose();
                 _clearBrush.Dispose();
             }

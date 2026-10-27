@@ -31,20 +31,23 @@ namespace SlopGrenadeDesktop
 
         public static void Report(string what, Exception ex)
         {
-            string key = what + "|" + ex.GetType().Name + "|" + ex.Message;
-            if (!Seen.Add(key) || _written >= 40) return;
-            _written++;
-            string line = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "  [" + what + "] " + ex;
-            Trace.WriteLine("Slop Grenade overlay: " + line);
-            try
+            lock (Seen)
             {
-                Directory.CreateDirectory(Path.GetDirectoryName(LogPath));
-                if (File.Exists(LogPath) && new FileInfo(LogPath).Length > 512 * 1024) File.Delete(LogPath);
-                File.AppendAllText(LogPath, line + Environment.NewLine + Environment.NewLine);
-            }
-            catch (Exception)
-            {
-                // logging must never break drawing
+                string key = what + "|" + ex.GetType().Name + "|" + ex.Message;
+                if (!Seen.Add(key) || _written >= 40) return;
+                _written++;
+                string line = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "  [" + what + "] " + ex;
+                Trace.WriteLine("Slop Grenade overlay: " + line);
+                try
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(LogPath));
+                    if (File.Exists(LogPath) && new FileInfo(LogPath).Length > 512 * 1024) File.Delete(LogPath);
+                    File.AppendAllText(LogPath, line + Environment.NewLine + Environment.NewLine);
+                }
+                catch (Exception)
+                {
+                    // logging must never break drawing
+                }
             }
         }
     }

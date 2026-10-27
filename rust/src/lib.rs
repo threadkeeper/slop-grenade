@@ -9,6 +9,8 @@ pub mod config;
 pub mod event_bus;
 pub mod ledger;
 pub mod llm_luna;
+pub mod refresh_phase;
+pub mod refresh_progress;
 pub mod scanner_daemon;
 pub mod server;
 pub mod slop_detector;

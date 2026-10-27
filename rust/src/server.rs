@@ -7,7 +7,7 @@
 //!   `POST /api/v1/auth/workiq-login`)
 //! - Live message analysis & pre-send self-check (`POST /api/v1/analyze`)
 //! - Instant tier animation simulation (`POST /api/v1/simulate`)
-//! - On-demand WorkIQ MCP M365 scan (`POST /api/v1/scan/now`)
+//! - On-demand WorkIQ scan and live counters (`POST /api/v1/scan/now`, `GET /api/v1/scan/progress`)
 //! - Self-awareness scorecard & recent feed (`GET /api/v1/ledger`)
 //! - Real-time SSE animation stream (`GET /api/v1/events/stream`)
 
@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::extract::State;
+use axum::extract::{Query, State};
 use axum::http::{HeaderValue, Method, StatusCode, Uri};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
@@ -154,6 +154,14 @@ pub struct ScanNowRequest {
     pub use_luna: bool,
     /// Days (`1..=30`) for a complete, quiet history backfill; omitted for the normal recent poll.
     pub lookback_days: Option<u8>,
+    /// Optional opaque ID for metadata-only history progress.
+    pub refresh_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RefreshProgressQuery {
+    refresh_id: Option<String>,
 }
 
 /// Request payload for `POST /api/v1/squeegee`.
@@ -182,6 +190,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v1/simulate", post(handle_simulate))
         .route("/api/v1/squeegee", post(handle_squeegee))
         .route("/api/v1/scan/now", post(handle_scan_now))
+        .route("/api/v1/scan/progress", get(handle_refresh_progress))
         .fallback(handle_static_fallback)
         .layer(axum::middleware::from_fn(cors_middleware))
         .with_state(state)
@@ -347,6 +356,16 @@ async fn handle_scan_now(
 ) -> Response {
     let request = payload.map(|payload| payload.0).unwrap_or_default();
     if request
+        .refresh_id
+        .as_ref()
+        .is_some_and(|id| request.lookback_days.is_none() || !valid_refresh_id(id))
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "ok": false, "error": "refreshId requires a history window and 1-64 letters, digits or hyphens." })),
+        ).into_response();
+    }
+    if request
         .lookback_days
         .is_some_and(|days| !(1..=MAX_LOOKBACK_DAYS).contains(&days))
     {
@@ -367,7 +386,12 @@ async fn handle_scan_now(
             .into_response();
     }
     let batch = match request.lookback_days {
-        Some(days) => state.daemon.refresh_history(days).await,
+        Some(days) => {
+            state
+                .daemon
+                .refresh_history_with_id(days, request.refresh_id)
+                .await
+        }
         None => state.daemon.poll_workiq_once(request.use_luna).await,
     };
     match batch {
@@ -381,8 +405,45 @@ async fn handle_scan_now(
             Json(json!({
                 "ok": false,
                 "error": err,
-                "hint": "Run `workiq ask` to sign in with your M365 work account, then retry."
+                "hint": "If WorkIQ needs sign-in, run `workiq ask`; if a history refresh is active, wait for it to finish."
             })),
+        )
+            .into_response(),
+    }
+}
+
+fn valid_refresh_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 64
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+}
+
+async fn handle_refresh_progress(
+    State(state): State<AppState>,
+    Query(query): Query<RefreshProgressQuery>,
+) -> Response {
+    if query
+        .refresh_id
+        .as_ref()
+        .is_some_and(|id| !valid_refresh_id(id))
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "ok": false, "error": "Invalid refresh ID." })),
+        )
+            .into_response();
+    }
+    match state.daemon.refresh_progress(query.refresh_id.as_deref()) {
+        Ok(progress) => (
+            [(axum::http::header::CACHE_CONTROL, "no-store")],
+            Json(json!({ "progress": progress })),
+        )
+            .into_response(),
+        Err(error) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "ok": false, "error": error })),
         )
             .into_response(),
     }

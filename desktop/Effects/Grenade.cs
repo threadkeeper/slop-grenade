@@ -10,6 +10,7 @@ namespace SlopGrenadeDesktop
 {
     internal sealed class Grenade
     {
+        public EffectMessage Message;
         public float X, Y, Vx, Vy, Angle, Spin, Age, SparkPhase;
         public readonly float FlightTime, Gravity, TargetX, TargetY;
         public readonly Side Side;
