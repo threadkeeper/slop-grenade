@@ -249,6 +249,17 @@ The [Android compatibility workflow](./.github/workflows/android.yml) runs the R
 
 Do not put OAuth client secrets, Google passwords, personal mailbox data or signing keys in this repository. An Android OAuth client is identified by the registered package/certificate, not an embedded confidential-client secret.
 
+#### Troubleshooting Add mailbox
+
+Older APKs report **Mailbox operation failed (HTTP 409)** for every authorization or Gmail profile failure, not just a conflicting request. That message alone does not identify the cause and does not mean the mailbox is already connected.
+
+- If Google rejects the app's configuration, the app distributor must verify the Android OAuth registration for package `com.threadkeeper.slopgrenade` and the **installed APK's signing certificate SHA-1**. A registration for a different debug or release certificate will not work. The end user should not need to create an OAuth project or supply a client secret.
+- If access is denied, verify the Gmail API is enabled, the account is permitted on a testing consent screen, and any Workspace policy allows the requested read-only scope.
+- For temporary failures, check connectivity and Google Play services, then retry **Add Gmail account**. If consent was cancelled, retry and complete Google's permission screen.
+- A genuine authorization-in-progress conflict means finish or cancel the existing account chooser before starting another request.
+
+Connection errors expose only fixed diagnostic codes and safe guidance, never raw Google exception messages, tokens or Gmail response bodies. Real-device authorization with the distributed APK remains required; unit tests cannot verify its external Google Cloud configuration.
+
 References: [Android authorization](https://developer.android.com/identity/authorization), [Gmail scopes](https://developers.google.com/workspace/gmail/api/auth/scopes), [incremental synchronization](https://developers.google.com/workspace/gmail/api/guides/sync).
 
 ### Scanning and privacy contract
@@ -309,4 +320,3 @@ Slop Grenade follows the **threadkeeper** software assurance and defense-in-dept
   - `<untrusted_message>` Fencing: Wraps untrusted email/Teams subjects and bodies in explicit XML delimiters and neutralizes embedded closing tags before sending to GPT Luna.
   - `sanitize_workiq_account`: Rejects leading `-` flags, whitespace, shell metacharacters, and control characters on `--account` values passed to the `workiq` CLI.
 - **Private-Tenant Container Defaults (`infra/main.bicep`, `Dockerfile`)**: Defaults Azure Container Apps ingress to internal (`externalIngress: bool = false`, `allowInsecure: false`) with `/api/v1/health` liveness/readiness probes and non-root (`USER appuser`, UID `10001`), `--locked` container builds.
-

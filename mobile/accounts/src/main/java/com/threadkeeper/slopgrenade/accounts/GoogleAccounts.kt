@@ -6,7 +6,6 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import com.google.android.gms.auth.api.identity.AuthorizationRequest
-import com.google.android.gms.auth.api.identity.AuthorizationResult
 import com.google.android.gms.auth.api.identity.Identity
 import com.google.android.gms.common.AccountPicker
 import com.google.android.gms.common.api.Scope
@@ -21,11 +20,7 @@ class GoogleAccounts(private val context: Context) {
     class Reconnect : AuthorizationRequired()
     class Transient : Exception("Google authorization temporarily unavailable")
     private val scope = Scope("https://www.googleapis.com/auth/gmail.readonly")
-    private var pending: CompletableFuture<Pair<String, String>>? = null
-    private var selected: String? = null
-    private var expected: String? = null
-    private val chooseCode = 4101
-    private val consentCode = 4102
+    private val flow = ConsentFlow()
 
     private fun request(email: String) = AuthorizationRequest.builder()
         .setAccount(Account(email, "com.google")).setRequestedScopes(listOf(scope)).build()
@@ -51,67 +46,65 @@ class GoogleAccounts(private val context: Context) {
 
     /** Must be invoked on main; concurrent consent requests are rejected rather than misrouted. */
     fun connect(activity: Activity, email: String? = null): CompletableFuture<Pair<String, String>> {
-        if (pending != null) return CompletableFuture<Pair<String, String>>().also {
-            it.completeExceptionally(IllegalStateException("Authorization already active"))
+        val operation = try { flow.begin(email) } catch (failure: MailboxFailure) {
+            return CompletableFuture<Pair<String, String>>().also { it.completeExceptionally(failure) }
         }
-        val result = CompletableFuture<Pair<String, String>>()
-        pending = result
-        expected = email
-        selected = email
-        if (email != null) authorize(activity, email)
+        if (email != null) authorize(activity, email, operation)
         else {
             try {
                 val intent = AccountPicker.newChooseAccountIntent(AccountPicker.AccountChooserOptions.Builder()
                     .setAllowableAccountsTypes(listOf("com.google")).setAlwaysShowAccountPicker(true).build())
-                activity.startActivityForResult(intent, chooseCode)
-            } catch (_: Exception) { fail() }
+                activity.startActivityForResult(intent, operation.chooseCode)
+            } catch (failure: Exception) { fail(operation, failure) }
         }
-        return result
+        return operation.future
     }
 
-    private fun authorize(activity: Activity, email: String) {
-        val operation = pending ?: return
-        Identity.getAuthorizationClient(activity).authorize(request(email))
-            .addOnSuccessListener { result ->
-                if (pending !== operation || activity.isDestroyed || activity.isFinishing) return@addOnSuccessListener
-                if (result.hasResolution()) {
+    private fun authorize(activity: Activity, email: String, operation: ConsentFlow.Attempt) {
+        // authorize() itself can throw before a Task is returned. Always settle this attempt.
+        try {
+            Identity.getAuthorizationClient(activity).authorize(request(email))
+                .addOnSuccessListener { result ->
+                    if (flow.active !== operation) return@addOnSuccessListener
+                    if (activity.isDestroyed || activity.isFinishing) {
+                        flow.fail(operation, MailboxError.GOOGLE_CANCELLED)
+                        return@addOnSuccessListener
+                    }
                     try {
-                        activity.startIntentSenderForResult(result.pendingIntent!!.intentSender, consentCode, null, 0, 0, 0)
-                    } catch (_: Exception) { fail() }
-                } else finish(result)
-            }.addOnFailureListener { fail() }
+                        if (result.hasResolution()) {
+                            val resolution = result.pendingIntent
+                                ?: throw MailboxFailure(MailboxError.GOOGLE_UNAVAILABLE)
+                            activity.startIntentSenderForResult(resolution.intentSender, operation.consentCode, null, 0, 0, 0)
+                        } else flow.finish(operation, operation.selected, result.accessToken)
+                    } catch (failure: Exception) { fail(operation, failure) }
+                }.addOnFailureListener { failure -> fail(operation, failure) }
+                .addOnCanceledListener { flow.fail(operation, MailboxError.GOOGLE_CANCELLED) }
+        } catch (failure: Exception) { fail(operation, failure) }
     }
 
     fun onActivityResult(activity: Activity, code: Int, resultCode: Int, data: Intent?): Boolean {
-        if (code != chooseCode && code != consentCode) return false
-        if (pending == null) return true
-        if (resultCode != Activity.RESULT_OK || data == null) { fail(); return true }
-        if (code == chooseCode) {
+        val operation = flow.active ?: return false
+        if (code != operation.chooseCode && code != operation.consentCode) return false
+        if (resultCode != Activity.RESULT_OK || data == null) {
+            flow.fail(operation, MailboxError.GOOGLE_CANCELLED)
+            return true
+        }
+        if (code == operation.chooseCode) {
             val email = data.getStringExtra(AccountManager.KEY_ACCOUNT_NAME)
-            if (email.isNullOrBlank()) fail()
-            else { selected = email; authorize(activity, email) }
+            if (email.isNullOrBlank()) flow.fail(operation, MailboxError.GOOGLE_PERMISSION)
+            else { operation.selected = email; authorize(activity, email, operation) }
         } else {
-            try { finish(Identity.getAuthorizationClient(activity).getAuthorizationResultFromIntent(data)) }
-            catch (_: Exception) { fail() }
+            try {
+                val result = Identity.getAuthorizationClient(activity).getAuthorizationResultFromIntent(data)
+                flow.finish(operation, operation.selected, result.accessToken)
+            } catch (failure: Exception) { fail(operation, failure) }
         }
         return true
     }
 
-    private fun finish(result: AuthorizationResult) {
-        val email = selected
-        val token = result.accessToken
-        if (email == null || token == null || (expected != null && AccountState.identity(email) != AccountState.identity(expected!!))) {
-            fail(); return
-        }
-        val future = pending
-        pending = null; selected = null; expected = null
-        future?.complete(email to token)
-    }
-
-    fun cancel() = fail()
-    private fun fail() {
-        val future = pending
-        pending = null; selected = null; expected = null
-        future?.completeExceptionally(Reconnect())
+    fun cancel() { flow.active?.let { flow.fail(it, MailboxError.GOOGLE_CANCELLED) } }
+    private fun fail(operation: ConsentFlow.Attempt, failure: Exception) {
+        val cause = AuthorizationPolicy.unwrap(failure)
+        flow.fail(operation, AuthorizationPolicy.classify(cause, (cause as? ApiException)?.statusCode))
     }
 }

@@ -31,6 +31,60 @@ afterEach(() => {
 });
 
 describe('native mailbox controller', () => {
+  it.each([
+    ['google_configuration', 422, 'OAuth configuration'],
+    ['google_network', 503, 'connection'],
+    ['google_cancelled', 400, 'cancelled'],
+    ['google_permission', 403, 'permission'],
+    ['google_reconnect', 401, 'Reconnect'],
+    ['google_unavailable', 503, 'Google Play services'],
+    ['authorization_active', 409, 'Finish'],
+    ['gmail_permission', 403, 'Gmail API'],
+    ['gmail_reconnect', 401, 'Reconnect'],
+    ['gmail_rate_limited', 429, 'later'],
+    ['gmail_unavailable', 502, 'verification'],
+    ['mailbox_identity_mismatch', 422, 'same Google account'],
+    ['mailbox_account_not_found', 404, 'Refresh'],
+    ['mailbox_conflict', 409, 'conflicts']
+  ])('shows local actionable guidance for %s and permits retry', async (code, http, message) => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(json({
+      code, retryable: !['google_configuration', 'google_permission', 'google_reconnect',
+        'gmail_permission', 'gmail_reconnect', 'mailbox_identity_mismatch',
+        'mailbox_account_not_found', 'mailbox_conflict'].includes(code), error: 'PRIVATE RAW ERROR'
+    }, http)).mockResolvedValueOnce(json({ ok: true })).mockResolvedValueOnce(json(status));
+    const { controller, state } = setup(fetcher);
+    await controller.add();
+    expect(state().error).toContain(message);
+    expect(state().error).not.toContain('PRIVATE');
+    expect(state().busy).toBe(false);
+    await controller.add();
+    expect(state().error).toBeNull();
+    expect(state().busy).toBe(false);
+    expect(state().accounts).toEqual([account]);
+  });
+
+  it.each([
+    { code: 'unknown', retryable: false, error: 'PRIVATE' },
+    { code: 'mailbox_unknown', retryable: false }, { code: '__proto__', retryable: true },
+    { code: 'constructor', retryable: true },
+    { code: 'google_network', retryable: 'yes' }, [], null, 'PRIVATE'
+  ])('falls back safely for unknown or malformed error bodies: %j', async (body) => {
+    const { controller, state } = setup(vi.fn<typeof fetch>().mockResolvedValue(json(body, 503)));
+    await controller.add();
+    expect(state().error).toBe('Mailbox operation failed (HTTP 503).');
+    expect(state().busy).toBe(false);
+  });
+
+  it('handles invalid JSON and mismatched code/status without exposing content', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(new Response('PRIVATE', { status: 502 }))
+      .mockResolvedValueOnce(json({ code: 'google_cancelled', retryable: false }, 409));
+    const { controller, state } = setup(fetcher);
+    await controller.add();
+    expect(state().error).toBe('Mailbox operation failed (HTTP 502).');
+    await controller.add();
+    expect(state().error).toBe('Mailbox operation failed (HTTP 409).');
+    expect(state().busy).toBe(false);
+  });
   it('notifies the dashboard after successful add, reconnect and disconnect, not on failure', async () => {
     const changed = vi.fn();
     const fetcher = vi.fn<typeof fetch>().mockImplementation(async (path) =>

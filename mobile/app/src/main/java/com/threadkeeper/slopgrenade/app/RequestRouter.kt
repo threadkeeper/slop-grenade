@@ -4,6 +4,8 @@ import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import com.threadkeeper.slopgrenade.accounts.AccountState
+import com.threadkeeper.slopgrenade.accounts.MailboxError
+import com.threadkeeper.slopgrenade.accounts.MailboxFailure
 import com.threadkeeper.slopgrenade.gmail.GmailClient
 import org.json.JSONArray
 import org.json.JSONObject
@@ -20,7 +22,7 @@ class RequestRouter(private val activity: MainActivity, private val runtime: Mob
             try {
                 check(!activity.isFinishing && !activity.isDestroyed) { "Activity unavailable" }
                 future.complete(action())
-            } catch (_: Exception) { future.completeExceptionally(IllegalStateException("Activity unavailable")) }
+            } catch (failure: Exception) { future.completeExceptionally(failure) }
         }
         return future
     }
@@ -28,25 +30,26 @@ class RequestRouter(private val activity: MainActivity, private val runtime: Mob
         val reconnect = Regex("""/api/v1/accounts/([a-f0-9]{64})/reconnect""").matchEntire(path)
         if (method == "POST" && (path == "/api/v1/accounts/add" || reconnect != null)) {
             if (!runtime.consentActive.compareAndSet(false, true))
-                return CompletableFuture.completedFuture(error(409, "Authorization already active"))
+                return CompletableFuture.completedFuture(MailboxErrorMapper.response(MailboxError.AUTHORIZATION_ACTIVE))
             val id = reconnect?.groupValues?.get(1)
             return CompletableFuture.supplyAsync({
                 if (id == null) null else (runtime.accounts.all().find { it.id == id }?.label
-                    ?: throw IllegalArgumentException("Account not found"))
+                    ?: throw MailboxFailure(MailboxError.ACCOUNT_NOT_FOUND))
             }, runtime.io).thenCompose { email ->
                 onMain { activity.authorize(email) }.thenCompose { it }
             }.thenApplyAsync({ (selected, token) ->
                 // Verify identity from Gmail itself, not just a caller-provided account label.
                 val profile = GmailClient.https(token).get("/profile")
                 val email = profile.getString("emailAddress")
-                require(AccountState.identity(selected) == AccountState.identity(email))
+                if (email.isBlank() || AccountState.identity(selected) != AccountState.identity(email))
+                    throw MailboxFailure(MailboxError.IDENTITY_MISMATCH)
                 val account = runtime.engine.connect(email, id)
                 GmailWorker.schedule(activity.applicationContext)
                 runtime.io.execute { try { runtime.engine.scanAll() } catch (_: Exception) { /* Worker retries. */ } }
                 response(200, JSONObject().put("ok", true).put("account", accountJson(account)))
             }, runtime.io).handle { value, failure ->
                 runtime.consentActive.set(false)
-                value ?: error(if (failure != null) 409 else 503, "Google authorization unavailable or cancelled")
+                value ?: MailboxErrorMapper.body(failure ?: MailboxFailure(MailboxError.UNKNOWN))
             }
         }
         if (method == "POST" && path == "/api/v1/overlay/permission") {
@@ -65,7 +68,7 @@ class RequestRouter(private val activity: MainActivity, private val runtime: Mob
                     .put("overlayScope", "user-started-foreground-service")
                     .put("notificationsGranted", OverlayService.notificationsAllowed(activity)))
                 method == "DELETE" && path.matches(Regex("""/api/v1/accounts/[a-f0-9]{64}""")) -> {
-                    if (runtime.consentActive.get()) error(409, "Finish account authorization first")
+                    if (runtime.consentActive.get()) MailboxErrorMapper.response(MailboxError.AUTHORIZATION_ACTIVE)
                     else {
                         val disconnected = runtime.engine.disconnect(path.substringAfterLast('/'))
                         if (runtime.accounts.all().isEmpty()) GmailWorker.cancel(activity.applicationContext)
