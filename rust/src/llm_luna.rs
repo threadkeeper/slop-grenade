@@ -182,7 +182,7 @@ impl LunaClient {
             }
         }
 
-        let mut cmd = Command::new("gh");
+        let mut cmd = Command::new(resolve_gh_binary());
         cmd.args(["auth", "token"])
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -209,7 +209,7 @@ impl LunaClient {
                 return guard.clone();
             }
         }
-        let mut cmd = Command::new("gh");
+        let mut cmd = Command::new(resolve_gh_binary());
         cmd.args(["api", "user", "--jq", ".login"])
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -228,6 +228,26 @@ impl LunaClient {
         }
         None
     }
+}
+
+fn resolve_gh_binary() -> std::path::PathBuf {
+    if let Ok(path_var) = env::var("PATH") {
+        for dir in env::split_paths(&path_var) {
+            for name in ["gh.exe", "gh"] {
+                let candidate = dir.join(name);
+                if candidate.exists() {
+                    return candidate;
+                }
+            }
+        }
+    }
+    for fallback in ["/opt/homebrew/bin/gh", "/usr/local/bin/gh"] {
+        let candidate = std::path::PathBuf::from(fallback);
+        if candidate.exists() {
+            return candidate;
+        }
+    }
+    std::path::PathBuf::from("gh")
 }
 
 /// Validate that the configured GPT Luna endpoint is either a trusted `https://` GitHub/Azure

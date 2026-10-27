@@ -166,6 +166,17 @@ The Windows desktop compatibility workflow runs the same tests and production co
     /out:desktop\slop-grenade-overlay.exe /recurse:desktop\*.cs
 ```
 
+### Native macOS Menu Bar & Screen Overlay (`macos/`)
+```bash
+swiftc -O -target arm64-apple-macos13.0 macos/SlopGrenadeOverlay.swift \
+  -framework Cocoa -framework WebKit -o macos/build/slop-grenade-overlay-arm64
+swiftc -O -target x86_64-apple-macos13.0 macos/SlopGrenadeOverlay.swift \
+  -framework Cocoa -framework WebKit -o macos/build/slop-grenade-overlay-x86_64
+lipo -create macos/build/slop-grenade-overlay-arm64 macos/build/slop-grenade-overlay-x86_64 \
+  -output macos/build/slop-grenade-overlay
+```
+The [macOS desktop compatibility workflow](./.github/workflows/macos.yml) builds both `aarch64-apple-darwin` and `x86_64-apple-darwin` targets for the Rust daemon and the Swift menu-bar/screen overlay, combines them with `lipo` into Universal binaries inside `Slop Grenade.app`, and publishes `slop-grenade-macos-universal.tar.gz` + `.sha256`.
+
 ---
 
 ## 4. Private-Tenant Container Deployment

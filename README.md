@@ -3,14 +3,15 @@
 [![CI](https://github.com/threadkeeper/slop-grenade/actions/workflows/ci.yml/badge.svg)](https://github.com/threadkeeper/slop-grenade/actions/workflows/ci.yml)
 [![Software Assurance](https://github.com/threadkeeper/slop-grenade/actions/workflows/assurance.yml/badge.svg)](https://github.com/threadkeeper/slop-grenade/actions/workflows/assurance.yml)
 [![Windows Desktop](https://github.com/threadkeeper/slop-grenade/actions/workflows/desktop.yml/badge.svg)](https://github.com/threadkeeper/slop-grenade/actions/workflows/desktop.yml)
+[![macOS Desktop](https://github.com/threadkeeper/slop-grenade/actions/workflows/macos.yml/badge.svg)](https://github.com/threadkeeper/slop-grenade/actions/workflows/macos.yml)
 [![Android & Shared Core](https://github.com/threadkeeper/slop-grenade/actions/workflows/android.yml/badge.svg)](https://github.com/threadkeeper/slop-grenade/actions/workflows/android.yml)
 [![Latest Release](https://img.shields.io/github/v/release/threadkeeper/slop-grenade?label=verified%20release)](https://github.com/threadkeeper/slop-grenade/releases/latest)
 
-**Slop Grenade** is a lightweight Windows desktop companion that helps you and your team notice—and break—the habit of sending unedited AI-generated fluff across chat and email.
+**Slop Grenade** is a lightweight Windows and macOS desktop companion that helps you and your team notice—and break—the habit of sending unedited AI-generated fluff across chat and email.
 
-It runs quietly in the background on your Windows PC, watches the messages you send and receive through connected services, and gives instant visual feedback right on the edges of your monitor.
+It runs quietly in the background on your PC or Mac, watches the messages you send and receive through connected services, and gives instant visual feedback right on the edges of your monitor.
 
-**Connectors:** Outlook and Teams are available on Windows through WorkIQ. Gmail has an experimental Android app with separate Google authorization setup. Slack and other providers are planned.
+**Connectors:** Outlook and Teams are available on Windows and macOS through WorkIQ. Gmail has an experimental Android app with separate Google authorization setup. Slack and other providers are planned.
 
 <p align="center">
   <img src="docs/screenshots/grenade-throw.gif" width="640" alt="A small pink grenade with a cheeky face is thrown at the left edge of the screen, slows down for a moment just before impact, then pops and splats pink slop on the edge next to an email inbox">
@@ -27,6 +28,7 @@ Every release and CI build publishes **SHA-256 checksums** alongside its artifac
 | Platform | Verified Download | SHA-256 Checksum | Build Provenance |
 | :--- | :--- | :--- | :--- |
 | **Windows 10/11 (x64 Portable Bundle)** | [`slop-grenade-windows-x64.zip`](https://github.com/threadkeeper/slop-grenade/releases/latest/download/slop-grenade-windows-x64.zip) | [`slop-grenade-windows-x64.zip.sha256`](https://github.com/threadkeeper/slop-grenade/releases/latest/download/slop-grenade-windows-x64.zip.sha256) | [Windows Desktop Workflow](https://github.com/threadkeeper/slop-grenade/actions/workflows/desktop.yml) |
+| **macOS 13+ (Apple Silicon & Intel Universal)** | [`slop-grenade-macos-universal.tar.gz`](https://github.com/threadkeeper/slop-grenade/releases/latest/download/slop-grenade-macos-universal.tar.gz) | [`slop-grenade-macos-universal.tar.gz.sha256`](https://github.com/threadkeeper/slop-grenade/releases/latest/download/slop-grenade-macos-universal.tar.gz.sha256) | [macOS Desktop Workflow](https://github.com/threadkeeper/slop-grenade/actions/workflows/macos.yml) |
 | **Android 11+ (Gmail Experimental APK)** | [`slop-grenade-android-debug.apk`](https://github.com/threadkeeper/slop-grenade/releases/latest/download/slop-grenade-android-debug.apk) | [`slop-grenade-android-debug.apk.sha256`](https://github.com/threadkeeper/slop-grenade/releases/latest/download/slop-grenade-android-debug.apk.sha256) | [Android Compatibility Workflow](https://github.com/threadkeeper/slop-grenade/actions/workflows/android.yml) |
 | **All Releases & Release Notes** | [GitHub Releases (`threadkeeper/slop-grenade/releases`)](https://github.com/threadkeeper/slop-grenade/releases/latest) | Included per asset | [Software Assurance Pipeline](https://github.com/threadkeeper/slop-grenade/actions/workflows/assurance.yml) |
 
@@ -40,6 +42,16 @@ Invoke-WebRequest https://github.com/threadkeeper/slop-grenade/releases/latest/d
 $expected = (Get-Content .\slop-grenade-windows-x64.zip.sha256).Split(' ')[0].Trim().ToLowerInvariant()
 $actual   = (Get-FileHash .\slop-grenade-windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
 if ($actual -eq $expected) { Write-Host "SHA-256 verified: $actual" -ForegroundColor Green } else { throw "SHA-256 mismatch!" }
+```
+
+**macOS (Universal Bundle `arm64` + `x86_64`):**
+```bash
+# Download the macOS Universal bundle + checksum, verify SHA-256, and install
+curl -fsSLO https://github.com/threadkeeper/slop-grenade/releases/latest/download/slop-grenade-macos-universal.tar.gz
+curl -fsSLO https://github.com/threadkeeper/slop-grenade/releases/latest/download/slop-grenade-macos-universal.tar.gz.sha256
+shasum -a 256 -c slop-grenade-macos-universal.tar.gz.sha256
+mkdir -p slop-grenade-macos && tar -xzf slop-grenade-macos-universal.tar.gz -C slop-grenade-macos
+./slop-grenade-macos/install-macos.sh
 ```
 
 **macOS / Linux (for verifying the Android APK before sideloading):**
@@ -181,19 +193,31 @@ Local scoring and the history refresh do not require LLM requests. Optional Copi
 
 ---
 
-### Step 3: Install and Run on Windows
+### Step 3: Install and Run on Windows or macOS
 
-From the repository folder, run the one-step local installer:
+**On Windows (PowerShell):**
 
 ```powershell
 .\scripts\install-local.ps1
 ```
 
-What this does automatically:
+What this does automatically on Windows:
 1. Installs the app into your local Windows profile (`%LOCALAPPDATA%\SlopGrenade`).
 2. Adds **Slop Grenade** shortcuts to your **Desktop** and **Start Menu**.
 3. Configures Slop Grenade to **start automatically when you sign in to Windows** (you can toggle this on or off anytime from the System Tray icon).
 4. Starts the background scanner and the desktop screen overlay immediately.
+
+**On macOS (Terminal):**
+
+```bash
+./scripts/install-macos.sh
+```
+
+What this does automatically on macOS:
+1. Installs the Universal (`arm64` + `x86_64`) **`Slop Grenade.app`** bundle into `~/Applications/Slop Grenade.app`.
+2. Clears quarantine attributes and ad-hoc signs the bundle so it launches cleanly on Apple Silicon and Intel Macs.
+3. Registers a LaunchAgent (`~/Library/LaunchAgents/com.threadkeeper.slop-grenade.plist`) so Slop Grenade starts automatically on macOS login.
+4. Starts the background M365 scanner daemon, the click-through macOS desktop screen overlay, and the `💥` macOS Menu Bar control menu.
 
 ---
 

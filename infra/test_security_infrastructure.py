@@ -22,6 +22,9 @@ class SecurityInfrastructureTests(unittest.TestCase):
         cls.assurance = (
             cls.repo_root / ".github" / "workflows" / "assurance.yml"
         ).read_text(encoding="utf-8")
+        cls.macos_workflow = (
+            cls.repo_root / ".github" / "workflows" / "macos.yml"
+        ).read_text(encoding="utf-8")
 
     def test_bicep_defaults_to_internal_private_tenant_ingress_and_https_only(self) -> None:
         self.assertIn("param externalIngress bool = false", self.bicep)
@@ -71,6 +74,15 @@ class SecurityInfrastructureTests(unittest.TestCase):
         self.assertIn("rustsec/audit-check@", self.assurance)
         self.assertIn("EmbarkStudios/cargo-deny-action@", self.assurance)
         self.assertIn("--audit-level=low", self.assurance)
+
+    def test_macos_workflow_builds_locked_universal_bundle_and_sha256_checksum(
+        self,
+    ) -> None:
+        self.assertIn("aarch64-apple-darwin", self.macos_workflow)
+        self.assertIn("x86_64-apple-darwin", self.macos_workflow)
+        self.assertIn("cargo build --locked --manifest-path rust/Cargo.toml --release", self.macos_workflow)
+        self.assertIn("slop-grenade-macos-universal.tar.gz.sha256", self.macos_workflow)
+        self.assertIn("gh release upload", self.macos_workflow)
 
 
 if __name__ == "__main__":

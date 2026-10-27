@@ -696,7 +696,7 @@ fn redact_user_path(path: &Path) -> String {
     raw
 }
 
-/// Resolve the `workiq` binary path from explicit configuration, `PATH`, or standard Windows locations.
+/// Resolve the `workiq` binary path from explicit configuration, `PATH`, or standard Windows/macOS locations.
 pub fn resolve_workiq_binary(explicit: Option<PathBuf>) -> Option<PathBuf> {
     if let Some(p) = explicit {
         if p.exists() {
@@ -711,6 +711,21 @@ pub fn resolve_workiq_binary(explicit: Option<PathBuf>) -> Option<PathBuf> {
             PathBuf::from(&userprofile)
                 .join(r"AppData\Roaming\npm\node_modules\@microsoft\workiq\bin\win-x64\workiq.exe"),
             PathBuf::from(&userprofile).join(r".local\bin\workiq.exe"),
+        ];
+        for c in candidates {
+            if c.exists() {
+                return Some(c);
+            }
+        }
+    }
+
+    if let Ok(home) = env::var("HOME") {
+        let home_path = PathBuf::from(&home);
+        let candidates = [
+            home_path.join(".local/bin/workiq"),
+            home_path.join(".npm-global/bin/workiq"),
+            PathBuf::from("/opt/homebrew/bin/workiq"),
+            PathBuf::from("/usr/local/bin/workiq"),
         ];
         for c in candidates {
             if c.exists() {
