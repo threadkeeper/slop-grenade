@@ -340,3 +340,69 @@ async fn simulate_and_analyze_endpoints_populate_ledger_and_recent_events() {
     assert_eq!(custom["report"]["tier"], "human_sparkle");
     assert_eq!(custom["report"]["isSlopGrenade"], false);
 }
+
+#[tokio::test]
+async fn enforces_browser_security_headers_and_rejects_foreign_origins() {
+    let base = spawn_test_server().await;
+    let client = reqwest::Client::new();
+
+    // 1. Loopback origin gets explicit Access-Control-Allow-Origin + full security headers
+    let ok_res = client
+        .get(format!("{base}/api/v1/health"))
+        .header("Origin", "http://127.0.0.1:8090")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(ok_res.status(), reqwest::StatusCode::OK);
+    let headers = ok_res.headers();
+    assert_eq!(
+        headers
+            .get("access-control-allow-origin")
+            .and_then(|v| v.to_str().ok()),
+        Some("http://127.0.0.1:8090")
+    );
+    assert_eq!(
+        headers
+            .get("x-content-type-options")
+            .and_then(|v| v.to_str().ok()),
+        Some("nosniff")
+    );
+    assert_eq!(
+        headers.get("x-frame-options").and_then(|v| v.to_str().ok()),
+        Some("DENY")
+    );
+    assert_eq!(
+        headers.get("referrer-policy").and_then(|v| v.to_str().ok()),
+        Some("no-referrer")
+    );
+    assert!(headers
+        .get("permissions-policy")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.contains("camera=()")));
+    assert!(headers
+        .get("content-security-policy")
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.contains("default-src 'self'") && v.contains("frame-ancestors 'none'")));
+
+    // 2. Foreign origin GET does not receive Access-Control-Allow-Origin
+    let foreign_get = client
+        .get(format!("{base}/api/v1/ledger"))
+        .header("Origin", "https://evil.example.com")
+        .send()
+        .await
+        .unwrap();
+    assert!(foreign_get
+        .headers()
+        .get("access-control-allow-origin")
+        .is_none());
+
+    // 3. Foreign origin POST is rejected with 403 Forbidden before mutating state
+    let foreign_post = client
+        .post(format!("{base}/api/v1/auth/github-token"))
+        .header("Origin", "https://evil.example.com")
+        .json(&json!({ "token": "gho_injected", "enabled": true }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(foreign_post.status(), reqwest::StatusCode::FORBIDDEN);
+}

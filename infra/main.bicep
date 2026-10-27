@@ -13,6 +13,9 @@ param appName string = 'slop-grenade'
 @description('GPT Luna model identifier for GitHub Copilot Responses API.')
 param lunaModel string = 'gpt-5.6-luna'
 
+@description('Whether ingress is reachable outside the Container Apps VNet environment (default false for private-tenant security).')
+param externalIngress bool = false
+
 resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: appName
   location: location
@@ -23,9 +26,10 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
     managedEnvironmentId: containerAppsEnvironmentId
     configuration: {
       ingress: {
-        external: true
+        external: externalIngress
         targetPort: 8090
         transport: 'auto'
+        allowInsecure: false
       }
     }
     template: {
@@ -37,6 +41,26 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             cpu: json('0.5')
             memory: '1Gi'
           }
+          probes: [
+            {
+              type: 'Liveness'
+              httpGet: {
+                path: '/api/v1/health'
+                port: 8090
+              }
+              initialDelaySeconds: 5
+              periodSeconds: 15
+            }
+            {
+              type: 'Readiness'
+              httpGet: {
+                path: '/api/v1/health'
+                port: 8090
+              }
+              initialDelaySeconds: 2
+              periodSeconds: 10
+            }
+          ]
           env: [
             {
               name: 'HTTP_BIND'
@@ -62,3 +86,4 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
 }
 
 output appUrl string = 'https://${containerApp.properties.configuration.ingress.fqdn}'
+output ingressExternal bool = containerApp.properties.configuration.ingress.external

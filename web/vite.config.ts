@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import adapter from '@sveltejs/adapter-static';
 import { sveltekit } from '@sveltejs/kit/vite';
-import { svelte } from '@sveltejs/vite-plugin-svelte';
+import { svelte, vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 import { defineConfig } from 'vitest/config';
 
 const appVersion = readFileSync(new URL('../VERSION', import.meta.url), 'utf8').trim();
@@ -12,7 +13,15 @@ if (/^[a-z]:/.test(process.cwd())) {
 }
 
 export default defineConfig({
-  plugins: process.env.VITEST ? [svelte()] : [sveltekit()],
+  plugins: process.env.VITEST
+    ? [svelte()]
+    : [
+        sveltekit({
+          preprocess: vitePreprocess(),
+          adapter: adapter({ fallback: 'index.html' }),
+          alias: { $lib: 'src/lib' }
+        })
+      ],
   resolve: {
     alias: process.env.VITEST ? { $lib: fileURLToPath(new URL('./src/lib', import.meta.url)) } : {}
   },

@@ -1,5 +1,11 @@
 # Slop Grenade
 
+[![CI](https://github.com/threadkeeper/slop-grenade/actions/workflows/ci.yml/badge.svg)](https://github.com/threadkeeper/slop-grenade/actions/workflows/ci.yml)
+[![Software Assurance](https://github.com/threadkeeper/slop-grenade/actions/workflows/assurance.yml/badge.svg)](https://github.com/threadkeeper/slop-grenade/actions/workflows/assurance.yml)
+[![Windows Desktop](https://github.com/threadkeeper/slop-grenade/actions/workflows/desktop.yml/badge.svg)](https://github.com/threadkeeper/slop-grenade/actions/workflows/desktop.yml)
+[![Android & Shared Core](https://github.com/threadkeeper/slop-grenade/actions/workflows/android.yml/badge.svg)](https://github.com/threadkeeper/slop-grenade/actions/workflows/android.yml)
+[![Latest Release](https://img.shields.io/github/v/release/threadkeeper/slop-grenade?label=verified%20release)](https://github.com/threadkeeper/slop-grenade/releases/latest)
+
 **Slop Grenade** is a lightweight Windows desktop companion that helps you and your team notice—and break—the habit of sending unedited AI-generated fluff across chat and email.
 
 It runs quietly in the background on your Windows PC, watches the messages you send and receive through connected services, and gives instant visual feedback right on the edges of your monitor.
@@ -11,6 +17,37 @@ It runs quietly in the background on your Windows PC, watches the messages you s
 </p>
 
 <p align="center"><b>Someone just sent you slop. Now it is on your screen.</b></p>
+
+---
+
+## Download & Quick Install (Verified Releases + SHA-256)
+
+Every release and CI build publishes **SHA-256 checksums** alongside its artifacts so you can verify integrity before running on your laptop or phone:
+
+| Platform | Verified Download | SHA-256 Checksum | Build Provenance |
+| :--- | :--- | :--- | :--- |
+| **Windows 10/11 (x64 Portable Bundle)** | [`slop-grenade-windows-x64.zip`](https://github.com/threadkeeper/slop-grenade/releases/latest/download/slop-grenade-windows-x64.zip) | [`slop-grenade-windows-x64.zip.sha256`](https://github.com/threadkeeper/slop-grenade/releases/latest/download/slop-grenade-windows-x64.zip.sha256) | [Windows Desktop Workflow](https://github.com/threadkeeper/slop-grenade/actions/workflows/desktop.yml) |
+| **Android 11+ (Gmail Experimental APK)** | [`slop-grenade-android-debug.apk`](https://github.com/threadkeeper/slop-grenade/releases/latest/download/slop-grenade-android-debug.apk) | [`slop-grenade-android-debug.apk.sha256`](https://github.com/threadkeeper/slop-grenade/releases/latest/download/slop-grenade-android-debug.apk.sha256) | [Android Compatibility Workflow](https://github.com/threadkeeper/slop-grenade/actions/workflows/android.yml) |
+| **All Releases & Release Notes** | [GitHub Releases (`threadkeeper/slop-grenade/releases`)](https://github.com/threadkeeper/slop-grenade/releases/latest) | Included per asset | [Software Assurance Pipeline](https://github.com/threadkeeper/slop-grenade/actions/workflows/assurance.yml) |
+
+### Verify Your Download (`SHA-256`)
+
+**Windows PowerShell:**
+```powershell
+# Download the Windows bundle + checksum and verify integrity
+Invoke-WebRequest https://github.com/threadkeeper/slop-grenade/releases/latest/download/slop-grenade-windows-x64.zip -OutFile slop-grenade-windows-x64.zip
+Invoke-WebRequest https://github.com/threadkeeper/slop-grenade/releases/latest/download/slop-grenade-windows-x64.zip.sha256 -OutFile slop-grenade-windows-x64.zip.sha256
+$expected = (Get-Content .\slop-grenade-windows-x64.zip.sha256).Split(' ')[0].Trim().ToLowerInvariant()
+$actual   = (Get-FileHash .\slop-grenade-windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($actual -eq $expected) { Write-Host "SHA-256 verified: $actual" -ForegroundColor Green } else { throw "SHA-256 mismatch!" }
+```
+
+**macOS / Linux (for verifying the Android APK before sideloading):**
+```bash
+curl -fsSLO https://github.com/threadkeeper/slop-grenade/releases/latest/download/slop-grenade-android-debug.apk
+curl -fsSLO https://github.com/threadkeeper/slop-grenade/releases/latest/download/slop-grenade-android-debug.apk.sha256
+shasum -a 256 -c slop-grenade-android-debug.apk.sha256
+```
 
 ---
 
@@ -183,6 +220,19 @@ Clicking **Dashboard** in the tray opens the habit tracker in your browser, styl
 - **Filters** for **Today**, **Last 3 days**, or **Last 7 days**, **Incoming / Outgoing**, source (`Teams` vs. `Outlook`), and message type (`All`, `slop-grenade`, `ai-cannon`, `sprinkled`, `polish`, `human`). Today starts at your local midnight; the other spans are rolling 72- and 168-hour windows. Direction filters apply to the dials, charts, leaderboards and ledger together.
 - **Most Wanted** and **Hand-Crafted Heroes**: the five people with the highest and the lowest share of AI-written messages in the selected span, with their message count and AI %. Both lists always show five people once five are known; automated mail and bots are left out.
 - **Interactive Drill-Down Ledger** with local **date and time**, score, type, source, core metrics, sender, recipient, subject, and a short preview. Click **Slop %** or **Date & time** to sort either way. Browse **50 messages per page** using **<< / >>**; sorting applies to the whole filtered result, not just the page you are viewing.
+
+---
+
+## Security, Privacy & Software Assurance
+
+Slop Grenade is designed from the ground up as a **read-only, zero-persistence** companion:
+- **Read-Only & Ephemeral**: Never sends, modifies, or deletes email or Teams messages. Raw message bodies are never written to disk; only sanitized metadata, slop scores, and short coaching previews are kept in memory.
+- **Zero-Friction Standalone User-Auth**: Uses your existing local **WorkIQ MCP** broker (automatically accepting first-run MCP EULA prompts) and optional **GitHub CLI (`gh auth login`)** session—no custom Entra admin app registration is ever required.
+- **Hardened Local & Container HTTP Surface**:
+  - Loopback/same-origin CORS & CSRF enforcement blocks third-party websites from reading your local ledger or triggering actions while keeping the Windows tray overlay, local dashboard (`127.0.0.1` / `localhost`), and Android WebView (`appassets.androidplatform.net`) completely frictionless.
+  - Full browser security headers (`Content-Security-Policy` with SHA-256 inline script hashes, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `Permissions-Policy`, and a 64 KiB request body cap).
+  - Trusted HTTPS host allowlisting for GitHub Copilot token calls, `<untrusted_message>` prompt-injection fencing, and CLI flag-injection guards on subprocess arguments.
+- **Automated Software Assurance Pipeline**: Nightly and pull-request supply-chain verification ([`.github/workflows/assurance.yml`](./.github/workflows/assurance.yml)) plus weekly Dependabot PRs ([`.github/dependabot.yml`](./.github/dependabot.yml)) across Rust (`cargo-audit`, `cargo-deny`), npm (`npm audit`), Gradle, Docker, and GitHub Actions so library updates can be reviewed and merged from your phone on the go.
 
 ---
 

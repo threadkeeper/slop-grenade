@@ -1,0 +1,147 @@
+name: Scheduled Assurance
+
+# Nightly and on-demand software assurance pipeline (aligned with gaia-robot).
+# Also runs automatically on pull requests that touch dependency manifests or
+# lockfiles so Dependabot PRs can be reviewed and merged on the go.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
+      - "rust/deny.toml"
+      - "web/package.json"
+      - "web/package-lock.json"
+      - "mobile/build.gradle.kts"
+      - "mobile/*/build.gradle.kts"
+      - "mobile/gradle/**"
+      - "Dockerfile"
+      - ".github/dependabot.yml"
+      - ".github/workflows/assurance.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: assurance-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  coverage:
+    name: Test Coverage (core + rust)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          components: llvm-tools-preview
+
+      - name: Cache cargo registry and build
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: |
+            core
+            rust
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@ea361d59ff285fa3ab7cc40dcba421e91017d586 # cargo-llvm-cov
+
+      - name: Generate coverage report
+        id: coverage
+        run: |
+          cargo llvm-cov --manifest-path core/Cargo.toml --all-features --summary-only --fail-under-lines 80
+          cargo llvm-cov --manifest-path rust/Cargo.toml --all-features --lcov --output-path rust/lcov.info
+          cargo llvm-cov report --manifest-path rust/Cargo.toml --summary-only --fail-under-lines 80
+
+      - name: Upload coverage artifact
+        if: always() && hashFiles('rust/lcov.info') != ''
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-lcov
+          path: rust/lcov.info
+
+      - name: Enforce coverage result
+        if: steps.coverage.outcome == 'failure'
+        run: exit 1
+
+  supply-chain:
+    name: Rust Dependency Audit (cargo-audit & cargo-deny)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: cargo-audit (core)
+        uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2
+        timeout-minutes: 10
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          working-directory: core
+
+      - name: cargo-audit (rust daemon)
+        uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2
+        timeout-minutes: 10
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          working-directory: rust
+
+      - name: cargo-audit (mobile rust-bridge)
+        uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2
+        timeout-minutes: 10
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          working-directory: mobile/rust-bridge
+
+      - name: cargo-deny (core)
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
+        with:
+          manifest-path: core/Cargo.toml
+          config: rust/deny.toml
+
+      - name: cargo-deny (rust daemon)
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
+        with:
+          manifest-path: rust/Cargo.toml
+          config: rust/deny.toml
+
+      - name: cargo-deny (mobile rust-bridge)
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
+        with:
+          manifest-path: mobile/rust-bridge/Cargo.toml
+          config: rust/deny.toml
+
+  application-dependencies:
+    name: Frontend & Infrastructure Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Verify frontend lockfile and npm advisories
+        run: |
+          npm ci --prefix web
+          npm audit --prefix web --audit-level=low
+
+      - name: Run infrastructure security regression tests
+        run: python3 -m unittest discover -s infra -p 'test_*.py'

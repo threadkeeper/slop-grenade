@@ -4,12 +4,18 @@ on:
   push:
     branches: [main]
     paths:
+      - "core/**"
+      - "rust/**"
+      - "web/**"
       - "desktop/**"
       - "tests/desktop/**"
       - "scripts/test-desktop.ps1"
       - ".github/workflows/desktop.yml"
   pull_request:
     paths:
+      - "core/**"
+      - "rust/**"
+      - "web/**"
       - "desktop/**"
       - "tests/desktop/**"
       - "scripts/test-desktop.ps1"
@@ -22,11 +28,16 @@ permissions:
 jobs:
   hover:
     runs-on: windows-2025
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
       - name: C# 5 hover regression and window tests
         shell: pwsh
         run: .\scripts\test-desktop.ps1
@@ -35,3 +46,32 @@ jobs:
         run: |
           & 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe' /nologo /langversion:5 /target:winexe /optimize+ /r:System.dll,System.Drawing.dll,System.Windows.Forms.dll,System.Web.Extensions.dll /out:desktop\slop-grenade-overlay.exe '/recurse:desktop\*.cs'
           if ($LASTEXITCODE -ne 0) { throw 'Desktop compilation failed.' }
+      - name: Build web assets and release Rust daemon
+        shell: pwsh
+        run: |
+          npm --prefix web ci
+          npm --prefix web run build
+          cargo build --locked --manifest-path rust/Cargo.toml --release
+      - name: Package portable Windows bundle and SHA-256 checksum
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $stage = Join-Path $env:RUNNER_TEMP 'slop-grenade-windows-x64'
+          New-Item -ItemType Directory -Force -Path (Join-Path $stage 'web') | Out-Null
+          Copy-Item -Force 'rust\target\release\slop-grenade.exe' (Join-Path $stage 'slop-grenade.exe')
+          Copy-Item -Force 'desktop\slop-grenade-overlay.exe' (Join-Path $stage 'slop-grenade-overlay.exe')
+          Copy-Item -Recurse -Force 'web\build' (Join-Path $stage 'web\build')
+          Copy-Item -Force 'README.md' (Join-Path $stage 'README.md')
+          Copy-Item -Force 'LICENSE' (Join-Path $stage 'LICENSE')
+          $zipPath = Join-Path $PWD 'slop-grenade-windows-x64.zip'
+          Compress-Archive -Path "$stage\*" -DestinationPath $zipPath -Force
+          $hash = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  slop-grenade-windows-x64.zip" | Set-Content -Encoding ascii -NoNewline "$zipPath.sha256"
+      - name: Upload verified Windows portable bundle
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: slop-grenade-windows-x64
+          path: |
+            slop-grenade-windows-x64.zip
+            slop-grenade-windows-x64.zip.sha256
+          if-no-files-found: error

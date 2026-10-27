@@ -58,14 +58,14 @@ impl WorkIqClient {
         let binary_path = resolve_workiq_binary(explicit_bin);
         Self {
             binary_path,
-            account: RwLock::new(account),
+            account: RwLock::new(sanitize_workiq_account(account)),
         }
     }
 
     /// Update the active M365 account hint passed to `--account`.
     pub fn set_account(&self, account: Option<String>) {
         if let Ok(mut guard) = self.account.write() {
-            *guard = account.filter(|s| !s.trim().is_empty());
+            *guard = sanitize_workiq_account(account);
         }
     }
 
@@ -134,6 +134,9 @@ impl WorkIqClient {
             .map_err(|e| format!("Failed to spawn workiq auth login: {e}"))?;
 
         if output.status.success() {
+            let _ = self
+                .run_mcp_jsonrpc(bin, build_mcp_accept_eula_request())
+                .await;
             Ok("WorkIQ M365 authentication succeeded.".to_string())
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -235,7 +238,15 @@ impl WorkIqClient {
 
     async fn call_mcp_fetch(&self, bin: &Path, entity_urls: &[String]) -> Result<Value, String> {
         let req = build_mcp_fetch_call_request(entity_urls);
-        let response = self.run_mcp_jsonrpc(bin, req).await?;
+        let mut response = self.run_mcp_jsonrpc(bin, req.clone()).await?;
+        if response_requires_eula_acceptance(&response)
+            && self
+                .run_mcp_jsonrpc(bin, build_mcp_accept_eula_request())
+                .await
+                .is_ok()
+        {
+            response = self.run_mcp_jsonrpc(bin, req).await?;
+        }
         decode_mcp_fetch_response(response)
     }
 
@@ -349,6 +360,55 @@ pub fn build_mcp_fetch_call_request(entity_urls: &[String]) -> Value {
             }
         }
     })
+}
+
+/// Build the JSON-RPC 2.0 `tools/call` request accepting WorkIQ's first-run MCP EULA.
+pub fn build_mcp_accept_eula_request() -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/call",
+        "params": {
+            "name": "accept_eula",
+            "arguments": {
+                "eulaUrl": "https://github.com/microsoft/workiq-mcp"
+            }
+        }
+    })
+}
+
+/// Sanitize a user-supplied `--account` identifier so CLI flags or control characters cannot be injected.
+pub fn sanitize_workiq_account(account: Option<String>) -> Option<String> {
+    let trimmed = account?.trim().to_string();
+    if trimmed.is_empty()
+        || trimmed.len() > 254
+        || trimmed.starts_with('-')
+        || trimmed.chars().any(|c| {
+            c.is_whitespace() || c.is_control() || matches!(c, ';' | '|' | '&' | '`' | '$')
+        })
+    {
+        return None;
+    }
+    Some(trimmed)
+}
+
+fn response_requires_eula_acceptance(response: &Value) -> bool {
+    let Some(result) = response.get("result") else {
+        return false;
+    };
+    if result.get("isError").and_then(Value::as_bool) != Some(true) {
+        return false;
+    }
+    result
+        .get("content")
+        .and_then(Value::as_array)
+        .is_some_and(|items| {
+            items.iter().any(|item| {
+                item.get("text")
+                    .and_then(Value::as_str)
+                    .is_some_and(|text| text.contains("accept_eula"))
+            })
+        })
 }
 
 fn relative_graph_url(url: &reqwest::Url) -> String {
@@ -1896,5 +1956,55 @@ mod tests {
             let error = decode_mcp_fetch_response(response).unwrap_err();
             assert!(!error.contains("private-response-content"));
         }
+    }
+
+    #[test]
+    fn sanitizes_workiq_account_against_cli_flag_injection() {
+        assert_eq!(
+            sanitize_workiq_account(Some("  alex@contoso.com  ".to_string())),
+            Some("alex@contoso.com".to_string())
+        );
+        for invalid in [
+            "",
+            "   ",
+            "--log-level=Trace",
+            "-v",
+            "alex@contoso.com --help",
+            "alex@contoso.com\n--evil",
+            "alex;rm",
+            &"a".repeat(255),
+        ] {
+            assert_eq!(
+                sanitize_workiq_account(Some(invalid.to_string())),
+                None,
+                "expected {invalid:?} to be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn detects_when_mcp_fetch_requires_first_run_eula_acceptance() {
+        let eula_error = json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "result": {
+                "isError": true,
+                "content": [{
+                    "type": "text",
+                    "text": "You must accept the EULA before using this tool. Please use the accept_eula tool to continue. https://github.com/microsoft/workiq-mcp"
+                }]
+            }
+        });
+        assert!(response_requires_eula_acceptance(&eula_error));
+
+        let other_error = json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "result": {
+                "isError": true,
+                "content": [{ "type": "text", "text": "Authentication required" }]
+            }
+        });
+        assert!(!response_requires_eula_acceptance(&other_error));
     }
 }

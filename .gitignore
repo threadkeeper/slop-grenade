@@ -11,6 +11,7 @@
 /mobile/local.properties
 /mobile/**/local.properties
 /mobile/scripts/__pycache__/
+**/__pycache__/
 *.jks
 *.keystore
 keystore.properties

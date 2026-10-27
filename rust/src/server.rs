@@ -12,13 +12,13 @@
 //! - Real-time SSE animation stream (`GET /api/v1/events/stream`)
 
 use std::convert::Infallible;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::extract::{Query, State};
-use axum::http::{HeaderValue, Method, StatusCode, Uri};
+use axum::extract::{DefaultBodyLimit, Query, State};
+use axum::http::{header, HeaderName, HeaderValue, Method, StatusCode, Uri};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -26,6 +26,7 @@ use axum::{Json, Router};
 use futures::stream::{self, Stream};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 
 use crate::auth::AuthCoordinator;
 use crate::event_bus::{AnimationEvent, AnimationEventBus};
@@ -172,8 +173,12 @@ pub struct SqueegeeRequest {
     pub side: MonitorSide,
 }
 
+/// Maximum HTTP request body size (64 KiB) to prevent memory exhaustion on local or container deployments.
+const MAX_REQUEST_BODY_BYTES: usize = 64 * 1024;
+
 /// Build the complete Axum [`Router`] for the Slop Grenade daemon.
 pub fn build_router(state: AppState) -> Router {
+    let csp = Arc::new(content_security_policy(&state.web_asset_dir));
     Router::new()
         .route("/api/v1/health", get(handle_health))
         .route("/api/v1/auth/status", get(handle_auth_status))
@@ -192,34 +197,193 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v1/scan/now", post(handle_scan_now))
         .route("/api/v1/scan/progress", get(handle_refresh_progress))
         .fallback(handle_static_fallback)
-        .layer(axum::middleware::from_fn(cors_middleware))
+        .layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))
+        .layer(axum::middleware::from_fn(move |req, next| {
+            let csp = Arc::clone(&csp);
+            async move { security_and_cors_middleware(req, next, &csp).await }
+        }))
         .with_state(state)
 }
 
-async fn cors_middleware(req: axum::extract::Request, next: axum::middleware::Next) -> Response {
-    if req.method() == Method::OPTIONS {
-        let mut res = StatusCode::NO_CONTENT.into_response();
-        attach_cors_headers(res.headers_mut());
+async fn security_and_cors_middleware(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+    csp: &HeaderValue,
+) -> Response {
+    let origin = req
+        .headers()
+        .get(header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+    let host = req
+        .headers()
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+
+    let allowed_origin = origin
+        .as_deref()
+        .filter(|orig| is_allowed_origin(orig, host.as_deref()))
+        .and_then(|orig| HeaderValue::from_str(orig).ok());
+
+    if origin.is_some()
+        && allowed_origin.is_none()
+        && matches!(
+            *req.method(),
+            Method::OPTIONS | Method::POST | Method::PUT | Method::DELETE | Method::PATCH
+        )
+    {
+        let mut res = (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "ok": false, "error": "Cross-origin request rejected." })),
+        )
+            .into_response();
+        attach_security_headers(res.headers_mut(), csp, None);
         return res;
     }
+
+    if req.method() == Method::OPTIONS {
+        let mut res = StatusCode::NO_CONTENT.into_response();
+        attach_security_headers(res.headers_mut(), csp, allowed_origin);
+        return res;
+    }
+
     let mut res = next.run(req).await;
-    attach_cors_headers(res.headers_mut());
+    attach_security_headers(res.headers_mut(), csp, allowed_origin);
     res
 }
 
-fn attach_cors_headers(headers: &mut axum::http::HeaderMap) {
+/// Check whether a browser `Origin` header is allowed to interact with the Slop Grenade API.
+///
+/// Allows loopback origins (`127.0.0.1`, `localhost`, `[::1]`), same-host container origins,
+/// the Android WebView asset origin (`https://appassets.androidplatform.net`), and any
+/// explicit `SLOP_ALLOWED_ORIGIN` override, while blocking third-party web origins.
+pub fn is_allowed_origin(origin: &str, host_header: Option<&str>) -> bool {
+    let trimmed = origin.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    if trimmed == "https://appassets.androidplatform.net" {
+        return true;
+    }
+    if let Ok(explicit) = std::env::var("SLOP_ALLOWED_ORIGIN") {
+        let explicit = explicit.trim();
+        if !explicit.is_empty() && explicit == trimmed {
+            return true;
+        }
+    }
+    if let Some(host) = host_header.map(str::trim).filter(|h| !h.is_empty()) {
+        if trimmed == format!("http://{host}") || trimmed == format!("https://{host}") {
+            return true;
+        }
+    }
+    let Ok(url) = reqwest::Url::parse(trimmed) else {
+        return false;
+    };
+    if !matches!(url.scheme(), "http" | "https") {
+        return false;
+    }
+    matches!(
+        url.host_str(),
+        Some("127.0.0.1" | "localhost" | "[::1]" | "::1")
+    )
+}
+
+fn attach_security_headers(
+    headers: &mut axum::http::HeaderMap,
+    csp: &HeaderValue,
+    allowed_origin: Option<HeaderValue>,
+) {
     headers.insert(
-        axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN,
-        HeaderValue::from_static("*"),
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(header::X_FRAME_OPTIONS, HeaderValue::from_static("DENY"));
+    headers.insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("no-referrer"),
     );
     headers.insert(
-        axum::http::header::ACCESS_CONTROL_ALLOW_METHODS,
-        HeaderValue::from_static("GET, POST, OPTIONS"),
+        HeaderName::from_static("permissions-policy"),
+        HeaderValue::from_static("camera=(), geolocation=(), microphone=(), payment=(), usb=()"),
     );
-    headers.insert(
-        axum::http::header::ACCESS_CONTROL_ALLOW_HEADERS,
-        HeaderValue::from_static("Content-Type, Authorization"),
+    headers.insert(header::CONTENT_SECURITY_POLICY, csp.clone());
+
+    if let Some(origin_val) = allowed_origin {
+        headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, origin_val);
+        headers.insert(header::VARY, HeaderValue::from_static("Origin"));
+        headers.insert(
+            header::ACCESS_CONTROL_ALLOW_METHODS,
+            HeaderValue::from_static("GET, POST, OPTIONS"),
+        );
+        headers.insert(
+            header::ACCESS_CONTROL_ALLOW_HEADERS,
+            HeaderValue::from_static("Content-Type, Authorization"),
+        );
+    }
+}
+
+fn content_security_policy(web_asset_dir: &Path) -> HeaderValue {
+    let index = std::fs::read_to_string(web_asset_dir.join("index.html")).unwrap_or_default();
+    let hashes = extract_inline_script_hashes(&index);
+    let script_src = if hashes.is_empty() {
+        "'self'".to_string()
+    } else {
+        format!("'self' {}", hashes.join(" "))
+    };
+    let policy = format!(
+        "default-src 'self'; base-uri 'self'; connect-src 'self'; font-src 'self' data:; form-action 'self'; frame-ancestors 'none'; img-src 'self' data: blob:; media-src 'self' data: blob:; object-src 'none'; script-src {script_src}; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:"
     );
+    HeaderValue::from_str(&policy).expect("CSP uses valid ASCII header tokens")
+}
+
+/// Compute `'sha256-...'` Content-Security-Policy tokens for inline `<script>` blocks in `html`.
+pub fn extract_inline_script_hashes(html: &str) -> Vec<String> {
+    let mut hashes = Vec::new();
+    let mut remaining = html;
+    while let Some(start) = remaining.find("<script") {
+        let after_start = &remaining[start..];
+        let Some(open_end) = after_start.find('>') else {
+            break;
+        };
+        let open_tag = &after_start[..=open_end];
+        let after_open = &after_start[open_end + 1..];
+        let Some(close_start) = after_open.find("</script>") else {
+            break;
+        };
+        if !open_tag.contains("src=") {
+            let script = &after_open[..close_start];
+            if !script.trim().is_empty() {
+                let digest = Sha256::digest(script.as_bytes());
+                hashes.push(format!("'sha256-{}'", base64_encode(&digest)));
+            }
+        }
+        remaining = &after_open[close_start + "</script>".len()..];
+    }
+    hashes
+}
+
+fn base64_encode(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0];
+        let b1 = *chunk.get(1).unwrap_or(&0);
+        let b2 = *chunk.get(2).unwrap_or(&0);
+        out.push(TABLE[(b0 >> 2) as usize] as char);
+        out.push(TABLE[(((b0 & 0x03) << 4) | (b1 >> 4)) as usize] as char);
+        if chunk.len() > 1 {
+            out.push(TABLE[(((b1 & 0x0f) << 2) | (b2 >> 6)) as usize] as char);
+        } else {
+            out.push('=');
+        }
+        if chunk.len() > 2 {
+            out.push(TABLE[(b2 & 0x3f) as usize] as char);
+        } else {
+            out.push('=');
+        }
+    }
+    out
 }
 
 async fn handle_health() -> Json<Value> {

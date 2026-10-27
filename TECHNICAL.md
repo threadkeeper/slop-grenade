@@ -276,3 +276,26 @@ Distribute the signed APK and its SHA-256 checksum through a trusted release cha
 5. Review monitoring status and, if desired, grant overlay permission, allow notifications and start effects.
 
 Release acceptance requires real-device checks for account consent/reconnection, multiple mailboxes, Doze, offline recovery, reboot, process recreation, force-stop, denied overlay permission, battery usage, clean installation and an in-place signed upgrade. Synthetic unit tests and a successful APK build cannot prove these device/OAuth conditions. No Play Store or cloud push backend is required.
+
+---
+
+## 6. Software Assurance Pipeline & Attack Surface Hardening
+
+Slop Grenade follows the **threadkeeper** software assurance and defense-in-depth model (aligned with `gaia-robot`):
+
+### Automated Supply-Chain & Coverage Assurance
+- **`.github/dependabot.yml`**: Opens weekly dependency update PRs across all 5 ecosystems (`github-actions`, `cargo` for `/core`, `/rust`, and `/mobile/rust-bridge`, `npm` for `/web`, `gradle` for `/mobile`, and `docker` for `/`) so security patches can be reviewed and merged on the go.
+- **`.github/workflows/assurance.yml`**: Runs nightly (`17 3 * * *`), on manual dispatch, and automatically on any PR that touches a dependency manifest or lockfile:
+  - **Coverage Gate**: Enforces `cargo llvm-cov --fail-under-lines 80` on the Rust workspace.
+  - **Rust Supply Chain**: Runs `rustsec/audit-check` and `EmbarkStudios/cargo-deny-action` against [`rust/deny.toml`](./rust/deny.toml) (`yanked = "deny"`, `wildcards = "deny"`, `unknown-registry = "deny"`, `unknown-git = "deny"`, `openssl` banned in favor of `rustls-tls`, and permissive SPDX license verification).
+  - **Web & Infrastructure Gate**: Runs `npm ci && npm audit --audit-level=low` in `web/` and executes the static infrastructure security suite (`python3 -m unittest discover -s infra -p 'test_*.py'`).
+
+### Application & Infrastructure Hardening
+- **Loopback / Same-Origin CORS & CSRF Protection (`rust/src/server.rs`)**: Replaces wildcard `Access-Control-Allow-Origin: *` with origin validation (`is_allowed_origin`) that allows loopback (`127.0.0.1`, `localhost`, `[::1]`), same-host container requests, `https://appassets.androidplatform.net`, and `SLOP_ALLOWED_ORIGIN`, while omitting CORS headers on foreign `GET` requests and rejecting foreign `POST`/`OPTIONS` requests with `403 Forbidden`.
+- **Browser Security Headers & Body Cap (`rust/src/server.rs`)**: Attaches `Content-Security-Policy` (with SHA-256 inline `<script>` hashes computed from `web/build/index.html`), `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `Permissions-Policy: camera=(), geolocation=(), microphone=(), payment=(), usb=()`, and `DefaultBodyLimit::max(64 * 1024)`.
+- **Credential, Prompt-Injection & Subprocess Guards (`rust/src/llm_luna.rs`, `rust/src/workiq_mcp.rs`)**:
+  - `validate_luna_endpoint`: Ensures GitHub tokens are only sent over `https://` to trusted inference hosts (`api.githubcopilot.com`, `models.inference.ai.azure.com`) or local loopback mock servers.
+  - `<untrusted_message>` Fencing: Wraps untrusted email/Teams subjects and bodies in explicit XML delimiters and neutralizes embedded closing tags before sending to GPT Luna.
+  - `sanitize_workiq_account`: Rejects leading `-` flags, whitespace, shell metacharacters, and control characters on `--account` values passed to the `workiq` CLI.
+- **Private-Tenant Container Defaults (`infra/main.bicep`, `Dockerfile`)**: Defaults Azure Container Apps ingress to internal (`externalIngress: bool = false`, `allowInsecure: false`) with `/api/v1/health` liveness/readiness probes and non-root (`USER appuser`, UID `10001`), `--locked` container builds.
+
