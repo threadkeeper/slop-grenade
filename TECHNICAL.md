@@ -66,15 +66,19 @@ Slop Grenade consists of three coordinated components:
 
 ### Scoring rubric (`core/src/slop_detector.rs`)
 
-The heuristic score is `lexical (capped at 74) + structural + burstiness + handoff - human credit`, clamped to 0..=100. Without any structural or handoff signal it is capped at 79, so plain buzzword prose cannot reach the grenade tier.
+Before scoring, `isolate_authored_text` strips Microsoft Information Protection banners, quoted reply chains (`From:/Sent:/To:/Subject:`, `On ... wrote:`, `> ` blockquotes, and HTML reply dividers `#divRplyFwdMsg` / `#appendonsend`), and trailing email signatures, while `workiq_mcp.rs` requests Microsoft Graph `uniqueBody` so senders are evaluated only on the words they actually wrote.
+
+The Stage 1 heuristic score is `lexical (capped at 74) + structural + burstiness + handoff - human credit`, clamped to 0..=100. Without any structural or handoff signal it is capped at 79, so plain buzzword prose cannot reach the grenade tier. Short messages under 65 words without AI lexical/structural signals have their polish prior capped at 8 (`human_sparkle`).
 
 | Family | Signals |
 | :--- | :--- |
 | Lexical | Opening clichés, AI buzzwords, formulaic transitions, stock assistant phrases (`AI_PHRASES`, matched after folding curly quotes) and AI-favoured words (`AI_WORDS`, matched at word starts) |
-| Structural | Bold-bullet walls, headings, em dashes (any count; heavier in Teams), plain bullet lists, bold spans, emoji-led lines, curly quotes and multi-paragraph essays in Teams, colon lead-ins, rule-of-three lists |
+| Structural | Bold-bullet walls, headings, em dashes (any count; heavier in Teams), plain bullet lists, non-mention bold spans, emoji-led lines, curly quotes and multi-paragraph essays in Teams, colon lead-ins, rule-of-three lists |
 | Burstiness | Flat sentence cadence, plus a prior for long, uniformly capitalised and punctuated prose with long words (heavier for long Teams messages); capped at 36 |
 | Handoff | Handoff phrases, assistant voice (`ASSISTANT_VOICE`: offers, templates, chatbot openers), a pasted `Subject:` line, channel length mismatch |
-| Human credit | 6 points per fingerprint, up to 24: lower-case sentence start, lower-case "i", each slang word, `??`/`!!`/`...`, emoticons, no final punctuation in a short message |
+| Human credit | 6 points per fingerprint, up to 24: lower-case sentence start, lower-case "i", each slang/workplace colloquialism or un-apostrophized contraction, `@Name` colleague mentions, `??`/`!!`/`...`, emoticons, no final punctuation in a short message |
+
+When `gpt-5.6-luna` is enabled (`SLOP_ENABLE_LUNA=1`, default), `ScannerDaemon` runs a **Two-Stage Hybrid Verification** on any message whose Stage 1 heuristic score is 28 or higher (`TWO_STAGE_LUNA_THRESHOLD`). `SlopDetector::merge_luna_judgment` weights `gpt-5.6-luna` at 65% and grants it veto power over heuristic false positives on genuine human writing (`luna_score <= 12` caps at 19 `human_sparkle`; `<= 20` caps at 32 `peaceful_cloud`; `<= 35` caps at 38 `peaceful_cloud`).
 
 A score of 40 or more counts as AI-written for the dashboard dials, the tray gauges and the leaderboards. Automated mail is always scored 4 (`human_sparkle`) and is left out of those shares. Calibration examples live in the detector's unit tests.
 

@@ -150,8 +150,8 @@ impl WorkIqClient {
 
         let entity_urls = vec![
             "/me?$select=id,displayName,mail,userPrincipalName".to_string(),
-            "/me/mailFolders/inbox/messages?$select=id,subject,from,bodyPreview,body,receivedDateTime&$top=15".to_string(),
-            "/me/mailFolders/sentitems/messages?$select=id,subject,from,bodyPreview,body,sentDateTime&$top=15".to_string(),
+            "/me/mailFolders/inbox/messages?$select=id,subject,from,bodyPreview,uniqueBody,body,receivedDateTime&$top=15".to_string(),
+            "/me/mailFolders/sentitems/messages?$select=id,subject,from,bodyPreview,uniqueBody,body,sentDateTime&$top=15".to_string(),
             "/me/chats?$select=id,topic,chatType&$top=5".to_string(),
         ];
 
@@ -461,7 +461,7 @@ fn history_mail_query(since: &str) -> String {
     url.query_pairs_mut()
         .append_pair(
             "$select",
-            "id,subject,from,bodyPreview,body,receivedDateTime,sentDateTime,isDraft",
+            "id,subject,from,bodyPreview,uniqueBody,body,receivedDateTime,sentDateTime,isDraft",
         )
         .append_pair("$top", "50")
         .append_pair("$count", "true")
@@ -659,10 +659,19 @@ pub fn resolve_workiq_binary(explicit: Option<PathBuf>) -> Option<PathBuf> {
 /// head blocks and HTML comments are dropped, entities are decoded after the tags are removed,
 /// and blank lines between bullet items are collapsed.
 pub fn strip_html_preserving_structure(raw: &str) -> String {
-    let mut text = String::with_capacity(raw.len());
-    let mut rest = raw;
+    let truncated = truncate_html_reply_and_signature(raw);
+    let mut text = String::with_capacity(truncated.len());
+    let mut rest = truncated;
+    let mut mention_depth: usize = 0;
     while let Some(open) = rest.find('<') {
-        text.push_str(&rest[..open]);
+        let segment = &rest[..open];
+        if mention_depth > 0 && !segment.trim().is_empty() && !text.ends_with('@') {
+            let trimmed_start = segment.trim_start();
+            if !trimmed_start.starts_with('@') {
+                text.push('@');
+            }
+        }
+        text.push_str(segment);
         let tail = &rest[open..];
         if let Some(comment) = tail.strip_prefix("<!--") {
             rest = match comment.find("-->") {
@@ -678,14 +687,14 @@ pub fn strip_html_preserving_structure(raw: &str) -> String {
         let tag = &tail[1..close];
         rest = &tail[close + 1..];
         let closing = tag.starts_with('/');
-        let name = tag
+        let tag_lower = tag.to_ascii_lowercase();
+        let name = tag_lower
             .trim_start_matches('/')
             .split(|c: char| !c.is_ascii_alphanumeric())
             .next()
-            .unwrap_or("")
-            .to_ascii_lowercase();
-        match (name.as_str(), closing) {
-            ("style" | "script" | "head" | "title", false) => {
+            .unwrap_or("");
+        match (name, closing) {
+            ("style" | "script" | "head" | "title" | "blockquote", false) => {
                 let end_tag = format!("</{name}");
                 rest = match find_ascii_case_insensitive(rest, &end_tag) {
                     Some(at) => match rest[at..].find('>') {
@@ -695,7 +704,23 @@ pub fn strip_html_preserving_structure(raw: &str) -> String {
                     None => "",
                 };
             }
-            ("strong" | "b", _) => text.push_str("**"),
+            ("at", false) => {
+                mention_depth = mention_depth.saturating_add(1);
+            }
+            ("at", true) => {
+                mention_depth = mention_depth.saturating_sub(1);
+            }
+            ("a" | "span", false)
+                if tag_lower.contains("id=\"owaam")
+                    || tag_lower.contains("id='owaam")
+                    || tag_lower.contains("mention") =>
+            {
+                mention_depth = mention_depth.saturating_add(1);
+            }
+            ("a" | "span", true) if mention_depth > 0 => {
+                mention_depth = mention_depth.saturating_sub(1);
+            }
+            ("strong" | "b", _) if mention_depth == 0 => text.push_str("**"),
             ("li", false) => text.push_str("\n- "),
             ("h1" | "h2" | "h3" | "h4" | "h5" | "h6", false) => text.push_str("\n### "),
             ("p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "table", true) => {
@@ -707,7 +732,39 @@ pub fn strip_html_preserving_structure(raw: &str) -> String {
         }
     }
     text.push_str(rest);
-    tidy_text_lines(&decode_html_entities(&text))
+    let tidied = tidy_text_lines(&decode_html_entities(&text));
+    let isolated = crate::slop_detector::isolate_authored_text(&tidied);
+    if isolated.is_empty() {
+        tidied
+    } else {
+        isolated
+    }
+}
+
+fn truncate_html_reply_and_signature(raw: &str) -> &str {
+    let lower = raw.to_ascii_lowercase();
+    let markers = [
+        "id=\"divrplyfwdmsg\"",
+        "id='divrplyfwdmsg'",
+        "id=\"appendonsend\"",
+        "id='appendonsend'",
+        "id=\"signature\"",
+        "id='signature'",
+        "class=\"gmail_quote\"",
+        "class='gmail_quote'",
+        "<hr tabindex=\"-1\"",
+        "<hr tabindex='-1'",
+    ];
+    let mut cut = raw.len();
+    for marker in markers {
+        if let Some(pos) = lower.find(marker) {
+            let tag_start = raw[..pos].rfind('<').unwrap_or(pos);
+            if tag_start > 0 && tag_start < cut {
+                cut = tag_start;
+            }
+        }
+    }
+    &raw[..cut]
 }
 
 fn find_ascii_case_insensitive(haystack: &str, needle: &str) -> Option<usize> {
@@ -851,12 +908,19 @@ pub fn parse_workiq_fetch_bundle(
                 .unwrap_or("Unknown Sender")
                 .to_string();
 
-            let body_raw = item
-                .pointer("/body/content")
+            let unique_body = item
+                .pointer("/uniqueBody/content")
                 .and_then(Value::as_str)
-                .or_else(|| item.get("bodyPreview").and_then(Value::as_str))
-                .unwrap_or("");
-            let body = strip_html_preserving_structure(body_raw);
+                .map(strip_html_preserving_structure)
+                .filter(|s| !s.is_empty());
+            let body = unique_body.unwrap_or_else(|| {
+                let body_raw = item
+                    .pointer("/body/content")
+                    .and_then(Value::as_str)
+                    .or_else(|| item.get("bodyPreview").and_then(Value::as_str))
+                    .unwrap_or("");
+                strip_html_preserving_structure(body_raw)
+            });
             if body.is_empty() {
                 continue;
             }
@@ -1561,6 +1625,42 @@ mod tests {
             strip_html_preserving_structure("AT&T &unknown; 5 &lt 6"),
             "AT&T &unknown; 5 &lt 6"
         );
+    }
+
+    #[test]
+    fn strip_html_drops_quoted_threads_signatures_and_mention_bold_artifacts() {
+        let html = "<div>Classified as Microsoft Highly Confidential</div>\
+                    <div>Hi Again <a id=\"OWAAM715906\"><b>@Mariah Motsoeneng</b></a> and <at id=\"0\"><b>Olebogeng Rapudi</b></at></div>\
+                    <div>Just bringing this to the top of your inbox.</div>\
+                    <div id=\"Signature\"><p><b>Jean</b><br/>Principal Architect</p></div>\
+                    <div id=\"appendonsend\"></div>\
+                    <hr tabindex=\"-1\" />\
+                    <div id=\"divRplyFwdMsg\"><p><b>From:</b> Someone</p><ul><li><b>Heading:</b> Slop wall</li></ul></div>";
+        let cleaned = strip_html_preserving_structure(html);
+        assert!(!cleaned.contains("Classified as Microsoft"));
+        assert!(!cleaned.contains("Slop wall"));
+        assert!(!cleaned.contains("Principal Architect"));
+        assert!(!cleaned.contains("**"));
+        assert!(cleaned.contains("@Mariah Motsoeneng"));
+        assert!(cleaned.contains("@Olebogeng Rapudi"));
+        assert!(cleaned.contains("Just bringing this to the top of your inbox."));
+    }
+
+    #[test]
+    fn outlook_bundle_prefers_unique_body_over_full_quoted_thread() {
+        let bundle = json!({
+            "value": [{
+                "id": "m-reply-1",
+                "subject": "Re: Architecture Pack",
+                "from": { "emailAddress": { "name": "Jean", "address": "jean@contoso.com" } },
+                "uniqueBody": { "content": "<p>Thanks Craig, this is all that I need.</p>" },
+                "body": { "content": "<p>Thanks Craig, this is all that I need.</p><ul><li><strong>Section 1:</strong> Fostering holistic synergy.</li><li><strong>Section 2:</strong> Unlocking value across paradigms.</li></ul>" },
+                "sentDateTime": "2026-10-26T08:39:20Z"
+            }]
+        });
+        let parsed = parse_workiq_fetch_bundle(&bundle, Some("jean@contoso.com"));
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].body, "Thanks Craig, this is all that I need.");
     }
 
     #[test]

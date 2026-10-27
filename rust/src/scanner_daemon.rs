@@ -9,6 +9,7 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use futures::stream::{self, StreamExt};
 use serde::{Deserialize, Serialize};
 
 use crate::event_bus::{AnimationEvent, AnimationEventBus};
@@ -18,6 +19,13 @@ use crate::refresh_phase::RefreshPhase;
 use crate::refresh_progress::RefreshProgress;
 use crate::slop_detector::{MessageSample, SlopDetector, SlopReport};
 use crate::workiq_mcp::WorkIqClient;
+
+/// Heuristic score threshold (`>= 28`) that triggers Stage 2 GPT Luna semantic verification
+/// when GitHub GPT Luna inference is enabled.
+pub const TWO_STAGE_LUNA_THRESHOLD: u8 = 28;
+
+/// Maximum concurrent GPT Luna verification requests during a batch scan or history refresh.
+const LUNA_BATCH_CONCURRENCY: usize = 6;
 
 /// Summary of one M365 WorkIQ scan cycle.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -78,7 +86,9 @@ impl ScannerDaemon {
     ) -> (SlopReport, Option<AnimationEvent>) {
         let mut report = self.detector.analyze(sample);
 
-        if use_luna && self.luna.is_enabled() {
+        if self.luna.is_enabled()
+            && (use_luna || report.heuristic_score >= TWO_STAGE_LUNA_THRESHOLD)
+        {
             if let Ok(judgment) = self.luna.evaluate_message(sample).await {
                 report = self.detector.merge_luna_judgment(report, &judgment);
             }
@@ -202,26 +212,43 @@ impl ScannerDaemon {
             }
         }
 
-        let mut reports = Vec::with_capacity(new_samples.len());
+        let total_new = new_samples.len();
+        let mut reports = Vec::with_capacity(total_new);
         let mut grenades_triggered = 0;
         if let Some(progress) = progress.as_deref_mut() {
             progress.phase = RefreshPhase::Analyzing;
-            progress.analysis_total = Some(new_samples.len());
+            progress.analysis_total = Some(total_new);
             progress.analyzed_count = 0;
             self.store_progress(progress)?;
         }
 
-        for sample in &new_samples {
-            let (report, _) = self
-                .analyze_and_dispatch(sample, use_luna, true, trigger_animation)
-                .await;
-            if trigger_animation && report.is_slop_grenade {
-                grenades_triggered += 1;
+        let luna_enabled = self.luna.is_enabled();
+        let mut stream = stream::iter(new_samples.into_iter().map(
+            |sample: MessageSample| async move {
+                let mut report = self.detector.analyze(&sample);
+                if luna_enabled && (use_luna || report.heuristic_score >= TWO_STAGE_LUNA_THRESHOLD)
+                {
+                    if let Ok(judgment) = self.luna.evaluate_message(&sample).await {
+                        report = self.detector.merge_luna_judgment(report, &judgment);
+                    }
+                }
+                report
+            },
+        ))
+        .buffered(LUNA_BATCH_CONCURRENCY);
+
+        while let Some(report) = stream.next().await {
+            self.ledger.record(report.clone());
+            if trigger_animation {
+                self.bus.publish(report.clone());
+                if report.is_slop_grenade {
+                    grenades_triggered += 1;
+                }
             }
             reports.push(report);
             if let Some(progress) = progress.as_deref_mut() {
                 progress.analyzed_count = reports.len();
-                if reports.len() % 50 == 0 || reports.len() == new_samples.len() {
+                if reports.len() % 10 == 0 || reports.len() == total_new {
                     self.store_progress(progress)?;
                 }
             }
@@ -443,5 +470,71 @@ mod tests {
         let batch2 = daemon.ingest_samples(vec![s1, s2], false).await.unwrap();
         assert_eq!(batch2.new_messages_analyzed, 0);
         assert_eq!(ledger.scorecard().received_by_me.total_messages, 2);
+    }
+
+    #[tokio::test]
+    async fn two_stage_luna_verifies_borderline_messages_and_vetoes_false_positives() {
+        use axum::{routing::post, Json, Router};
+        use serde_json::json;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_clone = calls.clone();
+        let app = Router::new().route(
+            "/responses",
+            post(move || {
+                let c = calls_clone.clone();
+                async move {
+                    c.fetch_add(1, Ordering::SeqCst);
+                    Json(json!({
+                        "model": "gpt-5.6-luna",
+                        "output": [{
+                            "type": "message",
+                            "content": [{
+                                "type": "output_text",
+                                "text": "{\"slopScore\": 8, \"reasoning\": \"Authentic human bullet notes\", \"coachingTip\": \"Concise and clear.\"}"
+                            }]
+                        }]
+                    }))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let workiq = Arc::new(WorkIqClient::new(None, None));
+        let luna = Arc::new(LunaClient::new(
+            format!("http://{addr}/responses"),
+            "gpt-5.6-luna".to_string(),
+            true,
+        ));
+        luna.set_session_token(Some("test-session-token".to_string()));
+        let ledger = Arc::new(AwarenessLedger::new());
+        let bus = Arc::new(AnimationEventBus::new());
+        let daemon = ScannerDaemon::new(workiq, luna, ledger, bus);
+
+        let clear_human = build_preset_sample("human_sparkle", 10);
+        let mut false_alarm = build_preset_sample("innocent_fruit", 11);
+        false_alarm.body = "Hi team, notes from our call:\n\
+            - **Scope:** Confirmed the three tables for phase 1.\n\
+            - **Owner:** Sam is taking the ingestion script.\n\
+            - **Timing:** Targeting Wednesday morning for the dry run."
+            .to_string();
+
+        let batch = daemon
+            .ingest_samples(vec![clear_human, false_alarm], false)
+            .await
+            .unwrap();
+        assert_eq!(batch.new_messages_analyzed, 2);
+        // Only the message with heuristic_score >= 28 should trigger a Stage 2 Luna call
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(batch.reports[0].luna_score, None);
+        assert_eq!(batch.reports[0].tier, AnimationTier::HumanSparkle);
+        assert_eq!(batch.reports[1].luna_score, Some(8));
+        assert!(batch.reports[1].slop_score <= 19);
+        assert_eq!(batch.reports[1].tier, AnimationTier::HumanSparkle);
     }
 }

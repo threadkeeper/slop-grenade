@@ -44,6 +44,7 @@ pub struct LunaClient {
     model: String,
     enabled: RwLock<bool>,
     session_token: RwLock<Option<String>>,
+    cached_cli_token: RwLock<Option<String>>,
     cached_login: RwLock<Option<String>>,
     http: reqwest::Client,
 }
@@ -60,6 +61,7 @@ impl LunaClient {
             model,
             enabled: RwLock::new(enabled),
             session_token: RwLock::new(None),
+            cached_cli_token: RwLock::new(None),
             cached_login: RwLock::new(None),
             http,
         }
@@ -173,6 +175,12 @@ impl LunaClient {
             }
         }
 
+        if let Ok(guard) = self.cached_cli_token.read() {
+            if let Some(ref t) = *guard {
+                return (Some(t.clone()), "gh_cli".to_string());
+            }
+        }
+
         let mut cmd = Command::new("gh");
         cmd.args(["auth", "token"])
             .stdin(Stdio::null())
@@ -183,6 +191,9 @@ impl LunaClient {
             if out.status.success() {
                 let tok = String::from_utf8_lossy(&out.stdout).trim().to_string();
                 if !tok.is_empty() {
+                    if let Ok(mut guard) = self.cached_cli_token.write() {
+                        *guard = Some(tok.clone());
+                    }
                     return (Some(tok), "gh_cli".to_string());
                 }
             }
@@ -232,18 +243,27 @@ pub fn build_luna_evaluation_prompt(sample: &MessageSample) -> String {
         MessageDirection::Received => "received from a colleague",
         MessageDirection::Sent => "authored/sent by the user themselves",
     };
-    let truncated_body: String = sample.body.chars().take(1800).collect();
+    let isolated = crate::slop_detector::isolate_authored_text(&sample.body);
+    let source_body = if isolated.is_empty() {
+        sample.body.as_str()
+    } else {
+        isolated.as_str()
+    };
+    let truncated_body: String = source_body.chars().take(1800).collect();
 
     format!(
         "You are the Slop Grenade detector evaluating a Microsoft 365 {:?} message ({dir_str}).\n\
-         Score the message from 0 to 100 for how much of it was written by AI. Be strict: \
-         modern assistants write clean, friendly business prose, so polish is evidence of AI, \
-         not of care. Stock phrases (\"I hope you're doing well\", \"Let me know if you have \
-         any questions\", \"Would you like me to\"), em dashes, tidy bullet lists, bold labels, \
-         emoji checklists and evenly sized sentences all point to AI. Typos, lower-case starts, \
-         slang, missing full stops and terse fragments point to a human.\n\
+         Score the message from 0 to 100 for how much of it was written by AI.\n\
+         CRITICAL CALIBRATION — Avoid false positives on genuine human writing:\n\
+         - Short human replies, thread follow-ups (\"bringing this to the top of your inbox\", \"this is all I need\"), \
+           concrete colleague @mentions, real project/meeting specifics, natural conversational voice, or a human \
+           sharing concise action items in their own words MUST score 0..35 (human/polish) even when grammatically clean.\n\
+         - Reserve 40..100 for messages exhibiting genuine AI generation markers: stock assistant clichés \
+           (\"I hope this email finds you well\", \"Certainly! Here is\", \"Would you like me to\"), generic corporate \
+           buzzword padding (\"delve\", \"fostering synergy\", \"evolving landscape\"), symmetrical `- **Heading:**` \
+           bullet walls, emoji checklists, and uniform synthetic cadence.\n\
          - 0..19: Authentic human-typed message (natural cadence, concise, specific).\n\
-         - 20..39: Human-written but lightly polished (peaceful cloud).\n\
+         - 20..39: Human-written but formal or lightly polished (peaceful cloud).\n\
          - 40..59: AI-assisted: drafted or rewritten with AI, lightly edited (innocent fruit).\n\
          - 60..79: Mostly AI-written, stock phrasing and padding (slop splat).\n\
          - 80..100: SLOP GRENADE! Unedited AI dump, symmetrical `- **Heading:**` bullet wall, or passive handoff shifting cognitive load onto readers.\n\n\

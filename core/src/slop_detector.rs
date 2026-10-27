@@ -369,8 +369,6 @@ const AI_PHRASES: &[(&str, u8)] = &[
     ("thank you for your understanding", 10),
     ("rest assured", 12),
     ("warm regards", 8),
-    ("best regards", 4),
-    ("kind regards", 4),
     ("plays a crucial role", 14),
     ("a crucial role", 10),
     ("plays a key role", 10),
@@ -589,6 +587,27 @@ const HUMAN_SLANG: &[&str] = &[
     "sure thing",
     "will do",
     "no worries",
+    "dont",
+    "cant",
+    "wont",
+    "didnt",
+    "isnt",
+    "wasnt",
+    "arent",
+    "thats",
+    "ive",
+    "youre",
+    "weve",
+    "theyre",
+    "if its",
+    "shout out",
+    "shoutout",
+    "bringing this to the top",
+    "top of your inbox",
+    "top of your mailbox",
+    "all i need",
+    "all that i need",
+    "just wanted to quickly",
 ];
 
 /// Text emoticons (lower-case).
@@ -602,7 +621,13 @@ impl SlopDetector {
 
     /// Analyze a [`MessageSample`] deterministically and produce a [`SlopReport`].
     pub fn analyze(&self, sample: &MessageSample) -> SlopReport {
-        let words: Vec<&str> = sample.body.split_whitespace().collect();
+        let isolated = isolate_authored_text(&sample.body);
+        let analyzed_body = if isolated.is_empty() {
+            sample.body.as_str()
+        } else {
+            isolated.as_str()
+        };
+        let words: Vec<&str> = analyzed_body.split_whitespace().collect();
         let word_count = words.len();
         let monitor_side = match sample.direction {
             MessageDirection::Received => MonitorSide::Left,
@@ -637,12 +662,12 @@ impl SlopDetector {
                     .to_string(),
                 self_awareness_tip:
                     "Automated system or calendar response — classified as sparkle.".to_string(),
-                redacted_preview: redact_preview(&sample.body),
+                redacted_preview: redact_preview(analyzed_body),
             };
         }
 
-        let lower = fold_typographic_quotes(&sample.body.to_lowercase());
-        let lines: Vec<&str> = sample.body.lines().map(str::trim).collect();
+        let lower = fold_typographic_quotes(&analyzed_body.to_lowercase());
+        let lines: Vec<&str> = analyzed_body.lines().map(str::trim).collect();
         let is_teams = sample.app == M365App::Teams;
         let mut signals = Vec::new();
 
@@ -651,18 +676,19 @@ impl SlopDetector {
 
         // 2. Structural symmetry (bullet walls, headings, em dashes, emoji bullets, list rhythm)
         let (structural_score, bold_bullet_count) =
-            score_structure(&sample.body, &lower, &lines, is_teams, &mut signals);
+            score_structure(analyzed_body, &lower, &lines, is_teams, &mut signals);
 
         // 3. Burstiness: flat sentence cadence plus a prior for uniformly polished prose
-        let segments = sentence_segments(&sample.body);
-        let human_marks = count_human_fingerprints(&sample.body, &lower, &segments, word_count);
-        let cadence = compute_low_burstiness_score(&sample.body, word_count, &mut signals);
+        let segments = sentence_segments(analyzed_body);
+        let human_marks = count_human_fingerprints(analyzed_body, &lower, &segments, word_count);
+        let cadence = compute_low_burstiness_score(analyzed_body, word_count, &mut signals);
         let polish = compute_polish_prior(
             &words,
             &segments,
             word_count,
             is_teams,
             human_marks == 0,
+            lexical_score > 0 || structural_score > 0,
             &mut signals,
         );
         let burstiness_score = cadence.saturating_add(polish).min(36);
@@ -726,7 +752,7 @@ impl SlopDetector {
             signals,
             summary,
             self_awareness_tip,
-            redacted_preview: redact_preview(&sample.body),
+            redacted_preview: redact_preview(analyzed_body),
         }
     }
 
@@ -743,16 +769,28 @@ impl SlopDetector {
             return report;
         }
         let clamped_luna = judgment.slop_score.min(100);
-        // Blend heuristic and GPT Luna scores (55% GPT Luna + 45% deterministic heuristics,
-        // while preserving high-confidence grenade detections from either source).
-        let blended = ((u16::from(clamped_luna) * 55 + u16::from(report.heuristic_score) * 45)
-            / 100)
-            .max(if report.heuristic_score >= 82 || clamped_luna >= 85 {
-                82
-            } else {
-                0
-            })
-            .min(100) as u8;
+        // Give GPT Luna veto power when it identifies the message as authentic human or
+        // lightly polished human prose (< 40), preventing surface heuristic false alarms.
+        let blended = if clamped_luna <= 12 {
+            ((u16::from(clamped_luna) * 80 + u16::from(report.heuristic_score) * 20) / 100).min(19)
+                as u8
+        } else if clamped_luna <= 20 {
+            ((u16::from(clamped_luna) * 80 + u16::from(report.heuristic_score) * 20) / 100).min(32)
+                as u8
+        } else if clamped_luna <= 35 {
+            ((u16::from(clamped_luna) * 75 + u16::from(report.heuristic_score) * 25) / 100).min(38)
+                as u8
+        } else {
+            ((u16::from(clamped_luna) * 60 + u16::from(report.heuristic_score) * 40) / 100)
+                .max(
+                    if clamped_luna >= 85 || (report.heuristic_score >= 82 && clamped_luna >= 60) {
+                        82
+                    } else {
+                        0
+                    },
+                )
+                .min(100) as u8
+        };
 
         report.luna_score = Some(clamped_luna);
         report.breakdown.luna_score = Some(clamped_luna);
@@ -833,8 +871,146 @@ pub fn is_automated_or_machine_generated(sample: &MessageSample) -> bool {
         "unsubscribe from these notifications",
         "generated automatically by",
         "microsoft viva briefing",
+        "this message is protected with microsoft information protection",
     ];
     automated_body_markers.iter().any(|m| body.contains(m))
+}
+
+/// Strip quoted email reply chains, sensitivity classification banners, and trailing
+/// email signatures so only the newly authored portion of a message is scored.
+pub fn isolate_authored_text(body: &str) -> String {
+    let trimmed = strip_sensitivity_banner(body.trim());
+    let raw_lines: Vec<&str> = trimmed.lines().collect();
+    let mut kept_lines: Vec<&str> = Vec::with_capacity(raw_lines.len());
+
+    for (idx, &line) in raw_lines.iter().enumerate() {
+        let t = line.trim();
+        if is_reply_divider_line(t) || is_reply_header_block(&raw_lines[idx..]) {
+            break;
+        }
+        if t.starts_with('>') {
+            continue;
+        }
+        kept_lines.push(line);
+    }
+
+    let without_sig = strip_trailing_signature(&kept_lines);
+    let candidate = without_sig.join("\n").trim().to_string();
+    if candidate.is_empty() {
+        kept_lines.join("\n").trim().to_string()
+    } else {
+        candidate
+    }
+}
+
+fn strip_sensitivity_banner(mut text: &str) -> &str {
+    const BANNERS: &[&str] = &[
+        "classified as microsoft highly confidential",
+        "classified as microsoft confidential",
+        "classified as microsoft general",
+        "classified as microsoft public",
+        "sensitivity: highly confidential",
+        "sensitivity: confidential",
+        "sensitivity: general",
+        "sensitivity: public",
+    ];
+    loop {
+        let lower = text.to_ascii_lowercase();
+        let mut matched = false;
+        for banner in BANNERS {
+            if lower.starts_with(banner) {
+                text = text[banner.len()..]
+                    .trim_start_matches([':', '-', '—', '|', '.', ' ', '\t', '\r', '\n']);
+                matched = true;
+                break;
+            }
+        }
+        if !matched {
+            break;
+        }
+    }
+    text
+}
+
+fn is_reply_divider_line(trimmed: &str) -> bool {
+    if trimmed.len() >= 8 && trimmed.bytes().all(|b| b == b'_') {
+        return true;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.starts_with("-----original message-----")
+        || lower.starts_with("--- original message ---")
+        || lower.starts_with("-----forwarded message-----")
+        || lower.starts_with("begin forwarded message:")
+    {
+        return true;
+    }
+    lower.starts_with("on ")
+        && lower.ends_with("wrote:")
+        && (lower.contains(',') || lower.contains('@') || lower.contains(" at "))
+}
+
+fn is_reply_header_block(lines: &[&str]) -> bool {
+    let Some(first) = lines.first() else {
+        return false;
+    };
+    let clean_first = first.trim().trim_matches('*').trim().to_ascii_lowercase();
+    if !clean_first.starts_with("from:") {
+        return false;
+    }
+    let window = &lines[1..lines.len().min(8)];
+    let has_sent_or_date = window.iter().any(|l| {
+        let clean = l.trim().trim_matches('*').trim().to_ascii_lowercase();
+        clean.starts_with("sent:") || clean.starts_with("date:")
+    });
+    let has_to_or_subject = window.iter().any(|l| {
+        let clean = l.trim().trim_matches('*').trim().to_ascii_lowercase();
+        clean.starts_with("to:") || clean.starts_with("subject:")
+    });
+    has_sent_or_date && has_to_or_subject
+}
+
+fn strip_trailing_signature<'a>(lines: &'a [&'a str]) -> &'a [&'a str] {
+    const SIGN_OFFS: &[&str] = &[
+        "kind regards",
+        "best regards",
+        "warm regards",
+        "regards",
+        "many thanks",
+        "sincerely",
+        "cheers",
+    ];
+    for (idx, line) in lines.iter().enumerate() {
+        let t = line.trim();
+        if t == "--" || line.starts_with("-- ") {
+            let tail_non_empty = lines[idx + 1..]
+                .iter()
+                .filter(|l| !l.trim().is_empty())
+                .count();
+            if tail_non_empty <= 8 && idx > 0 {
+                return &lines[..idx];
+            }
+        }
+        let clean = t
+            .trim_end_matches([',', '.', '!'])
+            .trim()
+            .to_ascii_lowercase();
+        if SIGN_OFFS.contains(&clean.as_str()) && idx > 0 {
+            let tail: Vec<&str> = lines[idx + 1..]
+                .iter()
+                .copied()
+                .filter(|l| !l.trim().is_empty())
+                .collect();
+            if tail.len() <= 6
+                && tail.iter().all(|l| {
+                    let lt = l.trim();
+                    !is_bullet(lt) && lt.split_whitespace().count() <= 14
+                })
+            {
+                return &lines[..idx];
+            }
+        }
+    }
+    lines
 }
 
 /// Add one evidence signal and return its weight for the family subtotal.
@@ -1027,7 +1203,7 @@ fn score_structure(
         );
     }
 
-    let bold_spans = body.matches("**").count() / 2;
+    let bold_spans = count_non_mention_bold_spans(body);
     if bold_bullet_count < 2 && heading_count == 0 && bold_spans >= 1 {
         let weight = (8 + 3 * (bold_spans - 1)).min(16) as u8;
         raw += record_signal(
@@ -1365,7 +1541,30 @@ fn count_human_fingerprints(
     if word_count < 60 && unfinished {
         marks += 1;
     }
+    if body.split_whitespace().any(|w| {
+        let trimmed = w.trim_matches(['*', '(', ')', '[', ']', ',', '.', ':']);
+        trimmed.starts_with('@') && trimmed.chars().nth(1).is_some_and(char::is_alphabetic)
+    }) {
+        marks += 1;
+    }
     marks
+}
+
+fn count_non_mention_bold_spans(body: &str) -> usize {
+    let mut count = 0;
+    let mut rest = body;
+    while let Some(open) = rest.find("**") {
+        let after_open = &rest[open + 2..];
+        let Some(close) = after_open.find("**") else {
+            break;
+        };
+        let inner = after_open[..close].trim();
+        if !inner.is_empty() && !inner.starts_with('@') {
+            count += 1;
+        }
+        rest = &after_open[close + 2..];
+    }
+    count
 }
 
 /// Prior for uniformly tidy, formal prose: every sentence capitalised and punctuated, no
@@ -1376,6 +1575,7 @@ fn compute_polish_prior(
     word_count: usize,
     is_teams: bool,
     no_human_marks: bool,
+    has_ai_signals: bool,
     signals: &mut Vec<SlopSignal>,
 ) -> u8 {
     let sentences: Vec<&String> = segments
@@ -1399,9 +1599,9 @@ fn compute_polish_prior(
     {
         prior = if word_count >= 120 {
             20
-        } else if word_count >= 60 {
+        } else if word_count >= 65 {
             16
-        } else if word_count >= 35 {
+        } else if word_count >= 35 && has_ai_signals {
             12
         } else {
             8
@@ -1413,7 +1613,7 @@ fn compute_polish_prior(
         .map(|word| word.chars().filter(char::is_ascii_alphabetic).count())
         .filter(|&len| len > 0)
         .collect();
-    if word_count >= 20 && !letter_lengths.is_empty() {
+    if (word_count >= 65 || (word_count >= 20 && has_ai_signals)) && !letter_lengths.is_empty() {
         let long = letter_lengths.iter().filter(|&&len| len >= 9).count();
         if long * 100 > letter_lengths.len() * 22 {
             prior += 8;
@@ -1422,7 +1622,7 @@ fn compute_polish_prior(
         }
     }
 
-    if is_teams {
+    if is_teams && (word_count >= 100 || has_ai_signals) {
         prior += if word_count >= 100 {
             10
         } else if word_count >= 60 {
@@ -2036,5 +2236,99 @@ mod tests {
             sentence_segments("One two three. Four five\nsix seven! eight"),
             vec!["One two three.", "Four five", "six seven!"]
         );
+    }
+
+    #[test]
+    fn isolates_authored_email_reply_from_quoted_thread_sensitivity_banner_and_signature() {
+        let detector = SlopDetector::new();
+        let quoted_wall = (0..11)
+            .map(|i| {
+                format!(
+                    "### Section {i}\n- **Strategic Alignment {i}:** Fostering holistic synergy and unlocking value across our evolving landscape."
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let craig_mail = format!(
+            "Classified as Microsoft Highly Confidential\n\
+             Thanks Craig, this is all that I need, I will share this with the customer today.\n\n\
+             Kind regards,\n\
+             Jean\n\
+             Principal Architect\n\n\
+             From: Craig Example <craig@contoso.com>\n\
+             Sent: Monday, October 26, 2026 8:15 AM\n\
+             To: Jean <jean@contoso.com>\n\
+             Subject: Re: Architecture Pack\n\n\
+             {quoted_wall}"
+        );
+
+        let report = detector.analyze(&sample(
+            M365App::Outlook,
+            MessageDirection::Sent,
+            &craig_mail,
+        ));
+        assert!(
+            report.word_count < 30,
+            "quoted thread and signature must be stripped, got {} words",
+            report.word_count
+        );
+        assert!(
+            report.slop_score <= 19,
+            "handwritten reply above a quoted thread must score as human sparkle, got {}",
+            report.slop_score
+        );
+        assert_eq!(report.tier, AnimationTier::HumanSparkle);
+
+        let mariah_mail = format!(
+            "Hi Again @Mariah Motsoeneng and @Olebogeng Rapudi\n\
+             Just bringing this to the top of your mailbox so we can close out the dates before Friday.\n\n\
+             ________________________________\n\
+             From: Mariah Motsoeneng <mariah@contoso.com>\n\
+             Sent: Friday, October 23, 2026 2:10 PM\n\
+             To: Jean <jean@contoso.com>\n\
+             Subject: Workshop Planning\n\n\
+             {quoted_wall}"
+        );
+        let mariah_report = detector.analyze(&sample(
+            M365App::Outlook,
+            MessageDirection::Sent,
+            &mariah_mail,
+        ));
+        assert!(
+            mariah_report.slop_score <= 19,
+            "thread bump with @mentions must score as human sparkle, got {}",
+            mariah_report.slop_score
+        );
+        assert_eq!(mariah_report.tier, AnimationTier::HumanSparkle);
+    }
+
+    #[test]
+    fn luna_judgment_can_veto_heuristic_false_positives_on_human_writing() {
+        let detector = SlopDetector::new();
+        let bulleted_human = sample(
+            M365App::Outlook,
+            MessageDirection::Sent,
+            "Hi team, here are the notes from our call:\n\
+             - **Scope:** Confirmed the three tables for phase 1.\n\
+             - **Owner:** Sam is taking the ingestion script.\n\
+             - **Timing:** Targeting Wednesday morning for the dry run.",
+        );
+        let initial = detector.analyze(&bulleted_human);
+        assert!(initial.heuristic_score >= 40);
+
+        let luna = LunaJudgment {
+            slop_score: 10,
+            model: "gpt-5.6-luna".to_string(),
+            reasoning: "Concise, concrete human meeting notes with specific owners".to_string(),
+            coaching_tip: "Clear, direct notes.".to_string(),
+        };
+        let merged = detector.merge_luna_judgment(initial, &luna);
+        assert!(
+            merged.slop_score <= 19,
+            "GPT Luna human verdict must veto heuristic false positive, got {}",
+            merged.slop_score
+        );
+        assert_eq!(merged.tier, AnimationTier::HumanSparkle);
+        assert!(!merged.is_slop_grenade);
     }
 }
