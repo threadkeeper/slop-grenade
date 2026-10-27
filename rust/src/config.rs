@@ -129,6 +129,9 @@ impl AppConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn default_config_uses_gpt_5_6_luna_and_port_8090() {
@@ -139,5 +142,68 @@ mod tests {
         assert_eq!(cfg.luna_endpoint, "https://api.githubcopilot.com/responses");
         assert!(cfg.luna_enabled);
         assert!(!cfg.demo_data_enabled);
+    }
+
+    #[test]
+    fn from_env_reads_overrides_and_falls_back_cleanly() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let vars = [
+            "HTTP_BIND",
+            "WEB_ASSET_DIR",
+            "SLOP_POLL_INTERVAL_SECS",
+            "SLOP_AUTO_POLL",
+            "SLOP_DEMO_DATA",
+            "SLOP_LUNA_ENABLED",
+            "SLOP_LUNA_MODEL",
+            "SLOP_LUNA_ENDPOINT",
+            "WORKIQ_BIN",
+            "WORKIQ_ACCOUNT",
+        ];
+        for key in vars {
+            env::remove_var(key);
+        }
+
+        let fallback = AppConfig::from_env();
+        assert_eq!(fallback.http_bind, "127.0.0.1:8090");
+        assert_eq!(fallback.poll_interval_secs, 3);
+        assert!(fallback.auto_poll_enabled);
+        assert!(!fallback.demo_data_enabled);
+        assert!(fallback.luna_enabled);
+        assert!(fallback.workiq_bin.is_none());
+        assert!(fallback.workiq_account.is_none());
+
+        env::set_var("HTTP_BIND", "127.0.0.1:9099");
+        env::set_var("WEB_ASSET_DIR", "custom/web/build");
+        env::set_var("SLOP_POLL_INTERVAL_SECS", "15");
+        env::set_var("SLOP_AUTO_POLL", "false");
+        env::set_var("SLOP_DEMO_DATA", "true");
+        env::set_var("SLOP_LUNA_ENABLED", "0");
+        env::set_var("SLOP_LUNA_MODEL", "gpt-5.6-luna-custom");
+        env::set_var("SLOP_LUNA_ENDPOINT", "https://example.test/responses");
+        env::set_var("WORKIQ_BIN", "/usr/local/bin/workiq");
+        env::set_var("WORKIQ_ACCOUNT", "alex@contoso.com");
+
+        let custom = AppConfig::from_env();
+        assert_eq!(custom.http_bind, "127.0.0.1:9099");
+        assert_eq!(custom.web_asset_dir, PathBuf::from("custom/web/build"));
+        assert_eq!(custom.poll_interval_secs, 15);
+        assert!(!custom.auto_poll_enabled);
+        assert!(custom.demo_data_enabled);
+        assert!(!custom.luna_enabled);
+        assert_eq!(custom.luna_model, "gpt-5.6-luna-custom");
+        assert_eq!(custom.luna_endpoint, "https://example.test/responses");
+        assert_eq!(
+            custom.workiq_bin,
+            Some(PathBuf::from("/usr/local/bin/workiq"))
+        );
+        assert_eq!(custom.workiq_account.as_deref(), Some("alex@contoso.com"));
+
+        // Sub-3-second intervals clamp back to default (3 seconds).
+        env::set_var("SLOP_POLL_INTERVAL_SECS", "1");
+        assert_eq!(AppConfig::from_env().poll_interval_secs, 3);
+
+        for key in vars {
+            env::remove_var(key);
+        }
     }
 }

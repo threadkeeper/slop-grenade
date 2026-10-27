@@ -33,7 +33,6 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions { jvmTarget = "17" }
     lint { abortOnError = true; checkReleaseBuilds = true }
     androidResources {
         // AAPT's default underscore-directory filter drops SvelteKit's _app bundle.
@@ -43,6 +42,9 @@ android {
         )
     }
     packaging { jniLibs { useLegacyPackaging = false } }
+}
+kotlin {
+    compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) }
 }
 // Fail closed rather than producing an installable shell with missing dashboard/native code.
 tasks.register("verifyPackagedRuntime") {

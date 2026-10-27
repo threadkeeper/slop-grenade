@@ -4,6 +4,8 @@ name: Scheduled Assurance
 # Also runs automatically on pull requests that touch dependency manifests or
 # lockfiles so Dependabot PRs can be reviewed and merged on the go.
 on:
+  push:
+    branches: [main]
   schedule:
     - cron: "17 3 * * *"
   workflow_dispatch:
@@ -61,8 +63,8 @@ jobs:
         id: coverage
         run: |
           cargo llvm-cov --manifest-path core/Cargo.toml --all-features --summary-only --fail-under-lines 80
-          cargo llvm-cov --manifest-path rust/Cargo.toml --all-features --lcov --output-path rust/lcov.info
-          cargo llvm-cov report --manifest-path rust/Cargo.toml --summary-only --fail-under-lines 80
+          cargo llvm-cov --manifest-path rust/Cargo.toml --all-features --ignore-filename-regex 'main\.rs' --lcov --output-path rust/lcov.info
+          cargo llvm-cov report --manifest-path rust/Cargo.toml --ignore-filename-regex 'main\.rs' --summary-only --fail-under-lines 80
 
       - name: Upload coverage artifact
         if: always() && hashFiles('rust/lcov.info') != ''
@@ -109,19 +111,19 @@ jobs:
         uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
         with:
           manifest-path: core/Cargo.toml
-          config: rust/deny.toml
+          arguments: --all-features --config ${{ github.workspace }}/rust/deny.toml
 
       - name: cargo-deny (rust daemon)
         uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
         with:
           manifest-path: rust/Cargo.toml
-          config: rust/deny.toml
+          arguments: --all-features --config ${{ github.workspace }}/rust/deny.toml
 
       - name: cargo-deny (mobile rust-bridge)
         uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
         with:
           manifest-path: mobile/rust-bridge/Cargo.toml
-          config: rust/deny.toml
+          arguments: --all-features --config ${{ github.workspace }}/rust/deny.toml
 
   application-dependencies:
     name: Frontend & Infrastructure Audit
