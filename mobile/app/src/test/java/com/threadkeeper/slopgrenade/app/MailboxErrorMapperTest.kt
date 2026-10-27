@@ -23,7 +23,7 @@ class MailboxErrorMapperTest {
     @Test fun unknownFailureNeverSerializesRawData() {
         val result = MailboxErrorMapper.body(CompletionException(IllegalStateException("secret@example.invalid token")))
         assertEquals(500, result.getInt("status"))
-        assertEquals(setOf("code", "retryable"), result.getJSONObject("body").keySet())
+        assertEquals(setOf("code", "retryable"), result.getJSONObject("body").keys().asSequence().toSet())
         assertFalse(result.toString().contains("secret"))
         assertFalse(result.toString().contains("IllegalState"))
     }
