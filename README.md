@@ -1,60 +1,76 @@
-# Slop Grenade
+# Slop Grenade - a single pane of glass to detect AI generated content across all of your communications platforms.
 
-[![CI](https://github.com/threadkeeper/slop-grenade/actions/workflows/ci.yml/badge.svg)](https://github.com/threadkeeper/slop-grenade/actions/workflows/ci.yml)
-[![Software Assurance](https://github.com/threadkeeper/slop-grenade/actions/workflows/assurance.yml/badge.svg)](https://github.com/threadkeeper/slop-grenade/actions/workflows/assurance.yml)
-[![Windows Desktop](https://github.com/threadkeeper/slop-grenade/actions/workflows/desktop.yml/badge.svg)](https://github.com/threadkeeper/slop-grenade/actions/workflows/desktop.yml)
-[![macOS Desktop](https://github.com/threadkeeper/slop-grenade/actions/workflows/macos.yml/badge.svg)](https://github.com/threadkeeper/slop-grenade/actions/workflows/macos.yml)
-[![Android & Shared Core](https://github.com/threadkeeper/slop-grenade/actions/workflows/android.yml/badge.svg)](https://github.com/threadkeeper/slop-grenade/actions/workflows/android.yml)
-[![Latest Release](https://img.shields.io/github/v/release/threadkeeper/slop-grenade?label=verified%20release)](https://github.com/threadkeeper/slop-grenade/releases/latest)
+Slop Grenade is built to work across all of your communications platforms—spanning team chat, direct messaging, email, and collaborative channels—from a single unified desktop overlay and habit dashboard.
 
-**Slop Grenade** is a lightweight Windows and macOS desktop companion that helps you and your team notice—and break—the habit of sending unedited AI-generated fluff across chat and email.
-
-It runs quietly in the background on your PC or Mac, watches the messages you send and receive through connected services, and gives instant visual feedback right on the edges of your monitor.
-
-**Connectors:** Outlook and Teams are available on Windows and macOS through WorkIQ. Gmail has an experimental Android app with separate Google authorization setup. Slack and other providers are planned.
+1. **Protects you and your staff from getting lazy with AI.**
+2. **Provides visual cues to help you stay cognizant at all times to the impending AI slop, cannons, grenades and pending doom.**
+3. **Think before you slop.**
 
 <p align="center">
-  <img src="docs/screenshots/grenade-throw.gif" width="640" alt="A small pink grenade with a cheeky face is thrown at the left edge of the screen, slows down for a moment just before impact, then pops and splats pink slop on the edge next to an email inbox">
+  <img src="docs/screenshots/grenade-throw.gif" width="880" alt="Minimalistic Slop Grenade animation and explosion with sparkles, smoke, and fruit on a clear background overlaid on the three core principles">
 </p>
-
-<p align="center"><b>Someone just sent you slop. Now it is on your screen.</b></p>
 
 ---
 
-## Download & Quick Install (Verified Releases + SHA-256)
+## Dashboard
 
-Every release and CI build publishes **SHA-256 checksums** alongside its artifacts so you can verify integrity before running on your laptop or phone:
+<p align="center">
+  <img src="docs/screenshots/dashboard.jpg" width="1000" alt="Anonymized Slop Grenade dashboard with colored alphabetical callout badges A through M next to each component">
+</p>
 
-| Platform | Verified Download | SHA-256 Checksum | Build Provenance |
-| :--- | :--- | :--- | :--- |
-| **Windows 10/11 (x64 Portable Bundle)** | [`slop-grenade-windows-x64.zip`](https://github.com/threadkeeper/slop-grenade/releases/latest/download/slop-grenade-windows-x64.zip) | [`slop-grenade-windows-x64.zip.sha256`](https://github.com/threadkeeper/slop-grenade/releases/latest/download/slop-grenade-windows-x64.zip.sha256) | [Windows Desktop Workflow](https://github.com/threadkeeper/slop-grenade/actions/workflows/desktop.yml) |
-| **macOS 13+ (Apple Silicon & Intel Universal)** | [`slop-grenade-macos-universal.tar.gz`](https://github.com/threadkeeper/slop-grenade/releases/latest/download/slop-grenade-macos-universal.tar.gz) | [`slop-grenade-macos-universal.tar.gz.sha256`](https://github.com/threadkeeper/slop-grenade/releases/latest/download/slop-grenade-macos-universal.tar.gz.sha256) | [macOS Desktop Workflow](https://github.com/threadkeeper/slop-grenade/actions/workflows/macos.yml) |
-| **Android 11+ (Gmail Experimental APK)** | [`slop-grenade-android-debug.apk`](https://github.com/threadkeeper/slop-grenade/releases/latest/download/slop-grenade-android-debug.apk) | [`slop-grenade-android-debug.apk.sha256`](https://github.com/threadkeeper/slop-grenade/releases/latest/download/slop-grenade-android-debug.apk.sha256) | [Android Compatibility Workflow](https://github.com/threadkeeper/slop-grenade/actions/workflows/android.yml) |
-| **All Releases & Release Notes** | [GitHub Releases (`threadkeeper/slop-grenade/releases`)](https://github.com/threadkeeper/slop-grenade/releases/latest) | Included per asset | [Software Assurance Pipeline](https://github.com/threadkeeper/slop-grenade/actions/workflows/assurance.yml) |
+### Dashboard Component Guide (`A` – `M`)
 
-### Verify Your Download (`SHA-256`)
+- **A — Refresh Button**: Syncs the dashboard with the local detector and backfills recent messages for the selected time span without replaying old screen animations.
+- **B — Effects Test Range (Target Icon)**: Opens an interactive preview monitor where you can test-fire grenades, cannons, fruit, smoke, sparkles, and squeegees without affecting your live statistics.
+- **C — Sound FX & Volume Controls**: Toggles synthesized retro audio cues on or off and adjusts effect volume (`0%`–`100%`).
+- **D — Time Span Filter (`Span`)**: Switches the active reporting window between **Today** (since local midnight), **Last 3 days** (rolling 72 hours), and **Last 7 days** (rolling 168 hours).
+- **E — Direction Filter (`Direction`)**: Filters gauges, charts, leaderboards, and the ledger by **All**, **Incoming** (messages received), or **Outgoing** (messages sent by you).
+- **F — Platform Source Filter (`Source`)**: Filters activity across connected communication platforms (**All**, **Chat**, or **Email**).
+- **G — Detection Tier Filter (`Types`)**: Isolates messages by AI detection tier (**All**, **slop-grenade**, **ai-cannon**, **sprinkled**, **polish**, or **human**).
+- **H — Incoming Slop Gauge**: Analog dial showing the percentage of incoming human-sent messages that read as AI-generated (score `40+`), along with total message, AI-written, and grenade counts.
+- **I — Outgoing Slop Gauge**: Analog dial tracking the AI percentage of your own sent messages so you can catch yourself before getting lazy with AI.
+- **J — Daily Damage Report**: Stacked timeline bar chart breaking down message volume by detection tier across time buckets (click any bar to filter the dashboard to that slice).
+- **K — Most Wanted (`Highest % AI`)**: Top 5 contacts sending the highest share of AI-generated messages in the selected window (click any person to filter the ledger).
+- **L — Hand-Crafted Heroes (`Lowest % AI`)**: Top 5 contacts with the lowest AI share who consistently write genuine, human-crafted messages.
+- **M — The Ledger**: Sortable, paginated table (`50` messages per page) showing each message's **Slop %**, local **Date & time**, **Type**, **Source**, 4-signal heuristic breakdown (`L`exical · `S`tructural · `B`urstiness · `H`andoff and word count), **From**, **To**, **Subject**, and sanitized **Preview**.
 
-**Windows PowerShell:**
+---
+
+## Downloads, Installation & SHA-256 Hashes
+
+Download the latest verified release from the [**GitHub Releases Page (`threadkeeper/slop-grenade/releases/latest`)**](https://github.com/threadkeeper/slop-grenade/releases/latest):
+
+| Platform | Release Package | SHA-256 Checksum File |
+| :--- | :--- | :--- |
+| **Windows 10/11 (x64)** | [`slop-grenade-windows-x64.zip`](https://github.com/threadkeeper/slop-grenade/releases/latest/download/slop-grenade-windows-x64.zip) | [`slop-grenade-windows-x64.zip.sha256`](https://github.com/threadkeeper/slop-grenade/releases/latest/download/slop-grenade-windows-x64.zip.sha256) |
+| **macOS 13+ (Universal)** | [`slop-grenade-macos-universal.tar.gz`](https://github.com/threadkeeper/slop-grenade/releases/latest/download/slop-grenade-macos-universal.tar.gz) | [`slop-grenade-macos-universal.tar.gz.sha256`](https://github.com/threadkeeper/slop-grenade/releases/latest/download/slop-grenade-macos-universal.tar.gz.sha256) |
+| **Android 11+ (APK)** | [`slop-grenade-android-debug.apk`](https://github.com/threadkeeper/slop-grenade/releases/latest/download/slop-grenade-android-debug.apk) | [`slop-grenade-android-debug.apk.sha256`](https://github.com/threadkeeper/slop-grenade/releases/latest/download/slop-grenade-android-debug.apk.sha256) |
+
+### Verify SHA-256 Hashes & Install
+
+**Windows:**
 ```powershell
-# Download the Windows bundle + checksum and verify integrity
 Invoke-WebRequest https://github.com/threadkeeper/slop-grenade/releases/latest/download/slop-grenade-windows-x64.zip -OutFile slop-grenade-windows-x64.zip
 Invoke-WebRequest https://github.com/threadkeeper/slop-grenade/releases/latest/download/slop-grenade-windows-x64.zip.sha256 -OutFile slop-grenade-windows-x64.zip.sha256
 $expected = (Get-Content .\slop-grenade-windows-x64.zip.sha256).Split(' ')[0].Trim().ToLowerInvariant()
 $actual   = (Get-FileHash .\slop-grenade-windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
 if ($actual -eq $expected) { Write-Host "SHA-256 verified: $actual" -ForegroundColor Green } else { throw "SHA-256 mismatch!" }
+
+Expand-Archive .\slop-grenade-windows-x64.zip -DestinationPath .\slop-grenade
+.\slop-grenade\install-local.ps1
 ```
 
-**macOS (Universal Bundle `arm64` + `x86_64`):**
+**macOS:**
 ```bash
-# Download the macOS Universal bundle + checksum, verify SHA-256, and install
 curl -fsSLO https://github.com/threadkeeper/slop-grenade/releases/latest/download/slop-grenade-macos-universal.tar.gz
 curl -fsSLO https://github.com/threadkeeper/slop-grenade/releases/latest/download/slop-grenade-macos-universal.tar.gz.sha256
 shasum -a 256 -c slop-grenade-macos-universal.tar.gz.sha256
+
 mkdir -p slop-grenade-macos && tar -xzf slop-grenade-macos-universal.tar.gz -C slop-grenade-macos
 ./slop-grenade-macos/install-macos.sh
 ```
 
-**macOS / Linux (for verifying the Android APK before sideloading):**
+**Android (verify APK checksum before installing):**
 ```bash
 curl -fsSLO https://github.com/threadkeeper/slop-grenade/releases/latest/download/slop-grenade-android-debug.apk
 curl -fsSLO https://github.com/threadkeeper/slop-grenade/releases/latest/download/slop-grenade-android-debug.apk.sha256
@@ -63,203 +79,7 @@ shasum -a 256 -c slop-grenade-android-debug.apk.sha256
 
 ---
 
-## The Philosophy: Why "Slop Grenade"?
+## Documentation
 
-We have all been on the receiving end of a **Slop Grenade**:
-- Someone types a five-second prompt into an AI assistant (*"Write a comprehensive update on Q4 priorities"*).
-- Without editing, trimming, or adding any real human thought, they paste 500 words of bolded bullet points (`- **Strategic Alignment:** Fostering holistic synergy...`) into a Teams chat or email thread and hit **Send**.
-- It took the sender **10 seconds** to pull the pin and throw. It now takes everyone else on the team **20 minutes** to wade through the sludge and figure out what the sender actually wants.
-
-Good workplace communication is short, human, and considerate of other people's attention. **Slop Grenade** exists to make invisible cognitive pollution visible—especially in **your own outgoing messages**—so you can build better communication habits day by day.
-
----
-
-## What Happens on Your Screen
-
-Slop Grenade overlays your main Windows desktop monitor without interrupting your work (you can click and type right through the effects in any app). Everything is drawn small and kept to the edges of the screen, in a comic, cel-shaded style with ink outlines:
-
-- **`human` (0-19)**: A short, bright crystal twinkle near the edge.
-- **`polish` (20-39)**: A small puff of smoke rolls in from the edge of your monitor. It swirls when anything flies through it and fades away within about 15 seconds.
-- **`sprinkled` (40-59)**: One of **20 cel-shaded 3D fruits** is tossed across the screen, tumbling on a random axis. It sticks only if it hits slop on the edge; otherwise it sails off the screen.
-- **`ai-cannon` (60-79)**: A goo cannonball splats onto the edge of your screen and stays until squeegeed.
-- **`slop-grenade` (80-100)**: A small, cheeky grenade pulls its own pin and is thrown at the edge of your monitor. Time slows for a moment just before it hits, then it pops with a small blast and comic sound word and splatters slop on the edge:
-  - **Slop You Receive (Left Side of Monitor)**: Builds up in **Pink**.
-  - **Slop You Send (Right Side of Monitor)**: Builds up in **Blue**.
-  - **Ooze**: Slop keeps oozing slowly down the edge: drips stretch, a drop lets go and falls, and the drip starts again.
-  - **Flies**: Leave slop on the screen for a while (45 seconds by default) and flies start to gather and buzz around it.
-  - **Daily Buildup & Squeegee**: Fruit and slop stay stuck along the sides of your monitor until you squeegee that side clean from the tray icon. The squeegee also chases the flies away.
-- **Sound (optional)**: Switch on **Sound FX** in the tray panel for soft, retro sounds in the style of early Macintosh games: a light whee, a ticking fuse, plops, a quiet hum from the flies and a rounded "pomf" for the grenade. Sound is off by default.
-
-### How messages are scored
-
-Every message gets a score from 0 to 100 from a local, rule-based reader. It is strict on purpose, because modern assistants write clean, friendly business prose:
-
-- **Adds points**: stock assistant phrases ("I hope you're doing well", "Let me know if you have any questions", "Would you like me to..."), AI-favoured words (ensure, crucial, enhance, landscape), em dashes, tidy bullet lists, bold labels, emoji checklists, evenly sized sentences, and long, uniformly polished paragraphs.
-- **Takes points off**: human typing habits such as lower-case sentence starts, slang (lol, thx, tbh), "??", emoticons and a missing final full stop.
-
-A score of **40 or more counts as AI-written**. That threshold drives the % AI dials and the leaderboards. Casual human chat lands at 0 to 10, AI-assisted mail at about 45 to 70, and pasted assistant answers at 80 or more.
-
----
-
-## See It in Action
-
-All screenshots and GIFs use fictional example data, not a real inbox.
-
-### Incoming!
-
-<p align="center">
-  <img src="docs/screenshots/grenade-impact.jpg" width="560" alt="Close-up of the moment a slop grenade pops against the left edge of the screen with a comic BLAMMO! word">
-</p>
-
-A message scores 80 or more, a grenade pulls its own pin, and time slows for a heartbeat before it pops on the edge of your monitor. Received slop lands on the left in pink. Slop you send lands on the right in blue.
-
-### After a busy morning
-
-<p align="center">
-  <img src="docs/screenshots/desktop-after-a-busy-morning.jpg" width="900" alt="A full desktop with an email inbox in the middle, pink slop and stuck fruit on the left edge, blue slop on the right edge, a few flies and a crystal twinkle">
-</p>
-
-Everything stays at the edges, out of the way of your work, and you can click straight through it.
-
-<p align="center">
-  <img src="docs/screenshots/close-ups.jpg" width="900" alt="Three zoomed-in views: pink slop with a stuck watermelon and flies, a bright crystal twinkle beside blue slop, and blue slop dripping">
-</p>
-
-Up close: fruit only sticks where it hits goo, flies show up when slop is left on the screen too long, and genuinely human messages get a crystal twinkle.
-
-<p align="center">
-  <img src="docs/screenshots/ooze-and-flies.gif" width="300" alt="Animated close-up of pink slop slowly dripping, drops letting go and falling, while flies buzz around a stuck watermelon">
-</p>
-
-The slop never quite settles. Drips stretch, a drop lets go, and the drip starts again until you grab the squeegee.
-
-### The dashboard
-
-<p align="center">
-  <img src="docs/screenshots/dashboard.jpg" width="900" alt="The Slop Grenade dashboard in a brass and parchment style, with incoming and outgoing % AI dials, a Most Wanted list and a Hand-Crafted Heroes list">
-</p>
-
-% AI dials for what you receive and what you send, a Most Wanted list of the people who use AI the most, and the Hand-Crafted Heroes who still write their own messages.
-
-<p align="center">
-  <img src="docs/screenshots/test-range.jpg" width="900" alt="The effects test range pop-up with buttons to fire a slop grenade, the AI cannon, fruit, smoke, a twinkle, a barrage and the squeegees">
-</p>
-
-The target icon opens a test range where you can fire every effect without touching your stats. Good for demos, and for showing the team what happens if they keep pasting unedited AI replies.
-
-> Made someone laugh, or wince? Share the GIF at the top with your team, and [give Slop Grenade a star](https://github.com/threadkeeper/slop-grenade).
-
----
-
-## Android Gmail App (Experimental)
-
-The separate Android app reuses the Rust scoring engine and this dashboard for multiple Gmail accounts, including received and already-sent mail. It does not monitor drafts or change the Windows WorkIQ connection.
-
-Android 11 or later, Google Play services, and a configured Google OAuth client are required. Background scans are battery-managed, with a 15-minute minimum interval rather than continuous monitoring. Cross-app effects need explicit overlay and notification permissions.
-
-See [Android setup, builds, and limitations](./TECHNICAL.md#5-android-gmail-port). Device acceptance and Google consent are required before using a real mailbox; an APK does not bypass either requirement.
-
-## Windows Step-by-Step Setup Guide
-
-### Step 1: Connect Your Messages (WorkIQ MCP)
-
-The current Outlook and Teams connector reads your activity through the **WorkIQ** command-line tool using your existing account sign-in. No custom admin app registration is required.
-
-Open PowerShell and run:
-
-```powershell
-# Accept the WorkIQ license agreement (first time only)
-workiq accept-eula
-
-# Reuse your existing account, or sign in if prompted
-workiq ask --question "Reply only with OK."
-```
-
-WorkIQ reuses your existing session or opens a standard sign-in prompt when needed. Once signed in, it can read your recent Teams and Outlook messages through the first-party connection.
-
----
-
-### Step 2: Optionally Connect GitHub Copilot (for LLM Slop Scoring)
-
-To let Slop Grenade use **GitHub Copilot's LLM** alongside its built-in text analyzer, sign in with the GitHub CLI:
-
-```powershell
-gh auth login
-```
-
-Follow the on-screen prompt to sign in with your GitHub account that has GitHub Copilot access. Slop Grenade will automatically use your active GitHub session—no API keys or config files required.
-
-Local scoring and the history refresh do not require LLM requests. Optional Copilot scoring sends the message being analyzed to the Copilot service.
-
----
-
-### Step 3: Install and Run on Windows or macOS
-
-**On Windows (PowerShell):**
-
-```powershell
-.\scripts\install-local.ps1
-```
-
-What this does automatically on Windows:
-1. Installs the app into your local Windows profile (`%LOCALAPPDATA%\SlopGrenade`).
-2. Adds **Slop Grenade** shortcuts to your **Desktop** and **Start Menu**.
-3. Configures Slop Grenade to **start automatically when you sign in to Windows** (you can toggle this on or off anytime from the System Tray icon).
-4. Starts the background scanner and the desktop screen overlay immediately.
-
-**On macOS (Terminal):**
-
-```bash
-./scripts/install-macos.sh
-```
-
-What this does automatically on macOS:
-1. Installs the Universal (`arm64` + `x86_64`) **`Slop Grenade.app`** bundle into `~/Applications/Slop Grenade.app`.
-2. Clears quarantine attributes and ad-hoc signs the bundle so it launches cleanly on Apple Silicon and Intel Macs.
-3. Registers a LaunchAgent (`~/Library/LaunchAgents/com.threadkeeper.slop-grenade.plist`) so Slop Grenade starts automatically on macOS login.
-4. Starts the background M365 scanner daemon, the click-through macOS desktop screen overlay, and the `💥` macOS Menu Bar control menu.
-
----
-
-## Using the System Tray & Habit Dashboard
-
-### 1. The System Tray Icon (Bright Pink Hand Grenade)
-Look for the **Bright Pink Hand Grenade** icon in your Windows System Tray (bottom-right taskbar near the clock):
-- Slop Grenade checks your **WorkIQ MCP** server every **3 seconds** by default and triggers desktop animations as new messages are found (automated and machine-generated system replies are always classified as the gentle `human` sparkle type). Slow provider calls finish before another live scan starts, so provider latency can delay an effect.
-- **Left-click the Tray Icon** to open the brass control panel where you can:
-  - Read today's **Incoming** and **Outgoing** % AI gauges: the share of today's messages that read as AI-written (they reset automatically at `00:00`).
-  - Click **Squeegee** (left or right) to wipe your monitor edges clean.
-  - Toggle **Launch at Windows sign-in**, **Teams / Outlook monitoring**, **Slop FX** and **Calm FX**.
-  - Switch **Sound FX** on or off and pick a volume (**Soft**, **Med**, **Loud**).
-  - Click **Test Fire!** to see every effect, or **Dashboard** to open the habit dashboard.
-- **Right-click the Tray Icon** for quick test shots (a grenade at either edge, some fruit) and the squeegees.
-- **Hover a live fruit, grenade, sparkle or patch of slop** for half a second to see its ledger details: local date/time, slop %, type, source, direction, sender/recipient, score breakdown, subject and the existing redacted preview. The card never steals focus or blocks clicks in your other apps. Move away to hide it; it also closes after ten seconds. Test shots have no message attached.
-
-### 2. The Habit Dashboard (`http://127.0.0.1:8090/`)
-Clicking **Dashboard** in the tray opens the habit tracker in your browser, styled to match (brass, ink and parchment), featuring:
-- **Incoming / Outgoing % AI dials**: the share of messages in the selected span that read as AI-written (score 40 or more), with the message, AI-written and grenade counts underneath. Automated mail is left out of the share. The dials vent steam when you are in the red.
-- **Refresh**: reads the selected span (`Today` 1 day, **Last 3 days**, or **Last 7 days**) and merges it without duplicates or replaying historical effects. Live **Outlook** and **Teams** counters show progress, such as `345 / 982 scanned`; if the provider has not supplied a reliable total, the counter says **discovering total** instead. The refresh uses local scoring. History is in memory and resets when the background daemon restarts, so restart the app after an update and press **Refresh** to re-score with the latest rules.
-- **Effects test range**: click the target icon in the header to open a small monitor where you can test fire every effect (test shots are not recorded in your stats). The **Sound** switch and volume slider sit next to it.
-- **Per-Day Stacked Bar Chart** broken down by type (`slop-grenade` in pink, `ai-cannon` in orange, `sprinkled` in yellow, `polish` in smoke grey, and `human` in cream).
-- **Filters** for **Today**, **Last 3 days**, or **Last 7 days**, **Incoming / Outgoing**, source (`Teams` vs. `Outlook`), and message type (`All`, `slop-grenade`, `ai-cannon`, `sprinkled`, `polish`, `human`). Today starts at your local midnight; the other spans are rolling 72- and 168-hour windows. Direction filters apply to the dials, charts, leaderboards and ledger together.
-- **Most Wanted** and **Hand-Crafted Heroes**: the five people with the highest and the lowest share of AI-written messages in the selected span, with their message count and AI %. Both lists always show five people once five are known; automated mail and bots are left out.
-- **Interactive Drill-Down Ledger** with local **date and time**, score, type, source, core metrics, sender, recipient, subject, and a short preview. Click **Slop %** or **Date & time** to sort either way. Browse **50 messages per page** using **<< / >>**; sorting applies to the whole filtered result, not just the page you are viewing.
-
----
-
-## Security, Privacy & Software Assurance
-
-Slop Grenade is designed from the ground up as a **read-only, zero-persistence** companion:
-- **Read-Only & Ephemeral**: Never sends, modifies, or deletes email or Teams messages. Raw message bodies are never written to disk; only sanitized metadata, slop scores, and short coaching previews are kept in memory.
-- **Zero-Friction Standalone User-Auth**: Uses your existing local **WorkIQ MCP** broker (automatically accepting first-run MCP EULA prompts) and optional **GitHub CLI (`gh auth login`)** session—no custom Entra admin app registration is ever required.
-- **Hardened Local & Container HTTP Surface**:
-  - Loopback/same-origin CORS & CSRF enforcement blocks third-party websites from reading your local ledger or triggering actions while keeping the Windows tray overlay, local dashboard (`127.0.0.1` / `localhost`), and Android WebView (`appassets.androidplatform.net`) completely frictionless.
-  - Full browser security headers (`Content-Security-Policy` with SHA-256 inline script hashes, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `Permissions-Policy`, and a 64 KiB request body cap).
-  - Trusted HTTPS host allowlisting for GitHub Copilot token calls, `<untrusted_message>` prompt-injection fencing, and CLI flag-injection guards on subprocess arguments.
-- **Automated Software Assurance Pipeline**: Nightly and pull-request supply-chain verification ([`.github/workflows/assurance.yml`](./.github/workflows/assurance.yml)) plus weekly Dependabot PRs ([`.github/dependabot.yml`](./.github/dependabot.yml)) across Rust (`cargo-audit`, `cargo-deny`), npm (`npm audit`), Gradle, Docker, and GitHub Actions so library updates can be reviewed and merged from your phone on the go.
-
----
-
-## Technical Documentation
-
-For architecture details, API endpoints, build/test commands, and container deployment templates, see [TECHNICAL.md](./TECHNICAL.md).
+- [**Detection Algorithm & Scoring Rubric**](./research/ai-slop-and-slop-grenade.md)
+- [**Technical Data Sheet & Developer Guide**](./TECHNICAL.md)
