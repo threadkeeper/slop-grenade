@@ -7,7 +7,7 @@ Slop Grenade is built to work across all of your communications platforms—span
 3. **Think before you slop.**
 
 <p align="center">
-  <img src="docs/screenshots/grenade-throw.gif" width="880" alt="Minimalistic Slop Grenade animation and explosion with sparkles, smoke, and fruit on a clear background overlaid on the three core principles">
+  <img src="docs/screenshots/grenade-throw.gif" width="880" alt="Slop Grenade Proving Grounds monitor displaying the three core principles while buttons are pressed to launch grenades, AI cannons, fruit, smoke, and twinkles that build up along both screen edges">
 </p>
 
 ---
