@@ -24,6 +24,7 @@
   import { isNativeMobile, subscribeAnimations } from '$lib/transport';
   import { createLedger } from '$lib/ledger';
   import Mailbox from '$lib/components/Mailbox.svelte';
+  import M365Account from '$lib/components/M365Account.svelte';
   import BrassGauge from '$lib/components/BrassGauge.svelte';
   import ProvingGrounds from '$lib/components/ProvingGrounds.svelte';
   import OverlayStage from '$lib/components/OverlayStage.svelte';
@@ -43,6 +44,7 @@
 
   let scorecard = $state<AwarenessScorecard | null>(null);
   let cueSequence = 0;
+  let communicationEpoch = $state(0);
   let selectedBucket = $state<string | null>(null);
   let selectedPerson = $state<string | null>(null);
   let cue = $state<StageCue | null>(null);
@@ -153,8 +155,27 @@
     return ledger?.refresh() ?? false;
   }
 
+  function clearCommunicationView() {
+    ++communicationEpoch;
+    cue = null;
+    sfx.stopAll();
+    clearCrossFilters();
+    refreshNotice = '';
+    refreshError = refreshProgressError = null;
+    refreshProgress = null;
+    progressWatcher?.dispose();
+    progressWatcher = undefined;
+    refreshing = false;
+  }
+
+  function dataWiped(generation?: number) {
+    ledger?.reset(generation);
+    void loadLedger();
+  }
+
   async function refreshHistory() {
     if (refreshing) return;
+    const epoch = communicationEpoch;
     const days = refreshDays;
     const windowLabel = refreshWindow;
     refreshing = true;
@@ -167,24 +188,30 @@
       if (refreshId) {
         progressWatcher = createRefreshProgress(
           refreshId, days,
-          (progress) => { refreshProgress = progress; },
-          (error) => { refreshProgressError = error; }
+          (progress) => { if (epoch === communicationEpoch) refreshProgress = progress; },
+          (error) => { if (epoch === communicationEpoch) refreshProgressError = error; }
         );
       }
       const batch = await requestHistoryRefresh(days, undefined, refreshId);
+      if (epoch !== communicationEpoch) return;
       if (!(await loadLedger())) {
+        if (epoch !== communicationEpoch) return;
         refreshNotice = '';
         return;
       }
+      if (epoch !== communicationEpoch) return;
       clearCrossFilters();
       refreshNotice = `Refreshed ${windowLabel}: ${batch.newMessagesAnalyzed} added / ${batch.fetchedCount} scanned. History merged.`;
     } catch (error) {
+      if (epoch !== communicationEpoch) return;
       refreshNotice = '';
       refreshError = error instanceof Error ? error.message : 'The refresh failed.';
     } finally {
-      progressWatcher?.dispose();
-      progressWatcher = undefined;
-      refreshing = false;
+      if (epoch === communicationEpoch) {
+        progressWatcher?.dispose();
+        progressWatcher = undefined;
+        refreshing = false;
+      }
     }
   }
 
@@ -292,16 +319,24 @@
     ledger = createLedger(
       (snapshot) => { referenceNow = new Date().toISOString(); scorecard = snapshot; },
       (error) => { ledgerError = error; },
-      { native: mobile }
+      { native: mobile, onReset: clearCommunicationView }
     );
     const clock = setInterval(() => { referenceNow = new Date().toISOString(); }, 60000);
 
     const stopEvents = subscribeAnimations((animEvent) => {
       // Local cue IDs stay monotonic even when the native core process restarts.
       const seq = ++cueSequence;
+      if (animEvent.dataWiped) {
+        dataWiped(animEvent.resetGeneration);
+        return;
+      }
+      if (!ledger?.acceptsEvent(animEvent.resetGeneration)) return;
       cue = animEvent.squeegeeSide
         ? { seq, side: animEvent.squeegeeSide, squeegee: true }
         : { seq, side: animEvent.report.monitorSide, tier: animEvent.report.tier };
+      void loadLedger();
+    }, (restarted) => {
+      ledger?.restart(restarted);
       void loadLedger();
     });
 
@@ -380,9 +415,13 @@
       </div>
     </header>
 
-    {#if mobile}
-      <Mailbox onAccountsChanged={() => { void loadLedger(); }} />
+    {#if !mobile}
+      <M365Account focus={new URLSearchParams(window.location.search).has('m365')}
+        onDataWiped={dataWiped} />
     {/if}
+    <Mailbox native={mobile}
+      focusGmail={!mobile && new URLSearchParams(window.location.search).has('gmail')}
+      onAccountsChanged={() => { void loadLedger(); }} onDataWiped={dataWiped} />
 
     {#if refreshError || ledgerError}
       <p class="refresh-feedback error" role="alert">Refresh unavailable: {refreshError ?? ledgerError}</p>
@@ -432,17 +471,18 @@
 
       <div class="filter-group" role="group" aria-label="Source channels">
         <span class="group-label">Source</span>
-        {#if mobile}
-          <button class="brass small" class:active={filters.gmail} onclick={() => toggleSource('gmail')}>
-            Gmail
-          </button>
-        {:else}
+        <button class="brass small" class:active={filters.gmail} onclick={() => toggleSource('gmail')}>
+          Gmail
+        </button>
+        {#if !mobile}
           <button class="brass small" class:active={filters.teams} onclick={() => toggleSource('teams')}>
             Teams
           </button>
           <button class="brass small" class:active={filters.outlook} onclick={() => toggleSource('outlook')}>
             Outlook
           </button>
+          <button class="brass small" disabled title="Coming soon">Apple Mail · Coming soon</button>
+          <button class="brass small" disabled title="Coming soon">Yahoo Mail · Coming soon</button>
         {/if}
       </div>
 
@@ -686,7 +726,7 @@
       >
         <div class="range-dialog" role="dialog" aria-modal="true" aria-label="Effects test range">
           <button class="brass small close-btn" aria-label="Close the test range" onclick={() => (rangeOpen = false)}>Close</button>
-          <ProvingGrounds {sfx} {cue} />
+          <ProvingGrounds {sfx} {cue} resetEpoch={communicationEpoch} />
         </div>
       </div>
     {/if}

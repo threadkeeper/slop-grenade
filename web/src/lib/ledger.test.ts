@@ -29,6 +29,66 @@ afterEach(() => {
 });
 
 describe('dashboard ledger snapshots', () => {
+  it('resets the process-local generation on reconnect, so a restarted daemon can repopulate at zero', async () => {
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...snapshot(4), resetGeneration: 7 })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...snapshot(2), resetGeneration: 0 })));
+    const { controller, update } = setup(false, fetcher);
+    await vi.advanceTimersByTimeAsync(0);
+    controller.restart();
+    expect(update.mock.lastCall?.[0].sentByMe.totalMessages).toBe(0);
+    await expect(controller.refresh()).resolves.toBe(true);
+    expect(update).toHaveBeenLastCalledWith({ ...snapshot(2), resetGeneration: 0 });
+    expect(controller.acceptsEvent(0)).toBe(true);
+  });
+
+  it('does not clear existing metrics merely because SSE reconnects to the same generation', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async () =>
+      new Response(JSON.stringify({ ...snapshot(4), resetGeneration: 7 })));
+    const { controller, update } = setup(false, fetcher);
+    await vi.advanceTimersByTimeAsync(0);
+    const count = update.mock.calls.length;
+    controller.restart(false);
+    expect(update).toHaveBeenCalledTimes(count);
+    await expect(controller.refresh()).resolves.toBe(true);
+    expect(update).toHaveBeenCalledTimes(count + 1);
+    expect(controller.reset(7)).toBe(false);
+  });
+
+  it('clears immediately and rejects delayed pre-wipe HTTP snapshots even without generation metadata', async () => {
+    let finish!: (response: Response) => void;
+    const fetcher = vi.fn<typeof fetch>(() => new Promise((resolve) => { finish = resolve; }));
+    const { controller, update, error } = setup(false, fetcher);
+    controller.reset();
+    expect(update).toHaveBeenCalledOnce();
+    expect(update.mock.lastCall?.[0].sentByMe.totalMessages).toBe(0);
+    finish(response(99));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(update).toHaveBeenCalledOnce();
+    expect(error).toHaveBeenLastCalledWith(null);
+  });
+
+  it('reconciles a missed wipe via the snapshot generation and rejects older post-wipe responses', async () => {
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(response(9))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...snapshot(2), resetGeneration: 4 })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...snapshot(99), resetGeneration: 3 })))
+      .mockResolvedValueOnce(response(99));
+    const onReset = vi.fn();
+    const update = vi.fn();
+    const controller = createLedger(update, vi.fn(), { native: false, fetcher, onReset });
+    controllers.push(controller);
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(controller.refresh()).resolves.toBe(true);
+    expect(onReset).toHaveBeenCalledOnce();
+    expect(update.mock.calls.at(-2)?.[0].recentReports).toEqual([]);
+    expect(update).toHaveBeenLastCalledWith({ ...snapshot(2), resetGeneration: 4 });
+    await expect(controller.refresh()).resolves.toBe(false);
+    await expect(controller.refresh()).resolves.toBe(false);
+    expect(update).toHaveBeenLastCalledWith({ ...snapshot(2), resetGeneration: 4 });
+    expect(controller.reset(4)).toBe(false);
+  });
+
   it('reloads native quiet background hydration without any animation events', async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(response(0)).mockResolvedValueOnce(response(7));
     const { update } = setup(true, fetcher);
@@ -61,19 +121,27 @@ describe('dashboard ledger snapshots', () => {
     expect(error).toHaveBeenLastCalledWith(null);
   });
 
-  it('reloads after account operations and then observes delayed quiet hydration, retaining history on disconnect', async () => {
+  it('reloads after account operations and shows an empty ledger after disconnect wipes data', async () => {
     vi.stubGlobal('window', new EventTarget());
     vi.stubGlobal('document', Object.assign(new EventTarget(), { visibilityState: 'visible' }));
     let count = 0;
-    const fetcher = vi.fn<typeof fetch>().mockImplementation(async (path) => {
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async (path, init) => {
       if (path === '/api/v1/ledger') return response(count);
       if (path === '/api/v1/accounts') return new Response(JSON.stringify({
         accounts: [], backgroundStatus: 'Ready', overlayGranted: true
       }));
+      if (init?.method === 'DELETE') {
+        count = 0;
+        return new Response(JSON.stringify({
+          ok: true,
+          dataWiped: true,
+          message: 'Signed out of Gmail. All communication data wiped.'
+        }));
+      }
       return new Response(null, { status: 204 });
     });
     const { controller, update } = setup(true, fetcher);
-    const mailbox = createMailbox(vi.fn(), fetcher, () => { void controller.refresh(); });
+    const mailbox = createMailbox(vi.fn(), fetcher, () => { void controller.refresh(); }, true);
     try {
       await vi.advanceTimersByTimeAsync(0);
       await mailbox.add();
@@ -88,7 +156,7 @@ describe('dashboard ledger snapshots', () => {
       await mailbox.disconnect('local-account');
       await vi.advanceTimersByTimeAsync(0);
       expect(fetcher.mock.calls.filter(([path]) => path === '/api/v1/ledger')).toHaveLength(4);
-      expect(update).toHaveBeenLastCalledWith(snapshot(7));
+      expect(update).toHaveBeenLastCalledWith(snapshot(0));
     } finally {
       mailbox.dispose();
     }

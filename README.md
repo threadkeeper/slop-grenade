@@ -44,7 +44,7 @@ Download the latest verified release from the [**GitHub Releases Page (`threadke
 | :--- | :--- | :--- |
 | **Windows 10/11 (x64)** | [`slop-grenade-windows-x64.zip`](https://github.com/threadkeeper/slop-grenade/releases/latest/download/slop-grenade-windows-x64.zip) | [`slop-grenade-windows-x64.zip.sha256`](https://github.com/threadkeeper/slop-grenade/releases/latest/download/slop-grenade-windows-x64.zip.sha256) |
 | **macOS 13+ (Universal)** | [`slop-grenade-macos-universal.tar.gz`](https://github.com/threadkeeper/slop-grenade/releases/latest/download/slop-grenade-macos-universal.tar.gz) | [`slop-grenade-macos-universal.tar.gz.sha256`](https://github.com/threadkeeper/slop-grenade/releases/latest/download/slop-grenade-macos-universal.tar.gz.sha256) |
-| **Android 11+ (APK)** | [`slop-grenade-android-debug.apk`](https://github.com/threadkeeper/slop-grenade/releases/latest/download/slop-grenade-android-debug.apk) | [`slop-grenade-android-debug.apk.sha256`](https://github.com/threadkeeper/slop-grenade/releases/latest/download/slop-grenade-android-debug.apk.sha256) |
+| **Android 11+ (OAuth testing)** | [Trusted Android Actions run](https://github.com/threadkeeper/slop-grenade/actions/workflows/android.yml): `slop-grenade-android-oauth-test` | Included `slop-grenade-android-oauth-test.apk.sha256` |
 
 ### Verify SHA-256 Hashes & Install
 
@@ -70,16 +70,19 @@ mkdir -p slop-grenade-macos && tar -xzf slop-grenade-macos-universal.tar.gz -C s
 ./slop-grenade-macos/install-macos.sh
 ```
 
-**Android (verify APK checksum before installing):**
+**Android OAuth testing:** Download and extract `slop-grenade-android-oauth-test` from a successful trusted Actions run. Pull-request builds do not publish installable test APKs. Verify both the checksum and certificate before installing:
 ```bash
-curl -fsSLO https://github.com/threadkeeper/slop-grenade/releases/latest/download/slop-grenade-android-debug.apk
-curl -fsSLO https://github.com/threadkeeper/slop-grenade/releases/latest/download/slop-grenade-android-debug.apk.sha256
-shasum -a 256 -c slop-grenade-android-debug.apk.sha256
+shasum -a 256 -c slop-grenade-android-oauth-test.apk.sha256
+apksigner verify --print-certs slop-grenade-android-oauth-test.apk
 ```
+
+The signer SHA-1 must match `GOOGLE_ANDROID_TEST_CERT_SHA1`, registered with Google for package `com.threadkeeper.slopgrenade`. Test APKs use a dedicated stable certificate, not the production release key, and are not automatically attached to public releases. See the [Android signing setup](./docs/ANDROID_GOOGLE_OAUTH_CI_SIGNING.md).
 
 ---
 
 ## Documentation
 
+- **Desktop Gmail:** Set `GMAIL_OAUTH_CLIENT_ID` to your release's Google Desktop app client ID, then use **Connect Gmail account** in the dashboard or tray/menu. Only `gmail.readonly` is requested. Tokens remain in daemon memory; restarting requires authorization again. Local polling quietly imports the last seven days before monitoring new messages. No client secret or credential JSON is needed. Public distribution requires the release-owner approvals in the [production Gmail setup and release gates](./docs/GMAIL_DESKTOP_PRODUCTION.md).
+- **Sign-out privacy:** Signing out wipes all communication-derived history and active effects. Other connected providers remain authorized and may repopulate history on subsequent scans.
 - [**Detection Algorithm & Scoring Rubric**](./research/ai-slop-and-slop-grenade.md)
 - [**Technical Data Sheet & Developer Guide**](./TECHNICAL.md)

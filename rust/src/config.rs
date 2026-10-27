@@ -30,6 +30,14 @@ pub struct AppConfig {
     pub workiq_bin: Option<PathBuf>,
     /// Optional M365 account email passed to `workiq --account <email>`.
     pub workiq_account: Option<String>,
+    /// Whether local Gmail authorization and polling are enabled.
+    pub gmail_enabled: bool,
+    /// Public Google installed-application client ID; never a client secret.
+    pub gmail_oauth_client_id: Option<String>,
+    /// Gmail polling interval in seconds, clamped to thirty seconds through one day.
+    pub gmail_poll_interval_secs: u64,
+    /// Fixed initial and recovery history window, always seven days.
+    pub gmail_initial_lookback_days: u8,
 }
 
 impl Default for AppConfig {
@@ -45,6 +53,12 @@ impl Default for AppConfig {
             luna_endpoint: "https://api.githubcopilot.com/responses".to_string(),
             workiq_bin: None,
             workiq_account: None,
+            gmail_enabled: true,
+            gmail_oauth_client_id: option_env!("GMAIL_OAUTH_CLIENT_ID")
+                .filter(|value| !value.trim().is_empty())
+                .map(str::to_owned),
+            gmail_poll_interval_secs: 60,
+            gmail_initial_lookback_days: 7,
         }
     }
 }
@@ -110,6 +124,19 @@ impl AppConfig {
         let workiq_account = env::var("WORKIQ_ACCOUNT")
             .ok()
             .filter(|v| !v.trim().is_empty());
+        let gmail_enabled = env::var("GMAIL_ENABLED")
+            .ok()
+            .map(|v| !matches!(v.trim().to_ascii_lowercase().as_str(), "0" | "false" | "no"))
+            .unwrap_or(defaults.gmail_enabled);
+        let gmail_oauth_client_id = env::var("GMAIL_OAUTH_CLIENT_ID")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .or(defaults.gmail_oauth_client_id);
+        let gmail_poll_interval_secs = env::var("GMAIL_POLL_INTERVAL_SECS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .map(|v| v.clamp(30, 86_400))
+            .unwrap_or(defaults.gmail_poll_interval_secs);
 
         Self {
             http_bind,
@@ -122,6 +149,10 @@ impl AppConfig {
             luna_endpoint,
             workiq_bin,
             workiq_account,
+            gmail_enabled,
+            gmail_oauth_client_id,
+            gmail_poll_interval_secs,
+            gmail_initial_lookback_days: 7,
         }
     }
 }
@@ -158,6 +189,9 @@ mod tests {
             "SLOP_LUNA_ENDPOINT",
             "WORKIQ_BIN",
             "WORKIQ_ACCOUNT",
+            "GMAIL_ENABLED",
+            "GMAIL_OAUTH_CLIENT_ID",
+            "GMAIL_POLL_INTERVAL_SECS",
         ];
         for key in vars {
             env::remove_var(key);
@@ -171,6 +205,13 @@ mod tests {
         assert!(fallback.luna_enabled);
         assert!(fallback.workiq_bin.is_none());
         assert!(fallback.workiq_account.is_none());
+        assert!(fallback.gmail_enabled);
+        assert_eq!(fallback.gmail_poll_interval_secs, 60);
+        assert_eq!(fallback.gmail_initial_lookback_days, 7);
+        assert_eq!(
+            fallback.gmail_oauth_client_id,
+            AppConfig::default().gmail_oauth_client_id
+        );
 
         env::set_var("HTTP_BIND", "127.0.0.1:9099");
         env::set_var("WEB_ASSET_DIR", "custom/web/build");
@@ -181,7 +222,13 @@ mod tests {
         env::set_var("SLOP_LUNA_MODEL", "gpt-5.6-luna-custom");
         env::set_var("SLOP_LUNA_ENDPOINT", "https://example.test/responses");
         env::set_var("WORKIQ_BIN", "/usr/local/bin/workiq");
-        env::set_var("WORKIQ_ACCOUNT", "alex@contoso.com");
+        env::set_var("WORKIQ_ACCOUNT", "synthetic@example.invalid");
+        env::set_var("GMAIL_ENABLED", "false");
+        env::set_var(
+            "GMAIL_OAUTH_CLIENT_ID",
+            "synthetic.apps.googleusercontent.com",
+        );
+        env::set_var("GMAIL_POLL_INTERVAL_SECS", "90");
 
         let custom = AppConfig::from_env();
         assert_eq!(custom.http_bind, "127.0.0.1:9099");
@@ -196,7 +243,28 @@ mod tests {
             custom.workiq_bin,
             Some(PathBuf::from("/usr/local/bin/workiq"))
         );
-        assert_eq!(custom.workiq_account.as_deref(), Some("alex@contoso.com"));
+        assert_eq!(
+            custom.workiq_account.as_deref(),
+            Some("synthetic@example.invalid")
+        );
+        assert!(!custom.gmail_enabled);
+        assert_eq!(
+            custom.gmail_oauth_client_id.as_deref(),
+            Some("synthetic.apps.googleusercontent.com")
+        );
+        assert_eq!(custom.gmail_poll_interval_secs, 90);
+        assert_eq!(custom.gmail_initial_lookback_days, 7);
+        env::set_var("GMAIL_POLL_INTERVAL_SECS", "0");
+        assert_eq!(AppConfig::from_env().gmail_poll_interval_secs, 30);
+        env::set_var("GMAIL_POLL_INTERVAL_SECS", u64::MAX.to_string());
+        assert_eq!(AppConfig::from_env().gmail_poll_interval_secs, 86_400);
+        env::set_var("GMAIL_POLL_INTERVAL_SECS", "invalid");
+        assert_eq!(AppConfig::from_env().gmail_poll_interval_secs, 60);
+        env::set_var("GMAIL_OAUTH_CLIENT_ID", " ");
+        assert_eq!(
+            AppConfig::from_env().gmail_oauth_client_id,
+            AppConfig::default().gmail_oauth_client_id
+        );
 
         // Sub-3-second intervals clamp back to default (3 seconds).
         env::set_var("SLOP_POLL_INTERVAL_SECS", "1");

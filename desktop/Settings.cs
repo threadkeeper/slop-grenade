@@ -15,6 +15,7 @@ namespace SlopGrenadeDesktop
         public int Volume = 70;
         public bool MonitorTeams = true;
         public bool MonitorOutlook = true;
+        public bool MonitorGmail = true;
         public bool SlopEffects = true;
         public bool CalmEffects = true;
         /// <summary>Seconds slop must sit on screen before flies gather.</summary>
@@ -32,6 +33,7 @@ namespace SlopGrenadeDesktop
                     s.Volume = Math.Max(0, Math.Min(100, ReadInt(k, "Volume", 70)));
                     s.MonitorTeams = ReadInt(k, "MonitorTeams", 1) != 0;
                     s.MonitorOutlook = ReadInt(k, "MonitorOutlook", 1) != 0;
+                    s.MonitorGmail = ReadInt(k, "MonitorGmail", 1) != 0;
                     s.SlopEffects = ReadInt(k, "SlopEffects", 1) != 0;
                     s.CalmEffects = ReadInt(k, "CalmEffects", 1) != 0;
                     s.FlyDelaySeconds = Math.Max(5, Math.Min(3600, ReadInt(k, "FlyDelaySeconds", 45)));
@@ -54,6 +56,7 @@ namespace SlopGrenadeDesktop
                     k.SetValue("Volume", Volume, RegistryValueKind.DWord);
                     k.SetValue("MonitorTeams", MonitorTeams ? 1 : 0, RegistryValueKind.DWord);
                     k.SetValue("MonitorOutlook", MonitorOutlook ? 1 : 0, RegistryValueKind.DWord);
+                    k.SetValue("MonitorGmail", MonitorGmail ? 1 : 0, RegistryValueKind.DWord);
                     k.SetValue("SlopEffects", SlopEffects ? 1 : 0, RegistryValueKind.DWord);
                     k.SetValue("CalmEffects", CalmEffects ? 1 : 0, RegistryValueKind.DWord);
                     k.SetValue("FlyDelaySeconds", FlyDelaySeconds, RegistryValueKind.DWord);

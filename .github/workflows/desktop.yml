@@ -49,6 +49,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Desktop compilation failed.' }
       - name: Build web assets and release Rust daemon
         shell: pwsh
+        env:
+          GMAIL_OAUTH_CLIENT_ID: ${{ vars.GMAIL_PRODUCTION_APPROVED == 'true' && vars.GMAIL_OAUTH_CLIENT_ID || '' }}
         run: |
           npm --prefix web ci
           npm --prefix web run build

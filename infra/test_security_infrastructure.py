@@ -84,6 +84,19 @@ class SecurityInfrastructureTests(unittest.TestCase):
         self.assertIn("slop-grenade-macos-universal.tar.gz.sha256", self.macos_workflow)
         self.assertIn("gh release upload", self.macos_workflow)
 
+    def test_desktop_gmail_release_metadata_requires_explicit_production_approval(self) -> None:
+        windows_workflow = (
+            self.repo_root / ".github" / "workflows" / "desktop.yml"
+        ).read_text(encoding="utf-8")
+        for workflow in (windows_workflow, self.macos_workflow):
+            self.assertIn(
+                "GMAIL_OAUTH_CLIENT_ID: ${{ vars.GMAIL_PRODUCTION_APPROVED == 'true' "
+                "&& vars.GMAIL_OAUTH_CLIENT_ID || '' }}",
+                workflow,
+            )
+            self.assertNotIn("GMAIL_DEV_OAUTH_CLIENT_ID", workflow)
+            self.assertNotIn("secrets.GMAIL", workflow)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,12 +2,30 @@ import Cocoa
 import WebKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let apiBase = "http://127.0.0.1:8090"
+    private let apiBase = AppDelegate.localApiBase(httpBind: ProcessInfo.processInfo.environment["HTTP_BIND"])
     private var statusItem: NSStatusItem?
     private var overlayWindow: NSWindow?
     private var webView: WKWebView?
     private var daemonProcess: Process?
     private var readinessTimer: Timer?
+    private var monitorTeams = true
+    private var monitorOutlook = true
+    private var monitorGmail = true
+    private var teamsMenuItem: NSMenuItem?
+    private var outlookMenuItem: NSMenuItem?
+    private var gmailMenuItem: NSMenuItem?
+
+    static func localApiBase(httpBind: String?) -> String {
+        let prefix = "127.0.0.1:"
+        if let bind = httpBind, bind.hasPrefix(prefix) {
+            let portText = String(bind.dropFirst(prefix.count))
+            if !portText.isEmpty, portText.utf8.allSatisfy({ $0 >= 48 && $0 <= 57 }),
+               let port = Int(portText), (1...65535).contains(port) {
+                return "http://127.0.0.1:\(port)"
+            }
+        }
+        return "http://127.0.0.1:8090"
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -40,7 +58,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let menu = NSMenu()
-        menu.addItem(withTitle: "Open Habit Dashboard (http://127.0.0.1:8090/)", action: #selector(openDashboard), keyEquivalent: "d")
+        menu.addItem(withTitle: "Open Habit Dashboard (\(apiBase)/)", action: #selector(openDashboard), keyEquivalent: "d")
+        menu.addItem(withTitle: "Sign in to Microsoft 365", action: #selector(signInMicrosoft365), keyEquivalent: "")
+        menu.addItem(withTitle: "Sign out of Microsoft 365", action: #selector(signOutMicrosoft365), keyEquivalent: "")
+        menu.addItem(withTitle: "Sign in to Gmail", action: #selector(signInGmail), keyEquivalent: "")
+        menu.addItem(withTitle: "Sign out of Gmail", action: #selector(signOutGmail), keyEquivalent: "")
+        let appleMail = NSMenuItem(title: "Apple Mail (Coming soon)", action: nil, keyEquivalent: "")
+        appleMail.isEnabled = false
+        menu.addItem(appleMail)
+        let yahooMail = NSMenuItem(title: "Yahoo Mail (Coming soon)", action: nil, keyEquivalent: "")
+        yahooMail.isEnabled = false
+        menu.addItem(yahooMail)
+        menu.addItem(NSMenuItem.separator())
+        teamsMenuItem = menu.addItem(withTitle: "Watch Microsoft Teams", action: #selector(toggleTeams), keyEquivalent: "")
+        outlookMenuItem = menu.addItem(withTitle: "Watch Outlook mail", action: #selector(toggleOutlook), keyEquivalent: "")
+        gmailMenuItem = menu.addItem(withTitle: "Watch Gmail", action: #selector(toggleGmail), keyEquivalent: "")
+        updateSourceMenuStates()
         menu.addItem(NSMenuItem.separator())
         menu.addItem(withTitle: "Lob a test grenade at the left edge", action: #selector(lobLeftGrenade), keyEquivalent: "")
         menu.addItem(withTitle: "Lob a test grenade at the right edge", action: #selector(lobRightGrenade), keyEquivalent: "")
@@ -95,7 +128,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let check: () -> Bool = { [weak self] in
             guard let self = self else { return true }
             if self.isDaemonHealthy() {
-                if let url = URL(string: "\(self.apiBase)/?mode=overlay") {
+                if let url = self.overlayURL() {
                     self.webView?.load(URLRequest(url: url))
                 }
                 if CommandLine.arguments.contains("--showcase") {
@@ -146,6 +179,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         proc.currentDirectoryURL = URL(fileURLWithPath: daemonPath).deletingLastPathComponent()
 
         var env = ProcessInfo.processInfo.environment
+        env["HTTP_BIND"] = String(apiBase.dropFirst("http://".count))
         let home = fm.homeDirectoryForCurrentUser.path
         let extraPaths = [
             "/opt/homebrew/bin",
@@ -194,6 +228,69 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    @objc private func signInMicrosoft365() {
+        openAccountDashboard(query: "m365=signin")
+    }
+
+    @objc private func signOutMicrosoft365() {
+        openAccountDashboard(query: "m365=signout")
+    }
+
+    @objc private func signInGmail() {
+        openAccountDashboard(query: "gmail=signin")
+    }
+
+    @objc private func signOutGmail() {
+        openAccountDashboard(query: "gmail=signout")
+    }
+
+    private func openAccountDashboard(query: String) {
+        guard let url = URL(string: "\(apiBase)/?\(query)") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    @objc private func toggleTeams() {
+        monitorTeams.toggle()
+        updateSourceMenuStates()
+        reloadOverlay()
+    }
+
+    @objc private func toggleOutlook() {
+        monitorOutlook.toggle()
+        updateSourceMenuStates()
+        reloadOverlay()
+    }
+
+    @objc private func toggleGmail() {
+        monitorGmail.toggle()
+        updateSourceMenuStates()
+        reloadOverlay()
+    }
+
+    private func updateSourceMenuStates() {
+        teamsMenuItem?.state = monitorTeams ? .on : .off
+        outlookMenuItem?.state = monitorOutlook ? .on : .off
+        gmailMenuItem?.state = monitorGmail ? .on : .off
+    }
+
+    private func overlayURL() -> URL? {
+        var sources: [String] = []
+        if monitorTeams { sources.append("teams") }
+        if monitorOutlook { sources.append("outlook") }
+        if monitorGmail { sources.append("gmail") }
+        var components = URLComponents(string: apiBase + "/")
+        components?.queryItems = [
+            URLQueryItem(name: "mode", value: "overlay"),
+            URLQueryItem(name: "sources", value: sources.joined(separator: ","))
+        ]
+        return components?.url
+    }
+
+    private func reloadOverlay() {
+        guard isDaemonHealthy(), let url = overlayURL() else { return }
+        webView?.load(URLRequest(url: url))
+    }
+
     @objc private func lobLeftGrenade() {
         evalOverlay("window.__slopGrenadeStage?.world.trigger('slop_grenade', 'left');")
     }
@@ -208,7 +305,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           const w = window.__slopGrenadeStage?.world;
           if (!w) return;
           for (let i = 0; i < 4; i++) {
-            setTimeout(() => w.trigger('innocent_fruit', i % 2 === 0 ? 'left' : 'right'), i * 600);
+            w.triggerLater(i * 0.6, 'innocent_fruit', i % 2 === 0 ? 'left' : 'right');
           }
         })();
         """)
@@ -232,7 +329,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             [8000, 'human_sparkle', 'right']
           ];
           for (const [delay, tier, side] of seq) {
-            setTimeout(() => w.trigger(tier, side), delay);
+            w.triggerLater(delay / 1000, tier, side);
           }
         })();
         """)

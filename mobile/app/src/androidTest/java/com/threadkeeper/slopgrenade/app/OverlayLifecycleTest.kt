@@ -81,10 +81,15 @@ class OverlayLifecycleTest {
             val notification = context.getSystemService(NotificationManager::class.java)
                 .activeNotifications.single { it.id == OverlayService.NOTIFICATION_ID }.notification
             assertNotNull(notification.contentIntent)
-            val stop = notification.actions.single()
+            assertEquals(listOf("Connect Gmail", "Stop"), notification.actions.map { it.title.toString() })
+            val connect = notification.actions.single { it.title.toString() == "Connect Gmail" }
+            val stop = notification.actions.single { it.title.toString() == "Stop" }
+            assertTrue(connect.actionIntent.isActivity)
+            assertTrue(stop.actionIntent.isService)
             assertEquals("Stop", stop.title.toString())
             if (Build.VERSION.SDK_INT >= 31) {
                 assertTrue(notification.contentIntent.isImmutable)
+                assertTrue(connect.actionIntent.isImmutable)
                 assertTrue(stop.actionIntent.isImmutable)
             }
             instrumentation.runOnMainSync { activity.finish() }

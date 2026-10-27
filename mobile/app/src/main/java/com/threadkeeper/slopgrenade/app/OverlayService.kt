@@ -130,13 +130,17 @@ class OverlayService : Service() {
         val immutable = PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP), immutable)
+        val connectGmail = PendingIntent.getActivity(this, 2, Intent(this, MainActivity::class.java)
+            .setAction(MainActivity.ACTION_CONNECT_GMAIL)
+            .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP), immutable)
         val stop = PendingIntent.getService(this, 1,
             Intent(this, OverlayService::class.java).setAction(ACTION_STOP), immutable)
         val builder = Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentTitle("Slop Grenade screen-edge effects")
-            .setContentText("Effects remain on across apps. Tap Stop to turn them off.")
+            .setContentText("Effects remain on across apps. Connect Gmail or tap Stop.")
             .setContentIntent(open)
+            .addAction(Notification.Action.Builder(null, "Connect Gmail", connectGmail).build())
             .addAction(Notification.Action.Builder(null, "Stop", stop).build())
             .setOngoing(true).setShowWhen(false)
             .setCategory(Notification.CATEGORY_SERVICE)

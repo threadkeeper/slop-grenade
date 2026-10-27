@@ -9,6 +9,8 @@ namespace SlopGrenadeDesktop
     {
         public long Sequence { get; set; }
         public string SqueegeeSide { get; set; }
+        public bool DataWiped { get; set; }
+        public long? ResetGeneration { get; set; }
         public EffectMessage Report { get; set; }
 
         public static EffectNotice Parse(string json)
@@ -24,13 +26,19 @@ namespace SlopGrenadeDesktop
             catch (FormatException) { throw new FormatException(invalid); }
             catch (OverflowException) { throw new FormatException(invalid); }
             catch (InvalidCastException) { throw new FormatException(invalid); }
-            if (notice == null || notice.Sequence < 1) throw new FormatException(invalid);
+            if (notice == null || notice.Sequence < 1 || notice.ResetGeneration < 0) throw new FormatException(invalid);
+            if (notice.DataWiped) return notice;
             if (notice.SqueegeeSide == "left" || notice.SqueegeeSide == "right") return notice;
             ValidateReport(notice.Report);
             return notice;
         }
 
         public static EffectMessage[] ParseLedgerReports(string json)
+        {
+            return ParseLedger(json).RecentReports;
+        }
+
+        public static LedgerSnapshot ParseLedger(string json)
         {
             const string invalid = "Invalid animation metadata.";
             LedgerSnapshot snapshot;
@@ -43,10 +51,11 @@ namespace SlopGrenadeDesktop
             catch (FormatException) { throw new FormatException(invalid); }
             catch (OverflowException) { throw new FormatException(invalid); }
             catch (InvalidCastException) { throw new FormatException(invalid); }
-            if (snapshot == null || snapshot.RecentReports == null) return new EffectMessage[0];
+            if (snapshot == null || snapshot.ResetGeneration < 0) throw new FormatException(invalid);
+            if (snapshot.RecentReports == null) snapshot.RecentReports = new EffectMessage[0];
             foreach (EffectMessage message in snapshot.RecentReports)
                 ValidateReport(message);
-            return snapshot.RecentReports;
+            return snapshot;
         }
 
         public static void ValidateReport(EffectMessage message)
@@ -80,6 +89,7 @@ namespace SlopGrenadeDesktop
 
     internal sealed class LedgerSnapshot
     {
+        public long ResetGeneration { get; set; }
         public EffectMessage[] RecentReports { get; set; }
     }
 

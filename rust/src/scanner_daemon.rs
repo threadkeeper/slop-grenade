@@ -84,6 +84,7 @@ impl ScannerDaemon {
         record_in_ledger: bool,
         trigger_animation: bool,
     ) -> (SlopReport, Option<AnimationEvent>) {
+        let _transaction = self.ledger.communication_gate().read().await;
         let mut report = self.detector.analyze(sample);
 
         if self.luna.is_enabled()
@@ -109,9 +110,11 @@ impl ScannerDaemon {
 
     /// Poll WorkIQ MCP once for new M365 messages, deduplicating by `message_id`.
     pub async fn poll_workiq_once(&self, use_luna: bool) -> Result<ScanBatchResult, String> {
+        let _transaction = self.ledger.communication_gate().read().await;
         let _guard = self.poll_lock.lock().await;
         let fetched = self.workiq.poll_recent_m365_messages().await?;
-        self.ingest_samples(fetched, use_luna).await
+        self.ingest_samples_with_animation(fetched, use_luna, true, None)
+            .await
     }
 
     /// Merge a complete WorkIQ backfill of the last `days` days (`1..=30`) using local scoring
@@ -126,6 +129,7 @@ impl ScannerDaemon {
         days: u8,
         refresh_id: Option<String>,
     ) -> Result<ScanBatchResult, String> {
+        let _transaction = self.ledger.communication_gate().read().await;
         let _guard = self
             .history_lock
             .try_lock()
@@ -171,6 +175,26 @@ impl ScannerDaemon {
             .cloned())
     }
 
+    /// Erase M365 deduplication and history-progress state after an account sign-out.
+    ///
+    /// The caller must hold the ledger's exclusive communication gate through the
+    /// complete cross-provider wipe, not just this scanner's cleanup.
+    pub async fn clear_communication_state(&self) -> Result<usize, String> {
+        let _poll = self.poll_lock.lock().await;
+        let _history = self.history_lock.lock().await;
+        let mut seen = self
+            .seen_ids
+            .lock()
+            .map_err(|_| "Scanner deduplication wipe is unavailable.".to_string())?;
+        let removed = seen.len();
+        seen.clear();
+        *self
+            .refresh_progress
+            .lock()
+            .map_err(|_| "Refresh progress wipe is unavailable.".to_string())? = None;
+        Ok(removed)
+    }
+
     fn store_progress(&self, progress: &RefreshProgress) -> Result<(), String> {
         *self
             .refresh_progress
@@ -186,6 +210,7 @@ impl ScannerDaemon {
         samples: Vec<MessageSample>,
         use_luna: bool,
     ) -> Result<ScanBatchResult, String> {
+        let _transaction = self.ledger.communication_gate().read().await;
         self.ingest_samples_with_animation(samples, use_luna, true, None)
             .await
     }
@@ -470,6 +495,20 @@ mod tests {
         let batch2 = daemon.ingest_samples(vec![s1, s2], false).await.unwrap();
         assert_eq!(batch2.new_messages_analyzed, 0);
         assert_eq!(ledger.scorecard().received_by_me.total_messages, 2);
+
+        assert_eq!(daemon.clear_communication_state().await, Ok(2));
+        assert!(daemon.refresh_progress(None).unwrap().is_none());
+        let batch3 = daemon
+            .ingest_samples(
+                vec![
+                    build_preset_sample("human_sparkle", 1),
+                    build_preset_sample("slop_grenade", 2),
+                ],
+                false,
+            )
+            .await
+            .unwrap();
+        assert_eq!(batch3.new_messages_analyzed, 2);
     }
 
     #[tokio::test]

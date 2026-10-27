@@ -1,7 +1,15 @@
+import java.io.File
+
 plugins { id("com.android.application"); kotlin("android") }
 
 val signingNames = listOf("SLOP_ANDROID_KEYSTORE", "SLOP_ANDROID_STORE_PASSWORD",
     "SLOP_ANDROID_KEY_ALIAS", "SLOP_ANDROID_KEY_PASSWORD")
+val testSigningNames = listOf(
+    "SLOP_ANDROID_TEST_KEYSTORE",
+    "SLOP_ANDROID_TEST_STORE_PASSWORD",
+    "SLOP_ANDROID_TEST_KEY_ALIAS",
+    "SLOP_ANDROID_TEST_KEY_PASSWORD",
+)
 android {
     namespace = "com.threadkeeper.slopgrenade"
     compileSdk = 35
@@ -21,8 +29,18 @@ android {
             keyAlias = System.getenv("SLOP_ANDROID_KEY_ALIAS")
             keyPassword = System.getenv("SLOP_ANDROID_KEY_PASSWORD")
         }
+        if (testSigningNames.all { !System.getenv(it).isNullOrBlank() }) create("testing") {
+            storeType = "PKCS12"
+            storeFile = file(System.getenv("SLOP_ANDROID_TEST_KEYSTORE"))
+            storePassword = System.getenv("SLOP_ANDROID_TEST_STORE_PASSWORD")
+            keyAlias = System.getenv("SLOP_ANDROID_TEST_KEY_ALIAS")
+            keyPassword = System.getenv("SLOP_ANDROID_TEST_KEY_PASSWORD")
+        }
     }
     buildTypes {
+        getByName("debug") {
+            signingConfig = signingConfigs.findByName("testing") ?: signingConfig
+        }
         getByName("release") {
             signingConfig = signingConfigs.findByName("environment")
             isMinifyEnabled = true
@@ -76,6 +94,23 @@ val verifyReleaseSigning = tasks.register("verifyReleaseSigning") {
             "Unsigned release packaging is prohibited; provide signing environment"
         }
         require(file(System.getenv("SLOP_ANDROID_KEYSTORE")).isFile) { "Release keystore not found" }
+    }
+}
+tasks.register("verifyTestSigning") {
+    group = "verification"
+    description = "Require dedicated, complete test signing before distributing an OAuth test APK."
+    doLast {
+        require(testSigningNames.all { !System.getenv(it).isNullOrBlank() }) {
+            "OAuth test APK packaging requires all test-signing environment variables"
+        }
+        val keystore = File(System.getenv("SLOP_ANDROID_TEST_KEYSTORE"))
+        require(keystore.isAbsolute && keystore.isFile) {
+            "Test signing requires an existing absolute keystore path"
+        }
+        require(android.signingConfigs.findByName("testing") != null &&
+            android.buildTypes.getByName("debug").signingConfig?.name == "testing") {
+            "OAuth test APK packaging requires the testing signing configuration"
+        }
     }
 }
 // Lint and unit tests may inspect release variants without signing credentials.

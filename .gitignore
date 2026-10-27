@@ -14,6 +14,10 @@
 **/__pycache__/
 *.jks
 *.keystore
+*.jks.base64
+*.keystore.base64
+*.p12
+*.pfx
 keystore.properties
 *.apk
 *.aab
@@ -32,11 +36,39 @@ keystore.properties
 .env.*
 !.env.example
 *.log
+client_secret*.json
+credentials.json
+token.json
+tokens.json
+google-services.json
+service-account*.json
+application_default_credentials.json
+*.pem
+*.key
+*.p8
+*.mobileprovision
+*.provisionprofile
 
 # OS & editor files
 .DS_Store
 Thumbs.db
+.idea/
+.vs/
+*.iml
+*.suo
+*.user
+*.swp
+*.swo
+*~
 .vscode/*
 !.vscode/settings.json
 !.vscode/tasks.json
 !.vscode/extensions.json
+
+# Local test, coverage and temporary output
+**/coverage/
+**/TestResults/
+*.lcov
+lcov.info
+*.tmp
+*.temp

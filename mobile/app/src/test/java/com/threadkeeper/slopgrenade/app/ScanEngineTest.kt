@@ -25,7 +25,7 @@ class ScanEngineTest {
             "/internal/session" -> """{"status":200,"body":{"sessionId":"new"}}"""
             "/internal/ingest" -> if (failIngest) """{"status":503,"body":{}}""" else
                 """{"status":200,"body":{"ok":true,"batch":{"fetchedCount":0,"newMessagesAnalyzed":0,"grenadesTriggered":0}}}"""
-            "/internal/disconnect" -> """{"status":200,"body":{"ok":true,"historyRetained":true,"clearedEvents":0}}"""
+            "/internal/disconnect" -> """{"status":200,"body":{"ok":true,"dataWiped":true,"clearedEvents":0}}"""
             else -> """{"status":200,"body":{"ok":true}}"""
         }
     }
@@ -84,6 +84,37 @@ class ScanEngineTest {
             { _, _, _ -> GmailClient.Batch(JSONArray(), "11", true) })
         engine.scanAll()
         assertTrue(calls.last().getJSONObject("body").getBoolean("quiet"))
+    }
+    @Test fun disconnectResetsEverySurvivingCheckpointAndRebuildsQuietly() {
+        val survivor = account.copy(id = "two", session = "new", checkpoint = "50",
+            lastSuccessfulScan = "2026-10-27T18:00:00Z")
+        val blocked = account.copy(id = "three", session = "new", checkpoint = "60",
+            reconnectRequired = true)
+        val store = Store(account, survivor, blocked)
+        val calls = mutableListOf<JSONObject>()
+        val checkpoints = mutableListOf<String?>()
+        val engine = ScanEngine(store, api(calls), { "synthetic-token" }, { current, _, checkpoint ->
+            assertEquals("two", current.id)
+            checkpoints.add(checkpoint)
+            GmailClient.Batch(JSONArray(), "51", checkpoint == null)
+        })
+
+        assertTrue(engine.disconnect("one").getBoolean("dataWiped"))
+        assertEquals(setOf("two", "three"), store.all().map { it.id }.toSet())
+        store.all().forEach {
+            assertNull(it.checkpoint)
+            assertNull(it.session)
+            assertNull(it.lastSuccessfulScan)
+        }
+        assertTrue(store.all().first { it.id == "three" }.reconnectRequired)
+        assertTrue(engine.status.contains("All communication data wiped"))
+
+        engine.scanAll()
+        assertEquals(listOf<String?>(null), checkpoints)
+        val ingestion = calls.single { it.getString("path") == "/internal/ingest" }
+        assertTrue(ingestion.getJSONObject("body").getBoolean("quiet"))
+        assertEquals("51", store.all().first { it.id == "two" }.checkpoint)
+        assertEquals("new", store.all().first { it.id == "two" }.session)
     }
     @Test fun cancellationBeforeIngestDoesNotAdvanceOrPublish() {
         val calls = mutableListOf<JSONObject>()
@@ -308,9 +339,11 @@ class ScanEngineTest {
                 }
                 "/internal/disconnect" -> {
                     assertEquals(id, request.getJSONObject("body").getString("accountId"))
-                    """{"status":200,"body":{"ok":true,"historyRetained":true,"clearedEvents":0}}"""
+                    seen.clear()
+                    historicalMessages = 0
+                    """{"status":200,"body":{"ok":true,"dataWiped":true,"clearedEvents":0}}"""
                 }
-                else -> error("Disconnect must not reset native history or deduplication")
+                else -> error("Unexpected native route")
             }
         }
         val engine = ScanEngine(store, core, { "token" }, { _, _, checkpoint ->
@@ -321,11 +354,11 @@ class ScanEngineTest {
         })
         assertEquals(1L, engine.refreshAllSevenDays().newMessagesAnalyzed)
         val disconnected = engine.disconnect(id)
-        assertTrue(disconnected.getBoolean("historyRetained"))
+        assertTrue(disconnected.getBoolean("dataWiped"))
         assertEquals(0, disconnected.getInt("clearedEvents"))
         assertTrue(store.all().isEmpty())
         assertEquals(id, engine.connect(email).id)
-        assertEquals(0L, engine.refreshAllSevenDays().newMessagesAnalyzed)
+        assertEquals(1L, engine.refreshAllSevenDays().newMessagesAnalyzed)
         assertEquals(2, ingests)
         assertEquals(1, historicalMessages)
         assertEquals(1, seen.size)

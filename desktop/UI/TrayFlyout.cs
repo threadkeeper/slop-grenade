@@ -32,6 +32,7 @@ namespace SlopGrenadeDesktop
         private int _recPct, _recCount, _sentPct, _sentCount;
         private float _needleIn, _needleOut, _velIn, _velOut;
         private readonly System.Windows.Forms.Timer _anim;
+        private GmailStatus _gmailStatus = GmailStatus.Unavailable;
 
         public TrayFlyout(Settings settings, Func<bool> getStartup, Action<bool> setStartup, Action<string> command)
         {
@@ -47,7 +48,7 @@ namespace SlopGrenadeDesktop
             KeyPreview = true;
             using (Graphics g = CreateGraphics()) _f = Math.Max(1f, g.DpiX / 96f);
             Width = (int)(360 * _f);
-            Height = (int)(586 * _f);
+            Height = (int)(754 * _f);
             using (GraphicsPath plate = SteampunkArt.Plate(new RectangleF(0f, 0f, Width, Height), 14f * _f))
                 Region = new Region(plate);
             _anim = new System.Windows.Forms.Timer();
@@ -72,6 +73,13 @@ namespace SlopGrenadeDesktop
             _sentPct = sentPct;
             _sentCount = sentCount;
             if (Visible) _anim.Start();
+        }
+
+        public void UpdateGmailStatus(GmailStatus status)
+        {
+            _gmailStatus = status ?? GmailStatus.Unavailable;
+            AccessibleDescription = _gmailStatus.Summary + "\n" + _gmailStatus.Details;
+            Invalidate();
         }
 
         public void ShowAboveTray()
@@ -166,12 +174,13 @@ namespace SlopGrenadeDesktop
             Row(g, "startup", "Launch at Windows sign-in", _getStartup(), y0);
             Row(g, "teams", "Watch Microsoft Teams", _settings.MonitorTeams, y0 + rowH);
             Row(g, "outlook", "Watch Outlook mail", _settings.MonitorOutlook, y0 + rowH * 2f);
-            Row(g, "slopfx", "Slop FX: grenades & cannon", _settings.SlopEffects, y0 + rowH * 3f);
-            Row(g, "calmfx", "Calm FX: fruit, smoke, twinkles", _settings.CalmEffects, y0 + rowH * 4f);
-            Row(g, "sound", "Sound FX (explosions are loud!)", _settings.SoundEnabled, y0 + rowH * 5f);
+            Row(g, "gmail", "Watch Gmail", _settings.MonitorGmail, y0 + rowH * 3f);
+            Row(g, "slopfx", "Slop FX: grenades & cannon", _settings.SlopEffects, y0 + rowH * 4f);
+            Row(g, "calmfx", "Calm FX: fruit, smoke, twinkles", _settings.CalmEffects, y0 + rowH * 5f);
+            Row(g, "sound", "Sound FX (explosions are loud!)", _settings.SoundEnabled, y0 + rowH * 6f);
 
             // volume
-            float vy = y0 + rowH * 6f + 2f * f;
+            float vy = y0 + rowH * 7f + 2f * f;
             SteampunkArt.Engraved(g, "Volume", 13f * f, FontStyle.Regular, new RectangleF(30f * f, vy, 120f * f, 24f * f), SteampunkArt.Cream, StringAlignment.Near);
             string[] vols = new string[] { "SOFT", "MED", "LOUD" };
             int[] levels = new int[] { 35, 70, 100 };
@@ -182,8 +191,18 @@ namespace SlopGrenadeDesktop
                 Button(g, "vol" + levels[i], vols[i], r, sel, 13f * f);
             }
 
+            SteampunkArt.Engraved(g, _gmailStatus.Summary, 12.5f * f, FontStyle.Bold,
+                new RectangleF(30f * f, vy + 34f * f, Width - 60f * f, 18f * f), SteampunkArt.Cream, StringAlignment.Near);
+            SteampunkArt.Engraved(g, _gmailStatus.Details, 11f * f, FontStyle.Regular,
+                new RectangleF(30f * f, vy + 54f * f, Width - 60f * f, 18f * f), SteampunkArt.BrassL, StringAlignment.Near);
+            float authWidth = (Width - 72f * f) / 2f;
+            Button(g, "m365-signin", "M365 SIGN IN", new RectangleF(30f * f, vy + 78f * f, authWidth, 32f * f), false, 13f * f);
+            Button(g, "m365-signout", "M365 SIGN OUT", new RectangleF(42f * f + authWidth, vy + 78f * f, authWidth, 32f * f), false, 13f * f);
+            Button(g, "gmail-signin", "GMAIL SIGN IN", new RectangleF(30f * f, vy + 116f * f, authWidth, 32f * f), false, 13f * f);
+            Button(g, "gmail-signout", "GMAIL SIGN OUT", new RectangleF(42f * f + authWidth, vy + 116f * f, authWidth, 32f * f), false, 13f * f);
+
             // action plates
-            float by = vy + 40f * f;
+            float by = vy + 174f * f;
             float bw = (Width - 76f * f) / 2f;
             Button(g, "squeegee-left", "\u25c4 SQUEEGEE", new RectangleF(30f * f, by, bw, 38f * f), false, 17f * f);
             Button(g, "squeegee-right", "SQUEEGEE \u25ba", new RectangleF(46f * f + bw, by, bw, 38f * f), false, 17f * f);
@@ -268,6 +287,7 @@ namespace SlopGrenadeDesktop
                 case "startup": _setStartup(!_getStartup()); break;
                 case "teams": _settings.MonitorTeams = !_settings.MonitorTeams; Changed(); break;
                 case "outlook": _settings.MonitorOutlook = !_settings.MonitorOutlook; Changed(); break;
+                case "gmail": _settings.MonitorGmail = !_settings.MonitorGmail; Changed(); break;
                 case "slopfx": _settings.SlopEffects = !_settings.SlopEffects; Changed(); break;
                 case "calmfx": _settings.CalmEffects = !_settings.CalmEffects; Changed(); break;
                 case "sound": _settings.SoundEnabled = !_settings.SoundEnabled; Changed(); break;
@@ -275,6 +295,11 @@ namespace SlopGrenadeDesktop
                 case "vol70": _settings.Volume = 70; Changed(); break;
                 case "vol100": _settings.Volume = 100; Changed(); break;
                 case "dashboard": Hide(); _command("dashboard"); break;
+                case "gmail-signin":
+                case "gmail-signout":
+                case "m365-signin":
+                case "m365-signout":
+                    Hide(); _command(id); break;
                 default: _command(id); break;
             }
             Invalidate();

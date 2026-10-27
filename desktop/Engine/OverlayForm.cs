@@ -189,6 +189,21 @@ namespace SlopGrenadeDesktop
             Wake();
         }
 
+        public void Reset()
+        {
+            _world.Reset();
+            _hoverTimer.Stop();
+            _hover.Update(null, Point.Empty, _clock.Elapsed.TotalMilliseconds);
+            _details.ClearMessage();
+            _dirty.Clear();
+            _dirty.AddFull();
+            RenderAndPresent();
+            _needFull = false;
+            _lastLeft = _lastRight = 0;
+            if (SlopCountsChanged != null) SlopCountsChanged(0, 0);
+            Wake();
+        }
+
         public void GetSlopCounts(out int left, out int right)
         {
             _world.SlopCounts(out left, out right);

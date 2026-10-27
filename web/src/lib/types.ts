@@ -57,6 +57,8 @@ export interface AnimationEvent {
   sequence: number;
   report: SlopReport;
   squeegeeSide?: MonitorSide | null;
+  dataWiped?: boolean;
+  resetGeneration?: number;
 }
 
 export interface DirectionalStats {
@@ -79,6 +81,7 @@ export interface PersonLeaderboardEntry {
 }
 
 export interface AwarenessScorecard {
+  resetGeneration?: number;
   sentByMe: DirectionalStats;
   receivedByMe: DirectionalStats;
   dailySent: DirectionalStats;
@@ -94,6 +97,7 @@ export interface WorkIqStatus {
   binaryPath: string | null;
   version: string | null;
   mcpReady: boolean;
+  authenticated: boolean;
   mcpToolCount: number;
   account: string | null;
   message: string;
@@ -113,4 +117,5 @@ export interface CombinedAuthStatus {
   adminAppRequired: boolean;
   workiq: WorkIqStatus;
   githubLuna: LunaAuthStatus;
+  gmail?: import('./mailbox').GmailStatus;
 }

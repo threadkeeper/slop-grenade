@@ -50,6 +50,12 @@ namespace SlopGrenadeDesktop
             return n;
         }
 
+        public void Clear()
+        {
+            Flies.Clear();
+            _cooldown = 0f;
+        }
+
         public int CountSide(Side side)
         {
             int n = 0;

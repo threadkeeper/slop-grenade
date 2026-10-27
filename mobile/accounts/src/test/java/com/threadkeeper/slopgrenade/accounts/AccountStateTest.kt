@@ -20,6 +20,8 @@ class AccountStateTest {
     }
     @Test fun authorizationFailureIsTypedAndDoesNotContainCredentials() {
         val failure = AuthorizationRequired()
-        assertEquals("Account authorization required", failure.message)
+        assertEquals(GoogleAuthorizationError.UNKNOWN, failure.authorizationError)
+        assertEquals(GoogleAuthorizationError.UNKNOWN.message, failure.message)
+        assertNull(failure.cause)
     }
 }

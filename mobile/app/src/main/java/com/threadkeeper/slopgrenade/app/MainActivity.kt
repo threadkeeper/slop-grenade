@@ -17,8 +17,10 @@ import java.util.concurrent.CompletableFuture
 /** Native lifecycle owns explicit overlay consent/start, not its lifetime. Gmail/JNI stays off main. */
 class MainActivity : Activity() {
     private lateinit var runtime: MobileRuntime
+    private lateinit var router: RequestRouter
     private var dashboard: WebView? = null
     private var pendingOverlay = false
+    private var pendingGmailAuthorization = false
     private var awaitingOverlaySettings = false
     private var awaitingNotifications = false
     private var overlayRequestGeneration = 0
@@ -27,16 +29,25 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         runtime = MobileRuntime.get(this)
+        router = RequestRouter(this, runtime)
+        acceptIntent(intent)
         try {
-            dashboard = TrustedWebView.create(this, RequestRouter(this, runtime)::dispatch)
+            dashboard = TrustedWebView.create(this, router::dispatch)
             setContentView(dashboard)
         } catch (_: Exception) {
             setContentView(TextView(this).apply { text = "Update Android System WebView, then reopen Slop Grenade." })
         }
     }
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        acceptIntent(intent)
+        if (visible) startPendingGmailAuthorization()
+    }
     override fun onResume() {
         super.onResume()
         visible = true
+        startPendingGmailAuthorization()
         if (pendingOverlay && awaitingOverlaySettings) {
             awaitingOverlaySettings = false
             pendingOverlay = false
@@ -54,6 +65,17 @@ class MainActivity : Activity() {
                 }
             } catch (_: Exception) { /* Status is exposed through accounts; periodic work can retry. */ }
         }
+    }
+    private fun acceptIntent(intent: Intent?) {
+        if (intent?.action == ACTION_CONNECT_GMAIL) {
+            pendingGmailAuthorization = true
+            intent.action = null
+        }
+    }
+    private fun startPendingGmailAuthorization() {
+        if (!pendingGmailAuthorization || isFinishing || isDestroyed) return
+        pendingGmailAuthorization = false
+        router.dispatch("POST", "/api/v1/accounts/add", JSONObject())
     }
     override fun onStop() {
         visible = false
@@ -167,6 +189,7 @@ class MainActivity : Activity() {
         super.onDestroy()
     }
     companion object {
+        const val ACTION_CONNECT_GMAIL = "com.threadkeeper.slopgrenade.accounts.CONNECT_GMAIL"
         private const val NOTIFICATION_PERMISSION = 401
         @Volatile var visible = false
             private set

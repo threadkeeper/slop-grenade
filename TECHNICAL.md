@@ -48,6 +48,7 @@ Slop Grenade consists of three coordinated components:
      - `event_bus.rs`: Broadcast channel for real-time desktop overlay animations and squeegee wipes.
      - `scanner_daemon.rs`: Background WorkIQ polling and deduplication, serialized live scans, and separately locked history refreshes.
      - `refresh_progress.rs` & `refresh_phase.rs`: Metadata-only history counters and stages, kept separate from animation events.
+     - `gmail_auth.rs`, `gmail_account.rs`, `gmail_client.rs`, and `gmail_scanner.rs`: Desktop Google OAuth with PKCE, process-memory-only account credentials, bounded Gmail REST polling, and local scoring with sanitized ledger ingestion. Android continues to use its native Gmail implementation.
      - `server.rs` & `static_files.rs`: REST API, SSE stream, and static asset server.
    - Real-account mode is the default: startup never seeds synthetic ledger history unless `SLOP_DEMO_DATA=1` (or `true` / `yes`) is explicitly set. For an offline dashboard demo, also set `SLOP_AUTO_POLL=0` so sample and live messages are not mixed.
    - WorkIQ fetch accepts both MCP `structuredContent` and legacy JSON text content. Protocol errors, tool errors, and failed per-entity HTTP statuses are reported as scan failures without including raw response content; they are not treated as empty successful scans.
@@ -89,7 +90,7 @@ A score of 40 or more counts as AI-written for the dashboard dials, the tray gau
 | Method | Path | Description |
 | :--- | :--- | :--- |
 | `GET` | `/api/v1/health` | Health and version check |
-| `GET` | `/api/v1/auth/status` | WorkIQ MCP and GitHub Copilot LLM authentication status |
+| `GET` | `/api/v1/auth/status` | Combined WorkIQ MCP, GitHub Copilot LLM, and sanitized desktop Gmail authentication status |
 | `POST` | `/api/v1/auth/workiq-login` | Invokes legacy `workiq auth login`; current CLI versions should sign in through `workiq ask` |
 | `POST` | `/api/v1/auth/github-token` | Sets or clears an in-memory GitHub token override |
 | `GET` | `/api/v1/ledger` | Returns directional stats, daily gauges, Top 5 Sloppers, Top 5 P-Doomers, and recent reports |
@@ -99,6 +100,27 @@ A score of 40 or more counts as AI-written for the dashboard dials, the tray gau
 | `POST` | `/api/v1/scan/now` | Recent poll by default; `{"lookbackDays":N,"useLuna":false}` with `N` from 1 to 30 performs a complete quiet merge of the last `N` days |
 | `GET` | `/api/v1/scan/progress?refreshId=ID` | Latest metadata-only history counters for that opaque ID, or `{"progress":null}` before it starts or for another job |
 | `GET` | `/api/v1/events/stream` | Server-Sent Events stream for real-time desktop overlay animations |
+| `GET` | `/api/v1/gmail/accounts` | Ephemeral Gmail connection labels, hashed account IDs, and scan state |
+| `POST` | `/api/v1/gmail/authorize` | Starts five-minute, single-use browser OAuth; returns only authorization URL and expiration |
+| `GET` | `/api/v1/auth/google/callback` | Consumes OAuth state, exchanges the code with PKCE, and verifies the Gmail profile |
+| `POST` | `/api/v1/gmail/accounts/{id}/reconnect` | Starts fresh consent for a known hashed account ID |
+| `DELETE` | `/api/v1/gmail/accounts/{id}` | Clears account credentials and stops scans; attempts grant revocation |
+| `POST` | `/api/v1/gmail/scan` | Refreshes connected accounts with per-account failure isolation |
+| `GET` | `/api/v1/gmail/events` | Metadata-only `gmail-status` SSE notifications; consumers reload account state |
+
+### Desktop Gmail
+
+The desktop daemon binds only to numeric loopback addresses. Gmail routes additionally validate the peer, numeric loopback Host, and same-origin dashboard requests; the Android WebView origin cannot use desktop OAuth. Callback and account/auth responses are not cacheable. Tray/menu actions open `/?gmail=connect`; only Rust handles OAuth and Gmail requests.
+
+Configure the public Desktop app client ID with `GMAIL_OAUTH_CLIENT_ID`. No client secret, credential JSON, token file, cloud relay, or Pub/Sub service is used. Without a configured client ID, authorization fails explicitly. Only `https://www.googleapis.com/auth/gmail.readonly` is requested. Google accounts must be authorized again after every daemon restart.
+
+Windows and macOS Actions builds embed the public repository variable `GMAIL_OAUTH_CLIENT_ID` only when `GMAIL_PRODUCTION_APPROVED` is exactly `true`. Leave approval unset or `false` until Google's production verification and every manual release gate are complete. No Google Actions secrets are required. Owner/support contacts, credential downloads, and tokens must not be added to repository variables or source. Runtime `GMAIL_ENABLED=0` disables Gmail, and `GMAIL_POLL_INTERVAL_SECS` defaults to 60 (minimum 30).
+
+Keep the separate development client ID in `GMAIL_DEV_OAUTH_CLIENT_ID`; production workflows never read it. For local development, provide that client's value as the daemon's process environment variable `GMAIL_OAUTH_CLIENT_ID`, without writing it into source. Testing-mode OAuth apps permit only explicitly listed test users; storing a client ID does not grant Google production approval.
+
+Gmail uses its own polling interval, independent of WorkIQ. Initial and expired-history recovery imports cover seven days and remain quiet. Bodies are transient; original sender/subject metadata is used for local scoring, then replaced before ledger or animation publication. Signing out of Gmail or Microsoft 365 wipes all communication-derived history, aggregates, retained events, checkpoints, deduplication state, and active overlay effects. Other providers remain authorized and may repopulate history on subsequent scans. This updated sign-out policy supersedes history retention in the original [production Gmail specification](./docs/GMAIL_DESKTOP_PRODUCTION.md); its Google verification and manual release-owner gates still apply.
+
+Wipes serialize with in-flight scoring and scanner commits. Ledger snapshots, animation events, and sign-out confirmations include the process-local monotonic `resetGeneration`; clients discard older responses and reset complete effect queues, not just visible splats. The latest reset marker survives animation-queue eviction and is replayed to reconnecting subscribers. Android also resets surviving accounts' checkpoints so their next refresh is quiet.
 
 ---
 
@@ -231,13 +253,24 @@ Run the existing Rust and web gates in section 3, plus shared-core/bridge format
 ```sh
 bash mobile/scripts/test-jvm.sh
 bash mobile/scripts/build-policy.test.sh
+bash mobile/scripts/test-signing-config.sh
 mobile/gradlew -p mobile :app:testDebugUnitTest :accounts:testDebugUnitTest :core:testDebugUnitTest :app:lintDebug
 mobile/gradlew -p mobile :app:connectedDebugAndroidTest
 ```
 
 The JVM suite exercises connector and synchronization transactions with synthetic fixtures without requiring account credentials. It is not a substitute for Android compilation, lint or instrumentation. The connected gate requires a compatible emulator or device. The shared core keeps `unsafe_code = "forbid"`; only the isolated JNI export boundary permits the native export attribute.
 
-The [Android compatibility workflow](./.github/workflows/android.yml) runs the Rust, web, JVM, build-policy, Android unit-test, lint and debug-APK gates on Linux without personal accounts or release signing secrets. It uploads the debug APK and checksum only after those gates succeed. Connected-device tests and real Google account acceptance remain separate manual gates.
+The [Android compatibility workflow](./.github/workflows/android.yml) runs the Rust, web, JVM, build-policy, Android unit-test, lint and debug-APK gates on Linux without personal accounts or signing secrets, including fork pull requests. It does not publish that ephemeral debug APK. A separate job, available only to trusted pushes and manual runs after validation succeeds, restores a dedicated test key and publishes only the certificate-verified OAuth test artifact. No test APK is automatically attached to a production GitHub release. Connected-device tests and real Google account acceptance remain separate manual gates.
+
+### Stable OAuth test signing
+
+Create a dedicated RSA-3072 PKCS12 test keystore once on a secured administrator workstation and retain it in an approved secure backup. Never reuse the Play/release key. Configure GitHub Secrets `SLOP_ANDROID_TEST_KEYSTORE_BASE64`, `SLOP_ANDROID_TEST_STORE_PASSWORD`, `SLOP_ANDROID_TEST_KEY_ALIAS`, and `SLOP_ANDROID_TEST_KEY_PASSWORD`, plus the public Variable `GOOGLE_ANDROID_TEST_CERT_SHA1`. Do not send key bytes, aliases or passwords through chat, logs or source control. The existing `SLOP_ANDROID_*` release settings are independent and unchanged.
+
+Trusted CI decodes the key only into a permission-restricted runner-temporary file, exposes its path as `SLOP_ANDROID_TEST_KEYSTORE`, and passes the other values directly from Secrets. The debug variant uses the `testing` configuration only when all four test-signing environment variables are present. `:app:verifyTestSigning` must succeed before distributable test packaging; missing/partial values, a missing or relative key path, or any other debug signing configuration fails explicitly. Ordinary local debug builds and fork PR validation do not depend on this secret-backed task. `test-signing-config.sh` exercises the task with synthetic non-key fixtures; it requires the Android Gradle toolchain, not real signing credentials.
+
+After building, `verify-oauth-test-apk.sh` verifies the actual APK signature, requires exactly one signer matching `GOOGLE_ANDROID_TEST_CERT_SHA1`, and checks package `com.threadkeeper.slopgrenade` before upload. The artifact `slop-grenade-android-oauth-test` contains `slop-grenade-android-oauth-test.apk` and its adjacent SHA-256 checksum. The temporary keystore is removed even on workflow failure.
+
+Register that exact package/SHA-1 pair as an **Android** OAuth client in the Google testing project. No Android OAuth client ID or secret is embedded in the APK; Desktop OAuth client IDs configured for laptop releases are unrelated. While Google consent remains in Testing, manually add the acceptance-test accounts, without committing their addresses. A different test certificate cannot normally update an installed APK signed with the old certificate; replacing it may require uninstalling the old test app and reconnecting its accounts. See the [full signing and device acceptance procedure](./docs/ANDROID_GOOGLE_OAUTH_CI_SIGNING.md).
 
 ### Google authorization prerequisites
 
@@ -256,7 +289,7 @@ References: [Android authorization](https://developer.android.com/identity/autho
 - Scan messages, not threads, with account-scoped identifiers. Archived received messages are included; Drafts, Spam and Trash are excluded. Sent classification refers to messages already sent, including from another device.
 - Initial/recovery seven-day refreshes are quiet: no historical effects and no automatic LLM calls. Incremental synchronization follows every page and updates its checkpoint only after successful ingestion.
 - A failure for one mailbox must not prevent other mailboxes from being scanned. Authorization failures require reconnection; transient failures use scheduled retries.
-- Disconnect removes an account's local connection and stops future scans. Already-scored in-memory history and deduplication identifiers remain until normal process clear, so reconnecting does not double-count messages or reset another account's statistics. Disconnect is not a historical-data deletion operation.
+- Disconnect removes an account's local connection and stops its future scans, then wipes all communication-derived in-memory history, aggregates, retained events, scanner checkpoints, deduplication state, and active overlay effects. Other connected accounts remain authorized and can quietly repopulate recent history on subsequent scans. The response reports "All communication data wiped."
 - Message bodies, reports and previews remain in memory. Only account configuration and minimal synchronization state are stored, with sensitive account state encrypted using Android Keystore-backed keys and excluded from backup. Process death clears the ledger; recovery rebuilds recent history quietly.
 - Gmail sender pseudonyms and generic subjects are applied **after** scoring, so automated-message detection still sees the original transient metadata. Reports retain signal labels and scores, not verbatim body fragments; sender pseudonyms are stable only within the process.
 - Successfully decoded empty or attachment-only messages do not block a mailbox's synchronization. Attachment contents and Gmail snippets are not substituted for missing message text; malformed encodings and failed inline-body retrieval still fail the scan without advancing its checkpoint.
@@ -283,7 +316,9 @@ Distribute the signed APK and its SHA-256 checksum through a trusted release cha
 1. Download the APK and verify its checksum against that trusted channel.
 2. Temporarily allow **Install unknown apps** for the browser or file manager opening the APK.
 3. Install it, then turn that permission off again.
-4. Open Slop Grenade, add each Gmail account and complete Google's consent flow.
+4. Open Slop Grenade and authorize each Gmail account from the dashboard. While screen-edge effects
+   are running, the Android notification-tray icon also provides a **Connect Gmail** action that opens
+   the same in-app account chooser and consent flow.
 5. Review monitoring status and, if desired, grant overlay permission, allow notifications and start effects.
 
 Release acceptance requires real-device checks for account consent/reconnection, multiple mailboxes, Doze, offline recovery, reboot, process recreation, force-stop, denied overlay permission, battery usage, clean installation and an in-place signed upgrade. Synthetic unit tests and a successful APK build cannot prove these device/OAuth conditions. No Play Store or cloud push backend is required.
@@ -309,4 +344,3 @@ Slop Grenade follows the **threadkeeper** software assurance and defense-in-dept
   - `<untrusted_message>` Fencing: Wraps untrusted email/Teams subjects and bodies in explicit XML delimiters and neutralizes embedded closing tags before sending to GPT Luna.
   - `sanitize_workiq_account`: Rejects leading `-` flags, whitespace, shell metacharacters, and control characters on `--account` values passed to the `workiq` CLI.
 - **Private-Tenant Container Defaults (`infra/main.bicep`, `Dockerfile`)**: Defaults Azure Container Apps ingress to internal (`externalIngress: bool = false`, `allowInsecure: false`) with `/api/v1/health` liveness/readiness probes and non-root (`USER appuser`, UID `10001`), `--locked` container builds.
-
