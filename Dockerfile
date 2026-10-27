@@ -8,7 +8,7 @@ COPY web ./web
 RUN npm --prefix web run build
 
 # Stage 2: Build release Rust binary
-FROM rust:1.88-bookworm AS rust-builder
+FROM rust:1.99-bookworm AS rust-builder
 WORKDIR /workspace
 COPY LICENSE ./LICENSE
 COPY rust/Cargo.toml rust/Cargo.lock ./rust/
