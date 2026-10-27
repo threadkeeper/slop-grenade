@@ -3,6 +3,10 @@ package com.threadkeeper.slopgrenade.core
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
+import kotlin.concurrent.thread
 
 class ManualAnalysisTest {
     private fun judgmentEnvelope(text: String = """{"slopScore":81,"reasoning":"Synthetic reasoning","coachingTip":"Use specifics"}""") =
@@ -92,5 +96,50 @@ class ManualAnalysisTest {
         assertEquals(400, api.request("POST", "/api/v1/auth/github-token",
             JSONObject().put("token", "synthetic\ncredential")).getInt("status"))
         assertEquals(0, calls)
+    }
+
+    @Test fun disconnectWaitsForPendingLunaAnalysisBeforeWipingItsCommit() {
+        val inferenceStarted = CountDownLatch(1)
+        val finishInference = CountDownLatch(1)
+        val disconnectStarted = CountDownLatch(1)
+        val disconnected = CountDownLatch(1)
+        val calls = mutableListOf<String>()
+        val failure = AtomicReference<Throwable?>()
+        val core = CoreApi {
+            calls.add(JSONObject(it).getString("path"))
+            """{"status":200,"body":{"ok":true}}"""
+        }
+        val api = ManualAnalysis(core, LunaClient { _, _ ->
+            inferenceStarted.countDown()
+            check(finishInference.await(5, TimeUnit.SECONDS))
+            judgmentEnvelope()
+        })
+        auth(api)
+        val analysis = thread {
+            try {
+                api.request("POST", "/api/v1/analyze",
+                    JSONObject().put("body", "Synthetic draft").put("useLuna", true))
+            } catch (error: Throwable) { failure.set(error) }
+        }
+        assertTrue(inferenceStarted.await(5, TimeUnit.SECONDS))
+        val disconnect = thread {
+            try {
+                disconnectStarted.countDown()
+                core.request("POST", "/internal/disconnect", JSONObject().put("accountId", "synthetic"))
+            } catch (error: Throwable) { failure.set(error) }
+            finally { disconnected.countDown() }
+        }
+        try {
+            assertTrue(disconnectStarted.await(5, TimeUnit.SECONDS))
+            assertFalse(disconnected.await(100, TimeUnit.MILLISECONDS))
+        } finally {
+            finishInference.countDown()
+            analysis.join(5000)
+            disconnect.join(5000)
+        }
+        assertFalse(analysis.isAlive)
+        assertFalse(disconnect.isAlive)
+        assertNull(failure.get())
+        assertEquals(listOf("/api/v1/analyze", "/internal/disconnect"), calls)
     }
 }

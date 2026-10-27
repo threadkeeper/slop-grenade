@@ -78,4 +78,4 @@ assert keys=={"slopgrenade.sound","slopgrenade.volume"}, "Only UI sound/volume m
 print("PASS: ABI, JNI, locked-build and 16KB linker policy")
 ' "$mobile"
 
-python -m unittest discover -s "$mobile/scripts" -p 'test_verify_apk_assets.py'
+python -m unittest discover -s "$mobile/scripts" -p 'test_*.py'

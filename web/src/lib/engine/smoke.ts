@@ -80,6 +80,14 @@ export class SmokeField {
     return i + (this.nx + 2) * j;
   }
 
+  clear(): void {
+    for (const field of [this.u, this.v, this.u0, this.v0, this.d, this.d0, this.c, this.c0, this.curl, this.p, this.div]) field.fill(0);
+    this.pixels.fill(0);
+    this.mass = this.time = 0;
+    this.gi0 = this.gj0 = this.px0 = this.py0 = this.bx0 = this.by0 = 0;
+    this.gi1 = this.gj1 = this.px1 = this.py1 = this.bx1 = this.by1 = -1;
+  }
+
   /** True when there is nothing left to simulate or draw. */
   isEmpty(): boolean {
     return this.mass < 0.02 || this.gi1 < 0;

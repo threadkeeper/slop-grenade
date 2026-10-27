@@ -18,6 +18,7 @@ export class WebAudioSfx implements SfxSink {
   private master: GainNode | null = null;
   private buffers = new Map<string, AudioBuffer>();
   private loops = new Map<string, LoopVoice>();
+  private voices = new Set<AudioBufferSourceNode>();
   private _enabled = false;
   private _volume = 0.7;
 
@@ -44,6 +45,12 @@ export class WebAudioSfx implements SfxSink {
   setVolume(v: number): void {
     this._volume = Math.max(0, Math.min(1, v));
     if (this.master && this.ctx) this.master.gain.setTargetAtTime(this._volume, this.ctx.currentTime, 0.05);
+  }
+
+  stopAll(): void {
+    for (const voice of this.voices) voice.stop();
+    this.voices.clear();
+    this.loops.clear();
   }
 
   private ensure(): void {
@@ -87,6 +94,7 @@ export class WebAudioSfx implements SfxSink {
     const p = this.ctx.createStereoPanner();
     p.pan.value = Math.max(-1, Math.min(1, pan));
     src.connect(g).connect(p).connect(this.master);
+    this.track(src);
     src.start();
   }
 
@@ -112,6 +120,7 @@ export class WebAudioSfx implements SfxSink {
       g.gain.value = 0;
       const p = this.ctx.createStereoPanner();
       src.connect(g).connect(p).connect(this.master);
+      this.track(src);
       src.start();
       v = { src, gain: g, pan: p, name };
       this.loops.set(id, v);
@@ -130,5 +139,13 @@ export class WebAudioSfx implements SfxSink {
       v.gain.gain.setTargetAtTime(0, t, 0.05);
       v.src.stop(t + 0.3);
     }
+  }
+
+  private track(src: AudioBufferSourceNode): void {
+    this.voices.add(src);
+    src.onended = () => {
+      this.voices.delete(src);
+      src.disconnect();
+    };
   }
 }

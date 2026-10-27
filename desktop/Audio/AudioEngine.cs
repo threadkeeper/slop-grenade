@@ -16,6 +16,7 @@ namespace SlopGrenadeDesktop
         void Play(string name, float pan, float gain, float rate);
         /// <summary>Start/update a looping voice, or stop it when name is null.</summary>
         void Loop(string id, string name, float pan, float gain, float rate);
+        void StopAll();
     }
 
     internal sealed class AudioEngine : ISfxSink, IDisposable
@@ -47,6 +48,7 @@ namespace SlopGrenadeDesktop
         private Thread _thread;
         private volatile bool _running;
         private volatile bool _enabled;
+        private int _resetGeneration;
         private float _master = 0.8f;
         private readonly float[] _mix = new float[Frames * 2];
         private readonly short[] _pcm = new short[Frames * 2];
@@ -145,8 +147,15 @@ namespace SlopGrenadeDesktop
             {
                 if (_bank == null) _bank = SfxBank.BuildAll();
                 if (!OpenDevice()) { _running = false; return; }
+                int resetGeneration = _resetGeneration;
                 while (_running)
                 {
+                    if (resetGeneration != _resetGeneration)
+                    {
+                        resetGeneration = _resetGeneration;
+                        NativeMethods.waveOutReset(_hwo);
+                        Array.Clear(_queued, 0, _queued.Length);
+                    }
                     bool wrote = false;
                     for (int i = 0; i < BufferCount; i++)
                     {
@@ -198,6 +207,7 @@ namespace SlopGrenadeDesktop
                             if (v.Looping) { pos -= n - 1; i0 = (int)pos; }
                             else { v.Done = true; break; }
                         }
+
                         float fr = (float)(pos - i0);
                         float smp = d[i0] + (d[i0 + 1] - d[i0]) * fr;
                         l += dl;
@@ -225,6 +235,16 @@ namespace SlopGrenadeDesktop
                 _pcm[i] = (short)(x * 32000f);
             }
             Marshal.Copy(_pcm, 0, dest, _pcm.Length);
+        }
+
+        public void StopAll()
+        {
+            lock (_lock)
+            {
+                _voices.Clear();
+                _loops.Clear();
+                Interlocked.Increment(ref _resetGeneration);
+            }
         }
 
         private static void PanGains(float pan, float gain, out float l, out float r)

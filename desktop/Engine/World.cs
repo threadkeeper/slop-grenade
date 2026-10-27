@@ -153,6 +153,35 @@ namespace SlopGrenadeDesktop
             Play("squeegee", Pan(side), 0.8f, 1f);
         }
 
+        public void Reset()
+        {
+            if (Sfx != null) Sfx.StopAll();
+            _queue.Clear();
+            _scheduled.Clear();
+            _emitters.Clear();
+            Grenades.Clear();
+            Explosions.Clear();
+            Particles.Items.Clear();
+            foreach (Fruit fruit in Fruits) fruit.Dispose();
+            Fruits.Clear();
+            Cannon.Clear();
+            Twinkles.Clear();
+            Squeegees.Clear();
+            Flies.Clear();
+            Smoke.Clear();
+            Left.Clear();
+            Right.Clear();
+            Left.Flush(H);
+            Right.Flush(H);
+            _activity.Clear();
+            _activity.Add(new RectangleF(0, 0, W, H));
+            Now = _clockReal = _hitStop = _shake = _shakeX = _shakeY = 0f;
+            TimeScale = 1f;
+            _slowmoOn = false;
+            _sinceGrenade = _sinceFruit = 99f;
+            _smokeFrame = 0;
+        }
+
         public void SlopCounts(out int left, out int right)
         {
             int lf = 0, rf = 0;
@@ -935,6 +964,7 @@ namespace SlopGrenadeDesktop
 
         public void Dispose()
         {
+            Reset();
             // stop looping voices (fuse hiss, fly buzz) so they do not outlive this world
             foreach (Side side in new Side[] { Side.Left, Side.Right })
             {

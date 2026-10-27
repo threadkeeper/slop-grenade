@@ -6,7 +6,6 @@
 //! overlays and dashboard tabs.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
@@ -23,18 +22,34 @@ const RECENT_EVENT_CAPACITY: usize = 32;
 pub struct AnimationEvent {
     /// Monotonically increasing sequence number for client deduplication.
     pub sequence: u64,
+    /// Communication reset epoch; clients must discard events from older epochs.
+    #[serde(default)]
+    pub reset_generation: u64,
     /// Slop analysis report that triggered this animation.
     pub report: SlopReport,
     /// Optional squeegee wipe trigger (`Some(MonitorSide)` when wiping a monitor edge).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub squeegee_side: Option<MonitorSide>,
+    /// Whether every client must erase communication-derived display and deduplication state.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub data_wiped: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// Broadcast bus for real-time monitor animations.
 pub struct AnimationEventBus {
-    next_seq: AtomicU64,
     sender: broadcast::Sender<AnimationEvent>,
-    recent: Mutex<VecDeque<AnimationEvent>>,
+    state: Mutex<BusState>,
+}
+
+struct BusState {
+    next_seq: u64,
+    reset_generation: u64,
+    recent: VecDeque<AnimationEvent>,
+    latest_wipe: Option<AnimationEvent>,
 }
 
 impl Default for AnimationEventBus {
@@ -48,28 +63,19 @@ impl AnimationEventBus {
     pub fn new() -> Self {
         let (sender, _) = broadcast::channel(128);
         Self {
-            next_seq: AtomicU64::new(1),
             sender,
-            recent: Mutex::new(VecDeque::with_capacity(RECENT_EVENT_CAPACITY)),
+            state: Mutex::new(BusState {
+                next_seq: 1,
+                reset_generation: 0,
+                recent: VecDeque::with_capacity(RECENT_EVENT_CAPACITY),
+                latest_wipe: None,
+            }),
         }
     }
 
     /// Publish a [`SlopReport`] as an [`AnimationEvent`] to all live subscribers.
     pub fn publish(&self, report: SlopReport) -> AnimationEvent {
-        let sequence = self.next_seq.fetch_add(1, Ordering::SeqCst);
-        let event = AnimationEvent {
-            sequence,
-            report,
-            squeegee_side: None,
-        };
-        if let Ok(mut guard) = self.recent.lock() {
-            if guard.len() >= RECENT_EVENT_CAPACITY {
-                guard.pop_front();
-            }
-            guard.push_back(event.clone());
-        }
-        let _ = self.sender.send(event.clone());
-        event
+        self.publish_event(report, None, false, true)
     }
 
     /// Broadcast a squeegee wipe command for `side` (`Left` or `Right`) to all connected desktop & web overlays.
@@ -78,12 +84,38 @@ impl AnimationEventBus {
         side: MonitorSide,
         placeholder_report: SlopReport,
     ) -> AnimationEvent {
-        let sequence = self.next_seq.fetch_add(1, Ordering::SeqCst);
+        self.publish_event(placeholder_report, Some(side), false, false)
+    }
+
+    fn publish_event(
+        &self,
+        report: SlopReport,
+        squeegee_side: Option<MonitorSide>,
+        data_wiped: bool,
+        buffered: bool,
+    ) -> AnimationEvent {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if data_wiped {
+            state.reset_generation = state.reset_generation.saturating_add(1);
+            state.recent.clear();
+        }
         let event = AnimationEvent {
-            sequence,
-            report: placeholder_report,
-            squeegee_side: Some(side),
+            sequence: state.next_seq,
+            reset_generation: state.reset_generation,
+            report,
+            squeegee_side,
+            data_wiped,
         };
+        state.next_seq = state.next_seq.saturating_add(1);
+        if data_wiped {
+            state.latest_wipe = Some(event.clone());
+        } else if buffered {
+            if state.recent.len() >= RECENT_EVENT_CAPACITY {
+                state.recent.pop_front();
+            }
+            state.recent.push_back(event.clone());
+        }
+        // Keep publication ordered with the durable marker and subscription snapshot.
         let _ = self.sender.send(event.clone());
         event
     }
@@ -93,19 +125,43 @@ impl AnimationEventBus {
         self.sender.subscribe()
     }
 
+    /// Atomically subscribe and snapshot the latest durable reset marker.
+    ///
+    /// A concurrent wipe is either in the snapshot or the receiver (possibly both),
+    /// so consumers deduplicate by sequence and cannot miss the reset window.
+    pub fn subscribe_with_reset(
+        &self,
+    ) -> (broadcast::Receiver<AnimationEvent>, Option<AnimationEvent>) {
+        let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        (self.sender.subscribe(), state.latest_wipe.clone())
+    }
+
+    /// Latest reset marker, retained independently of the bounded animation queue.
+    pub fn latest_data_wipe(&self) -> Option<AnimationEvent> {
+        self.state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .latest_wipe
+            .clone()
+    }
+
     /// Return the most recent buffered [`AnimationEvent`] items.
     pub fn recent_events(&self) -> Vec<AnimationEvent> {
-        self.recent
+        self.state
             .lock()
-            .map(|g| g.iter().cloned().collect())
+            .map(|state| state.recent.iter().cloned().collect())
             .unwrap_or_default()
     }
 
-    /// Poll up to 32 retained events strictly newer than `after`, without consuming them.
+    /// Poll up to 32 ordinary events plus any newer durable reset marker.
     pub fn events_after(&self, after: u64) -> Vec<AnimationEvent> {
-        self.recent_events()
-            .into_iter()
+        let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        state
+            .latest_wipe
+            .iter()
+            .chain(state.recent.iter())
             .filter(|event| event.sequence > after)
+            .cloned()
             .collect()
     }
 
@@ -115,14 +171,7 @@ impl AnimationEventBus {
         side: MonitorSide,
         placeholder_report: SlopReport,
     ) -> AnimationEvent {
-        let event = self.publish_squeegee(side, placeholder_report);
-        if let Ok(mut guard) = self.recent.lock() {
-            if guard.len() >= RECENT_EVENT_CAPACITY {
-                guard.pop_front();
-            }
-            guard.push_back(event.clone());
-        }
-        event
+        self.publish_event(placeholder_report, Some(side), false, true)
     }
 
     /// Forget retained events whose IDs start with the exact `account_id:` prefix.
@@ -130,9 +179,32 @@ impl AnimationEventBus {
     /// Already delivered live broadcasts cannot be recalled.
     pub fn remove_account(&self, account_id: &str) {
         let prefix = format!("{account_id}:");
-        if let Ok(mut guard) = self.recent.lock() {
-            guard.retain(|event| !event.report.message_id.starts_with(&prefix));
+        if let Ok(mut state) = self.state.lock() {
+            state
+                .recent
+                .retain(|event| !event.report.message_id.starts_with(&prefix));
         }
+    }
+
+    /// Erase retained communication events, returning the event count removed.
+    pub fn clear(&self) -> Result<usize, String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "Animation event wipe is unavailable.".to_string())?;
+        let removed = state.recent.len();
+        state.recent.clear();
+        Ok(removed)
+    }
+
+    /// Notify clients of a reset and retain its marker independently of animations.
+    pub fn publish_data_wipe(&self, placeholder_report: SlopReport) -> AnimationEvent {
+        self.publish_event(placeholder_report, None, true, false)
+    }
+
+    /// Publish and retain a data-wipe notification for polling clients.
+    pub fn publish_data_wipe_buffered(&self, placeholder_report: SlopReport) -> AnimationEvent {
+        self.publish_data_wipe(placeholder_report)
     }
 }
 
@@ -179,6 +251,60 @@ mod tests {
         bus.remove_account("a");
         assert_eq!(bus.events_after(0).len(), 2);
         assert_eq!(bus.events_after(0)[0].report.message_id, "ab:1");
+    }
+
+    #[test]
+    fn clear_erases_ordinary_events_and_preserves_a_durable_reset_marker() {
+        let bus = AnimationEventBus::new();
+        let report =
+            SlopDetector::new().analyze(&crate::presets::build_preset_sample("human_sparkle", 1));
+        bus.publish(report.clone());
+        assert_eq!(bus.clear(), Ok(1));
+        assert!(bus.recent_events().is_empty());
+
+        let event = bus.publish_data_wipe(report);
+        assert!(event.data_wiped);
+        assert_eq!(event.reset_generation, 1);
+        assert!(bus.recent_events().is_empty());
+        assert_eq!(bus.events_after(0), vec![event.clone()]);
+        assert_eq!(bus.latest_data_wipe(), Some(event.clone()));
+        assert_eq!(bus.clear(), Ok(0));
+        assert_eq!(bus.events_after(0), vec![event]);
+    }
+
+    #[test]
+    fn reset_marker_survives_queue_overflow_and_advances_monotonically() {
+        let bus = AnimationEventBus::new();
+        let report =
+            SlopDetector::new().analyze(&crate::presets::build_preset_sample("human_sparkle", 1));
+        let wipe = bus.publish_data_wipe_buffered(report.clone());
+        for _ in 0..64 {
+            assert_eq!(bus.publish(report.clone()).reset_generation, 1);
+        }
+        let polled = bus.events_after(0);
+        assert_eq!(polled.len(), 33);
+        assert_eq!(polled[0], wipe);
+        assert_eq!(bus.events_after(wipe.sequence).len(), 32);
+        let second = bus.publish_data_wipe(report);
+        assert_eq!(second.reset_generation, 2);
+        assert_eq!(bus.events_after(0), vec![second]);
+    }
+
+    #[test]
+    fn subscribing_concurrently_with_reset_never_misses_its_marker() {
+        for _ in 0..64 {
+            let bus = std::sync::Arc::new(AnimationEventBus::new());
+            let publishing = bus.clone();
+            let thread = std::thread::spawn(move || {
+                publishing.publish_data_wipe(
+                    SlopDetector::new()
+                        .analyze(&crate::presets::build_preset_sample("human_sparkle", 0)),
+                )
+            });
+            let (mut receiver, snapshot) = bus.subscribe_with_reset();
+            let wipe = thread.join().unwrap();
+            assert_eq!(snapshot.or_else(|| receiver.try_recv().ok()), Some(wipe));
+        }
     }
 
     #[tokio::test]

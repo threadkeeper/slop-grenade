@@ -12,17 +12,18 @@
 //! - Real-time SSE animation stream (`GET /api/v1/events/stream`)
 
 use std::convert::Infallible;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::extract::{DefaultBodyLimit, Query, State};
+use axum::extract::{ConnectInfo, DefaultBodyLimit, Path as RoutePath, Query, State};
 use axum::http::{header, HeaderName, HeaderValue, Method, StatusCode, Uri};
 use axum::response::sse::{Event, KeepAlive, Sse};
-use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::response::{Html, IntoResponse, Response};
+use axum::routing::{delete, get, post};
+use axum::{Extension, Json, Router};
 use futures::stream::{self, Stream};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -30,6 +31,8 @@ use sha2::{Digest, Sha256};
 
 use crate::auth::AuthCoordinator;
 use crate::event_bus::{AnimationEvent, AnimationEventBus};
+use crate::gmail_error::GmailError;
+use crate::gmail_scanner::GmailScanner;
 use crate::ledger::AwarenessLedger;
 use crate::llm_luna::LunaClient;
 use crate::scanner_daemon::{build_preset_sample, ScannerDaemon};
@@ -52,6 +55,8 @@ pub struct AppState {
     pub ledger: Arc<AwarenessLedger>,
     /// Real-time animation broadcast bus.
     pub bus: Arc<AnimationEventBus>,
+    /// Memory-only desktop Gmail authentication and incremental scanner.
+    pub gmail: Arc<GmailScanner>,
     /// Directory containing compiled SvelteKit static assets.
     pub web_asset_dir: PathBuf,
     /// Counter for synthetic/simulated message IDs.
@@ -173,13 +178,39 @@ pub struct SqueegeeRequest {
     pub side: MonitorSide,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CommunicationWipe {
+    data_wiped: bool,
+    reset_generation: u64,
+    cleared_reports: usize,
+    cleared_events: usize,
+    cleared_deduplication_keys: usize,
+}
+
 /// Maximum HTTP request body size (64 KiB) to prevent memory exhaustion on local or container deployments.
 const MAX_REQUEST_BODY_BYTES: usize = 64 * 1024;
 
 /// Build the complete Axum [`Router`] for the Slop Grenade daemon.
 pub fn build_router(state: AppState) -> Router {
     let csp = Arc::new(content_security_policy(&state.web_asset_dir));
+    let gmail = Router::new()
+        .route("/api/v1/gmail/accounts", get(handle_gmail_accounts))
+        .route("/api/v1/gmail/authorize", post(handle_gmail_authorize))
+        .route("/api/v1/auth/google/callback", get(handle_google_callback))
+        .route(
+            "/api/v1/gmail/accounts/{id}/reconnect",
+            post(handle_gmail_reconnect),
+        )
+        .route(
+            "/api/v1/gmail/accounts/{id}",
+            delete(handle_gmail_disconnect),
+        )
+        .route("/api/v1/gmail/scan", post(handle_gmail_scan))
+        .route("/api/v1/gmail/events", get(handle_gmail_events))
+        .layer(axum::middleware::from_fn(gmail_loopback_middleware));
     Router::new()
+        .merge(gmail)
         .route("/api/v1/health", get(handle_health))
         .route("/api/v1/auth/status", get(handle_auth_status))
         .route("/api/v1/auth/github-token", post(handle_update_github_auth))
@@ -188,6 +219,7 @@ pub fn build_router(state: AppState) -> Router {
             post(handle_update_workiq_account),
         )
         .route("/api/v1/auth/workiq-login", post(handle_workiq_login))
+        .route("/api/v1/auth/workiq-logout", post(handle_workiq_logout))
         .route("/api/v1/ledger", get(handle_ledger))
         .route("/api/v1/events/recent", get(handle_recent_events))
         .route("/api/v1/events/stream", get(handle_sse_stream))
@@ -205,11 +237,58 @@ pub fn build_router(state: AppState) -> Router {
         .with_state(state)
 }
 
-async fn security_and_cors_middleware(
+async fn gmail_loopback_middleware(
     req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let mut response = if trusted_gmail_request(&req) {
+        next.run(req).await
+    } else {
+        (
+            StatusCode::FORBIDDEN,
+            Json(json!({ "ok": false, "error": "Gmail is available only through the local desktop dashboard." })),
+        )
+            .into_response()
+    };
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response.headers_mut().insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("no-referrer"),
+    );
+    response
+}
+
+#[derive(Clone, Copy)]
+struct GmailVisibility(bool);
+
+fn trusted_gmail_request(req: &axum::extract::Request) -> bool {
+    let peer = req.extensions().get::<ConnectInfo<SocketAddr>>();
+    let authority = req
+        .headers()
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok());
+    let trusted_host = authority.is_some_and(|host| {
+        host.parse::<SocketAddr>()
+            .is_ok_and(|address| address.ip().is_loopback())
+    });
+    let trusted_origin = req.headers().get(header::ORIGIN).is_none_or(|origin| {
+        origin
+            .to_str()
+            .is_ok_and(|origin| authority.is_some_and(|host| origin == format!("http://{host}")))
+    });
+    peer.is_some_and(|peer| peer.0.ip().is_loopback()) && trusted_host && trusted_origin
+}
+
+async fn security_and_cors_middleware(
+    mut req: axum::extract::Request,
     next: axum::middleware::Next,
     csp: &HeaderValue,
 ) -> Response {
+    let visibility = GmailVisibility(trusted_gmail_request(&req));
+    req.extensions_mut().insert(visibility);
+    let private_status = req.uri().path().starts_with("/api/v1/auth/");
     let origin = req
         .headers()
         .get(header::ORIGIN)
@@ -250,6 +329,10 @@ async fn security_and_cors_middleware(
 
     let mut res = next.run(req).await;
     attach_security_headers(res.headers_mut(), csp, allowed_origin);
+    if private_status {
+        res.headers_mut()
+            .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    }
     res
 }
 
@@ -314,7 +397,7 @@ fn attach_security_headers(
         headers.insert(header::VARY, HeaderValue::from_static("Origin"));
         headers.insert(
             header::ACCESS_CONTROL_ALLOW_METHODS,
-            HeaderValue::from_static("GET, POST, OPTIONS"),
+            HeaderValue::from_static("GET, POST, DELETE, OPTIONS"),
         );
         headers.insert(
             header::ACCESS_CONTROL_ALLOW_HEADERS,
@@ -396,13 +479,24 @@ async fn handle_health() -> Json<Value> {
     }))
 }
 
-async fn handle_auth_status(State(state): State<AppState>) -> Json<Value> {
-    let status = AuthCoordinator::status(&state.workiq, &state.luna).await;
-    Json(serde_json::to_value(status).unwrap_or_else(|_| json!({})))
+async fn combined_auth_status(state: &AppState, visibility: GmailVisibility) -> Value {
+    let mut status = AuthCoordinator::status(&state.workiq, &state.luna, &state.gmail).await;
+    if !visibility.0 {
+        status.gmail = None;
+    }
+    serde_json::to_value(status).unwrap_or_else(|_| json!({}))
+}
+
+async fn handle_auth_status(
+    State(state): State<AppState>,
+    Extension(visibility): Extension<GmailVisibility>,
+) -> Json<Value> {
+    Json(combined_auth_status(&state, visibility).await)
 }
 
 async fn handle_update_github_auth(
     State(state): State<AppState>,
+    Extension(visibility): Extension<GmailVisibility>,
     Json(payload): Json<UpdateGithubAuthRequest>,
 ) -> Json<Value> {
     if payload.token.is_some() {
@@ -411,29 +505,32 @@ async fn handle_update_github_auth(
     if let Some(enabled) = payload.enabled {
         state.luna.set_enabled(enabled);
     }
-    let status = AuthCoordinator::status(&state.workiq, &state.luna).await;
-    Json(serde_json::to_value(status).unwrap_or_else(|_| json!({})))
+    Json(combined_auth_status(&state, visibility).await)
 }
 
 async fn handle_update_workiq_account(
     State(state): State<AppState>,
+    Extension(visibility): Extension<GmailVisibility>,
     Json(payload): Json<UpdateWorkIqAccountRequest>,
 ) -> Json<Value> {
     state.workiq.set_account(payload.account);
-    let status = AuthCoordinator::status(&state.workiq, &state.luna).await;
-    Json(serde_json::to_value(status).unwrap_or_else(|_| json!({})))
+    Json(combined_auth_status(&state, visibility).await)
 }
 
-async fn handle_workiq_login(State(state): State<AppState>) -> Response {
+async fn handle_workiq_login(
+    State(state): State<AppState>,
+    Extension(visibility): Extension<GmailVisibility>,
+) -> Response {
     match state.workiq.start_interactive_login().await {
         Ok(msg) => {
-            let status = AuthCoordinator::status(&state.workiq, &state.luna).await;
+            let status = combined_auth_status(&state, visibility).await;
             (
                 StatusCode::OK,
                 Json(json!({ "ok": true, "message": msg, "status": status })),
             )
                 .into_response()
         }
+
         Err(err) => (
             StatusCode::BAD_GATEWAY,
             Json(json!({ "ok": false, "error": err })),
@@ -442,12 +539,214 @@ async fn handle_workiq_login(State(state): State<AppState>) -> Response {
     }
 }
 
+async fn handle_workiq_logout(
+    State(state): State<AppState>,
+    Extension(visibility): Extension<GmailVisibility>,
+) -> Response {
+    let sign_out = state.workiq.sign_out().await;
+    let wipe = match wipe_communication_data(&state).await {
+        Ok(wipe) => wipe,
+        Err(error) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "ok": false, "dataWiped": false, "error": error })),
+            )
+                .into_response();
+        }
+    };
+    match sign_out {
+        Ok(msg) => {
+            let status = combined_auth_status(&state, visibility).await;
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "ok": true,
+                    "message": msg,
+                    "status": status,
+                    "dataWiped": wipe.data_wiped,
+                    "resetGeneration": wipe.reset_generation,
+                    "clearedReports": wipe.cleared_reports,
+                    "clearedEvents": wipe.cleared_events,
+                    "clearedDeduplicationKeys": wipe.cleared_deduplication_keys,
+                })),
+            )
+                .into_response()
+        }
+        Err(err) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({
+                "ok": false,
+                "dataWiped": wipe.data_wiped,
+                "resetGeneration": wipe.reset_generation,
+                "clearedReports": wipe.cleared_reports,
+                "clearedEvents": wipe.cleared_events,
+                "clearedDeduplicationKeys": wipe.cleared_deduplication_keys,
+                "error": err,
+            })),
+        )
+            .into_response(),
+    }
+}
+
+async fn handle_gmail_accounts(State(state): State<AppState>) -> Json<Value> {
+    Json(state.gmail.status().await)
+}
+
+fn gmail_error_response(error: GmailError) -> Response {
+    (
+        StatusCode::from_u16(error.status_code()).unwrap_or(StatusCode::BAD_GATEWAY),
+        Json(json!({ "ok": false, "error": error.safe_message() })),
+    )
+        .into_response()
+}
+
+async fn handle_gmail_authorize(State(state): State<AppState>) -> Response {
+    match state.gmail.authorize(None).await {
+        Ok(authorization) => Json(authorization).into_response(),
+        Err(error) => gmail_error_response(error),
+    }
+}
+
+async fn handle_gmail_reconnect(
+    State(state): State<AppState>,
+    RoutePath(id): RoutePath<String>,
+) -> Response {
+    match state.gmail.authorize(Some(&id)).await {
+        Ok(authorization) => Json(authorization).into_response(),
+        Err(error) => gmail_error_response(error),
+    }
+}
+
+async fn handle_gmail_disconnect(
+    State(state): State<AppState>,
+    RoutePath(id): RoutePath<String>,
+) -> Response {
+    match state.gmail.disconnect(&id).await {
+        Ok(()) => match wipe_communication_data(&state).await {
+            Ok(wipe) => (
+                StatusCode::OK,
+                Json(json!({
+                    "ok": true,
+                    "signedOut": true,
+                    "dataWiped": wipe.data_wiped,
+                    "resetGeneration": wipe.reset_generation,
+                    "clearedReports": wipe.cleared_reports,
+                    "clearedEvents": wipe.cleared_events,
+                    "clearedDeduplicationKeys": wipe.cleared_deduplication_keys,
+                    "message": "Signed out of Gmail. All communication data wiped.",
+                })),
+            )
+                .into_response(),
+            Err(error) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "ok": false, "dataWiped": false, "error": error })),
+            )
+                .into_response(),
+        },
+        Err(error) => gmail_error_response(error),
+    }
+}
+
+async fn wipe_communication_data(state: &AppState) -> Result<CommunicationWipe, String> {
+    let _transaction = state.ledger.communication_gate().write().await;
+    let m365_keys = state.daemon.clear_communication_state().await?;
+    let gmail_keys = state
+        .gmail
+        .clear_communication_state()
+        .await
+        .map_err(|error| error.safe_message().to_string())?;
+    let cleared_reports = state.ledger.clear()?;
+    let cleared_events = state.bus.clear()?;
+    let placeholder = SlopDetector::new().analyze(&build_preset_sample("human_sparkle", 0));
+    let reset = state.bus.publish_data_wipe(placeholder);
+    Ok(CommunicationWipe {
+        data_wiped: true,
+        reset_generation: reset.reset_generation,
+        cleared_reports,
+        cleared_events,
+        cleared_deduplication_keys: m365_keys + gmail_keys,
+    })
+}
+
+async fn handle_gmail_scan(State(state): State<AppState>) -> Response {
+    match state.gmail.scan_once().await {
+        Ok(result) => Json(result).into_response(),
+        Err(error) => gmail_error_response(error),
+    }
+}
+
+#[derive(Deserialize)]
+struct GoogleCallback {
+    state: Option<String>,
+    code: Option<String>,
+    error: Option<String>,
+}
+
+async fn handle_google_callback(
+    State(state): State<AppState>,
+    query: Result<Query<GoogleCallback>, axum::extract::rejection::QueryRejection>,
+) -> Response {
+    let Ok(Query(query)) = query else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Html("<!doctype html><title>Gmail connection</title><p>Invalid authorization response. Return to the local dashboard and connect again.</p>"),
+        )
+            .into_response();
+    };
+    match state
+        .gmail
+        .complete_authorization(
+            query.state.as_deref(),
+            query.code.as_deref(),
+            query.error.as_deref(),
+        )
+        .await
+    {
+        Ok(()) => (
+            StatusCode::OK,
+            Html("<!doctype html><title>Gmail connected</title><p>Gmail connected. You can close this tab and return to Slop Grenade.</p>"),
+        )
+            .into_response(),
+        Err(error) => (
+            StatusCode::from_u16(error.status_code()).unwrap_or(StatusCode::BAD_GATEWAY),
+            Html(format!(
+                "<!doctype html><title>Gmail connection</title><p>{}</p><p>Return to the local dashboard to try again.</p>",
+                error.safe_message()
+            )),
+        )
+            .into_response(),
+    }
+}
+
+async fn handle_gmail_events(
+    State(state): State<AppState>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let stream = stream::unfold(state.gmail.subscribe(), |mut receiver| async move {
+        match receiver.recv().await {
+            Ok(()) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => Some((
+                Ok(Event::default()
+                    .event("gmail-status")
+                    .data("{\"changed\":true}")),
+                receiver,
+            )),
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => None,
+        }
+    });
+    Sse::new(stream).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("keep-alive"),
+    )
+}
+
 async fn handle_ledger(State(state): State<AppState>) -> Json<Value> {
+    let _transaction = state.ledger.communication_gate().read().await;
     let scorecard = state.ledger.scorecard();
     Json(serde_json::to_value(scorecard).unwrap_or_else(|_| json!({})))
 }
 
 async fn handle_recent_events(State(state): State<AppState>) -> Json<Value> {
+    let _transaction = state.ledger.communication_gate().read().await;
     let events = state.bus.recent_events();
     Json(json!({ "events": events }))
 }
@@ -505,6 +804,7 @@ async fn handle_squeegee(
     State(state): State<AppState>,
     Json(req): Json<SqueegeeRequest>,
 ) -> Json<Value> {
+    let _transaction = state.ledger.communication_gate().read().await;
     let placeholder = SlopDetector::new().analyze(&build_preset_sample("human_sparkle", 0));
     let event = state.bus.publish_squeegee(req.side, placeholder);
     Json(json!({
@@ -616,20 +916,35 @@ async fn handle_refresh_progress(
 async fn handle_sse_stream(
     State(state): State<AppState>,
 ) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
-    let rx = state.bus.subscribe();
-    let stream = stream::unfold(rx, |mut rx| async move {
-        loop {
-            match rx.recv().await {
-                Ok(anim_event) => {
-                    let payload = serde_json::to_string(&anim_event).unwrap_or_default();
-                    let sse_event = Event::default().event("animation").data(payload);
-                    return Some((Ok(sse_event), rx));
+    let (rx, reset) = state.bus.subscribe_with_reset();
+    let stream = stream::unfold(
+        (rx, reset, 0, state.bus),
+        |(mut rx, mut pending_reset, mut cursor, bus)| async move {
+            loop {
+                let anim_event = match pending_reset.take() {
+                    Some(reset) => reset,
+                    None => match rx.recv().await {
+                        Ok(event) => event,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                            pending_reset = bus.latest_data_wipe();
+                            continue;
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+                    },
+                };
+                if anim_event.sequence <= cursor {
+                    continue;
                 }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+                cursor = anim_event.sequence;
+                let payload = serde_json::to_string(&anim_event).unwrap_or_default();
+                let sse_event = Event::default()
+                    .id(cursor.to_string())
+                    .event("animation")
+                    .data(payload);
+                return Some((Ok(sse_event), (rx, pending_reset, cursor, bus)));
             }
-        }
-    });
+        },
+    );
 
     Sse::new(stream).keep_alive(
         KeepAlive::new()
@@ -640,4 +955,126 @@ async fn handle_sse_stream(
 
 async fn handle_static_fallback(State(state): State<AppState>, uri: Uri) -> Response {
     serve_static_or_spa(&state.web_asset_dir, &uri).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::sync::Notify;
+
+    #[tokio::test]
+    async fn wipe_waits_for_pending_manual_and_batch_analysis_then_erases_every_commit() {
+        for manual in [true, false] {
+            let started = Arc::new(Notify::new());
+            let release = Arc::new(Notify::new());
+            let app = Router::new().route(
+                "/responses",
+                post({
+                    let started = started.clone();
+                    let release = release.clone();
+                    move || {
+                        let started = started.clone();
+                        let release = release.clone();
+                        async move {
+                            started.notify_one();
+                            release.notified().await;
+                            Json(json!({ "output": [{
+                                "type": "message",
+                                "content": [{
+                                    "type": "output_text",
+                                    "text": "{\"slopScore\":8,\"reasoning\":\"Synthetic\",\"coachingTip\":\"Synthetic\"}"
+                                }]
+                            }] }))
+                        }
+                    }
+                }),
+            );
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let fake_luna = tokio::spawn(async move {
+                axum::serve(listener, app).await.unwrap();
+            });
+            let workiq = Arc::new(WorkIqClient::new(
+                Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml")),
+                None,
+            ));
+            let luna = Arc::new(LunaClient::new(
+                format!("http://{address}/responses"),
+                "synthetic".into(),
+                true,
+            ));
+            luna.set_session_token(Some("synthetic-token".into()));
+            let ledger = Arc::new(AwarenessLedger::new());
+            let bus = Arc::new(AnimationEventBus::new());
+            let daemon = Arc::new(ScannerDaemon::new(
+                workiq.clone(),
+                luna.clone(),
+                ledger.clone(),
+                bus.clone(),
+            ));
+            let state = AppState {
+                gmail: Arc::new(
+                    GmailScanner::new(
+                        &crate::config::AppConfig::default(),
+                        "http://127.0.0.1:8090/api/v1/auth/google/callback".into(),
+                        ledger.clone(),
+                        bus.clone(),
+                    )
+                    .unwrap(),
+                ),
+                daemon: daemon.clone(),
+                workiq,
+                luna: luna.clone(),
+                ledger: ledger.clone(),
+                bus: bus.clone(),
+                web_asset_dir: PathBuf::from("nonexistent-synthetic-web"),
+                sim_counter: Arc::new(AtomicU64::new(1)),
+            };
+            let analyzing = daemon.clone();
+            let analysis = tokio::spawn(async move {
+                let sample = build_preset_sample("human_sparkle", 1);
+                if manual {
+                    analyzing
+                        .analyze_and_dispatch(&sample, true, true, true)
+                        .await;
+                } else {
+                    analyzing.ingest_samples(vec![sample], true).await.unwrap();
+                }
+            });
+            tokio::time::timeout(Duration::from_secs(2), started.notified())
+                .await
+                .expect("synthetic Luna request started");
+            let wiping = tokio::spawn(async move { wipe_communication_data(&state).await });
+            tokio::time::timeout(Duration::from_secs(2), async {
+                while ledger.communication_gate().try_read().is_ok() {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("wipe queued behind active analysis");
+            assert!(!wiping.is_finished());
+            release.notify_one();
+            analysis.await.unwrap();
+            let wipe = wiping.await.unwrap().unwrap();
+            assert_eq!(wipe.cleared_reports, 1);
+            assert_eq!(wipe.cleared_events, 1);
+            assert_eq!(wipe.cleared_deduplication_keys, usize::from(!manual));
+            assert_eq!(ledger.scorecard().reset_generation, 1);
+            assert!(ledger.scorecard().recent_reports.is_empty());
+            assert!(daemon.refresh_progress(None).unwrap().is_none());
+            assert!(bus.recent_events().is_empty());
+            assert_eq!(bus.events_after(0).len(), 1);
+            assert!(bus.events_after(0)[0].data_wiped);
+            luna.set_enabled(false);
+            let batch = daemon
+                .ingest_samples(vec![build_preset_sample("human_sparkle", 1)], false)
+                .await
+                .unwrap();
+            assert_eq!(batch.new_messages_analyzed, 1);
+            assert_eq!(ledger.scorecard().recent_reports.len(), 1);
+            assert_eq!(ledger.scorecard().reset_generation, 1);
+            assert_eq!(bus.recent_events()[0].reset_generation, 1);
+            fake_luna.abort();
+        }
+    }
 }

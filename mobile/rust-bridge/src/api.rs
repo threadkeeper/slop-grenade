@@ -1,9 +1,8 @@
 //! Transport-independent native request routing.
 //!
-//! Disconnect clears only queued account events. Historical ledger statistics,
-//! reports, and seen IDs remain until the normal process/session clear, so other
-//! accounts are unaffected and reconnect cannot count the same mail twice.
-//! The shell separately removes credentials, checkpoints, and scheduled work.
+//! Disconnect wipes all communication reports, aggregates, seen IDs, and retained
+//! events, and publishes a durable overlay reset notification. The shell separately
+//! removes the selected connection and resets surviving accounts' checkpoints.
 //! Raw Gmail metadata is transient scoring input; report metadata is redacted
 //! here afterward, before responses, ledger storage, or event publication.
 
@@ -164,18 +163,29 @@ impl NativeCore {
         if !valid_account(&payload.account_id) {
             return Err((400, "Invalid account ID"));
         }
-        // Disconnect is not historical deletion. In particular, never rebuild
-        // all-time counters from the bounded recent feed or erase dedup IDs.
-        let queued_before = self.bus.recent_events().len();
-        self.bus.remove_account(&payload.account_id);
-        let cleared_events = queued_before - self.bus.recent_events().len();
+        let removed_ids = self.seen_ids.len();
+        self.seen_ids.clear();
+        let removed_reports = self
+            .ledger
+            .clear()
+            .map_err(|_| (500, "Communication data wipe failed"))?;
+        let cleared_events = self
+            .bus
+            .clear()
+            .map_err(|_| (500, "Communication data wipe failed"))?;
+        let placeholder = SlopDetector::new().analyze(&build_preset_sample("human_sparkle", 0));
+        let reset = self
+            .bus
+            .publish_data_wipe_buffered(sanitize_report(placeholder));
         Ok(json!({
             "ok":true,
-            "historyRetained":true,
+            "signedOut":true,
+            "dataWiped":true,
+            "resetGeneration":reset.reset_generation,
+            "message":"Signed out of Gmail. All communication data wiped.",
             "clearedEvents":cleared_events,
-            "removedIds":0,
-            "removedReports":0,
-            "totalsRecomputedFromRetained":false
+            "removedIds":removed_ids,
+            "removedReports":removed_reports
         }))
     }
 
@@ -473,7 +483,7 @@ mod tests {
     }
 
     #[test]
-    fn disconnect_only_clears_exact_account_events_and_retains_history_and_dedup() {
+    fn disconnect_wipes_all_communication_data_and_allows_reingestion() {
         let mut core = NativeCore::new();
         call(
             &mut core,
@@ -492,20 +502,18 @@ mod tests {
             json!({"accountId":"a"}),
         );
         assert_eq!(removed["status"], 200);
-        assert_eq!(removed["body"]["removedIds"], 0);
-        assert_eq!(removed["body"]["removedReports"], 0);
-        assert_eq!(removed["body"]["totalsRecomputedFromRetained"], false);
-        assert_eq!(removed["body"]["historyRetained"], true);
-        assert_eq!(removed["body"]["clearedEvents"], 1);
+        assert_eq!(removed["body"]["dataWiped"], true);
+        assert_eq!(removed["body"]["resetGeneration"], 1);
+        assert_eq!(removed["body"]["removedIds"], 3);
+        assert_eq!(removed["body"]["removedReports"], 3);
+        assert_eq!(removed["body"]["clearedEvents"], 3);
         let ledger = call(&mut core, "GET", "/api/v1/ledger", Value::Null);
-        assert_eq!(ledger, before);
+        assert_ne!(ledger, before);
+        assert_eq!(ledger["body"]["receivedByMe"]["totalMessages"], 0);
+        assert_eq!(ledger["body"]["resetGeneration"], 1);
         let events = call(&mut core, "GET", "/api/v1/events", Value::Null);
-        assert_eq!(events["body"].as_array().unwrap().len(), 2);
-        assert!(events["body"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|event| event["report"]["messageId"] != "a:1"));
+        assert_eq!(events["body"].as_array().unwrap().len(), 1);
+        assert_eq!(events["body"][0]["dataWiped"], true);
         let restored = call(
             &mut core,
             "POST",
@@ -514,10 +522,11 @@ mod tests {
                 "samples":[sample("a:1","human_sparkle"),sample("b:1","slop_grenade")],"quiet":true
             }),
         );
-        assert_eq!(restored["body"]["batch"]["newMessagesAnalyzed"], 0);
+        assert_eq!(restored["body"]["batch"]["newMessagesAnalyzed"], 2);
         assert_eq!(
-            call(&mut core, "GET", "/api/v1/ledger", Value::Null),
-            before
+            call(&mut core, "GET", "/api/v1/ledger", Value::Null)["body"]["receivedByMe"]
+                ["totalMessages"],
+            2
         );
         assert_eq!(
             call(
@@ -526,12 +535,12 @@ mod tests {
                 "/internal/disconnect",
                 json!({"accountId":"missing"})
             )["body"]["removedReports"],
-            0
+            2
         );
     }
 
     #[test]
-    fn disconnect_preserves_all_time_totals_and_streaks_beyond_retained_history() {
+    fn disconnect_wipes_all_time_totals_and_streaks_beyond_retained_history() {
         let mut core = NativeCore::new();
         let history: Vec<Value> = (0..400)
             .map(|n| {
@@ -564,10 +573,11 @@ mod tests {
             "/internal/disconnect",
             json!({"accountId":"a"}),
         );
-        assert_eq!(disconnected["body"]["clearedEvents"], 1);
+        assert_eq!(disconnected["body"]["clearedEvents"], 2);
         assert_eq!(
-            call(&mut core, "GET", "/api/v1/ledger", Value::Null),
-            before
+            call(&mut core, "GET", "/api/v1/ledger", Value::Null)["body"]["receivedByMe"]
+                ["totalMessages"],
+            0
         );
         let replay = call(
             &mut core,
@@ -578,24 +588,27 @@ mod tests {
                 "quiet":false
             }),
         );
-        assert_eq!(replay["body"]["batch"]["newMessagesAnalyzed"], 0);
+        assert_eq!(replay["body"]["batch"]["newMessagesAnalyzed"], 2);
         assert_eq!(
-            call(&mut core, "GET", "/api/v1/ledger", Value::Null),
-            before
+            call(&mut core, "GET", "/api/v1/ledger", Value::Null)["body"]["receivedByMe"]
+                ["totalMessages"],
+            2
         );
         let remaining = call(&mut core, "GET", "/api/v1/events", Value::Null);
-        assert_eq!(remaining["body"].as_array().unwrap().len(), 1);
-        assert_eq!(remaining["body"][0]["report"]["messageId"], "ab:1");
+        assert_eq!(remaining["body"].as_array().unwrap().len(), 3);
+        assert_eq!(remaining["body"][0]["dataWiped"], true);
         let repeated = call(
             &mut core,
             "POST",
             "/internal/disconnect",
             json!({"accountId":"a"}),
         );
-        assert_eq!(repeated["body"]["clearedEvents"], 0);
+        assert_eq!(repeated["body"]["clearedEvents"], 2);
+        assert_eq!(repeated["body"]["resetGeneration"], 2);
         assert_eq!(
-            call(&mut core, "GET", "/api/v1/ledger", Value::Null),
-            before
+            call(&mut core, "GET", "/api/v1/ledger", Value::Null)["body"]["receivedByMe"]
+                ["totalMessages"],
+            0
         );
     }
 

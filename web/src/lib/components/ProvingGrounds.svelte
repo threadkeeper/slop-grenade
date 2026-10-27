@@ -9,21 +9,25 @@
 
   let {
     sfx = null,
-    cue = null
+    cue = null,
+    resetEpoch = 0
   }: {
     sfx?: SfxSink | null;
     /** Latest live event to replay on the stage. */
     cue?: StageCue | null;
+    resetEpoch?: number;
   } = $props();
 
   let canvas: HTMLCanvasElement | undefined = $state();
   let stage: Stage | null = null;
   let side = $state<Side>('left');
   let lastSeq = -1;
+  let lastResetEpoch = 0;
 
   onMount(() => {
     // don't replay whatever arrived before the range was opened
     lastSeq = cue?.seq ?? -1;
+    lastResetEpoch = resetEpoch;
     if (!canvas) return;
     stage = runStage(canvas, { flyDelay: 20, sfx });
     const ro = new ResizeObserver(() => stage?.resize());
@@ -41,7 +45,12 @@
   });
 
   $effect(() => {
+    const epoch = resetEpoch;
     const c = cue;
+    if (stage && epoch !== lastResetEpoch) {
+      lastResetEpoch = epoch;
+      stage.reset();
+    }
     if (!c || !stage || c.seq === lastSeq) return;
     lastSeq = c.seq;
     if (c.squeegee) stage.world.squeegee(c.side);
@@ -69,7 +78,7 @@
       [4300, 'slop_grenade', 'right'],
       [5200, 'innocent_fruit', 'left']
     ];
-    for (const [ms, tier, s] of plan) setTimeout(() => stage?.world.trigger(tier, s), ms);
+    for (const [ms, tier, s] of plan) w.triggerLater(ms / 1000, tier, s);
   }
 </script>
 

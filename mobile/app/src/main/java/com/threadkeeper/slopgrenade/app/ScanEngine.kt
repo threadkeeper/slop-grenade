@@ -10,9 +10,8 @@ import java.time.Instant
 
 /**
  * Serializes scan/ingest/checkpoint/disconnect transactions in this process.
- * Disconnect waits for an in-flight transaction, clears queued account effects, then removes
- * only the connection/checkpoint. Native historical statistics and seen IDs remain for this
- * process session; reconnecting quietly rehydrates without double-counting the same messages.
+ * Disconnect waits for an in-flight transaction, wipes native communication data, and resets
+ * every surviving checkpoint so subsequent scans rebuild recent history quietly.
  */
 class ScanEngine(
     private val accounts: AccountRepository,
@@ -126,10 +125,14 @@ class ScanEngine(
 
     @Synchronized fun disconnect(id: String): JSONObject {
         val result = core.checked("POST", "/internal/disconnect", JSONObject().put("accountId", id)) as JSONObject
-        check(result.getBoolean("ok") && result.getBoolean("historyRetained")) {
-            "Native disconnect retention contract unavailable"
+        check(result.getBoolean("ok") && result.getBoolean("dataWiped")) {
+            "Native disconnect wipe contract unavailable"
         }
         accounts.remove(id)
+        accounts.all().forEach { account ->
+            accounts.put(account.copy(checkpoint = null, session = null, lastSuccessfulScan = null))
+        }
+        status = "All communication data wiped; connected accounts will refresh quietly"
         return result
     }
 }

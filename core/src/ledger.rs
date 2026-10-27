@@ -67,6 +67,9 @@ pub struct DirectionalStats {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AwarenessScorecard {
+    /// Monotonic communication reset epoch, retained even when all reports are erased.
+    #[serde(default)]
+    pub reset_generation: u64,
     /// Metrics for communications authored/sent by the user ("My Outgoing Footprint").
     pub sent_by_me: DirectionalStats,
     /// Metrics for communications received from colleagues ("Incoming Workplace Weather").
@@ -87,6 +90,7 @@ pub struct AwarenessScorecard {
 
 #[derive(Default)]
 struct LedgerInner {
+    reset_generation: u64,
     active_day_key: String,
     daily_sent_sum: u64,
     daily_received_sum: u64,
@@ -103,6 +107,7 @@ struct LedgerInner {
 #[derive(Default)]
 pub struct AwarenessLedger {
     inner: Mutex<LedgerInner>,
+    communication_gate: tokio::sync::RwLock<()>,
 }
 
 impl AwarenessLedger {
@@ -111,13 +116,53 @@ impl AwarenessLedger {
         Self::default()
     }
 
+    /// Shared transaction barrier for asynchronous communication producers.
+    ///
+    /// Producers hold a read guard from before fetching/analyzing through all report,
+    /// event, deduplication and checkpoint writes. A wipe holds the write guard across
+    /// clearing every producer and publishing its reset marker. Always acquire this
+    /// gate before scanner/account locks, and never acquire a nested read guard.
+    pub fn communication_gate(&self) -> &tokio::sync::RwLock<()> {
+        &self.communication_gate
+    }
+
     /// Record a completed [`SlopReport`] and update directional counters.
     pub fn record(&self, report: SlopReport) {
         let Ok(mut guard) = self.inner.lock() else {
             return;
         };
+        Self::record_report(&mut guard, report);
+    }
 
-        let inner = &mut *guard;
+    /// Atomically accept a complete sanitized batch, failing before mutation if unavailable.
+    ///
+    /// Synchronizers may commit checkpoints only after this method succeeds.
+    pub fn try_record_batch(&self, reports: Vec<SlopReport>) -> Result<(), String> {
+        let mut guard = self
+            .inner
+            .lock()
+            .map_err(|_| "Ledger ingestion is unavailable.".to_string())?;
+        for report in reports {
+            Self::record_report(&mut guard, report);
+        }
+        Ok(())
+    }
+
+    /// Erase every communication-derived report and aggregate, returning the report count removed.
+    pub fn clear(&self) -> Result<usize, String> {
+        let mut guard = self
+            .inner
+            .lock()
+            .map_err(|_| "Ledger wipe is unavailable.".to_string())?;
+        let removed = guard.recent.len();
+        *guard = LedgerInner {
+            reset_generation: guard.reset_generation.saturating_add(1),
+            ..LedgerInner::default()
+        };
+        Ok(removed)
+    }
+
+    fn record_report(inner: &mut LedgerInner, report: SlopReport) {
         let report_day = extract_day_key(&report.timestamp);
         if !report_day.is_empty()
             && inner.active_day_key != report_day
@@ -130,22 +175,19 @@ impl AwarenessLedger {
             inner.daily_received_sum = 0;
         }
 
-        // Update all-time directional stats
         let (stats, sum) = match report.direction {
             MessageDirection::Sent => (&mut inner.sent, &mut inner.sent_sum),
             MessageDirection::Received => (&mut inner.received, &mut inner.received_sum),
         };
         apply_report_to_stats(stats, sum, &report);
-
-        // Update today's midnight-resetting stats if this report belongs to the active day
         if report_day == inner.active_day_key {
-            let (d_stats, d_sum) = match report.direction {
+            let (stats, sum) = match report.direction {
                 MessageDirection::Sent => (&mut inner.daily_sent, &mut inner.daily_sent_sum),
                 MessageDirection::Received => {
                     (&mut inner.daily_received, &mut inner.daily_received_sum)
                 }
             };
-            apply_report_to_stats(d_stats, d_sum, &report);
+            apply_report_to_stats(stats, sum, &report);
         }
 
         inner.recent.push_front(report);
@@ -154,7 +196,6 @@ impl AwarenessLedger {
             .to_string();
         let mut older_count = 0;
         inner.recent.retain(|report| {
-            // Keep the full UTC day covering the rolling refresh boundary.
             if report
                 .timestamp
                 .get(..10)
@@ -183,6 +224,7 @@ impl AwarenessLedger {
     pub fn scorecard(&self) -> AwarenessScorecard {
         let Ok(guard) = self.inner.lock() else {
             return AwarenessScorecard {
+                reset_generation: 0,
                 sent_by_me: DirectionalStats::default(),
                 received_by_me: DirectionalStats::default(),
                 daily_sent: DirectionalStats::default(),
@@ -201,6 +243,7 @@ impl AwarenessLedger {
         let (top_sloppers, top_p_doomers) = compute_leaderboards(&recent_vec);
         let verdict = build_verdict(&guard.sent, &guard.received);
         AwarenessScorecard {
+            reset_generation: guard.reset_generation,
             sent_by_me: guard.sent.clone(),
             received_by_me: guard.received.clone(),
             daily_sent: guard.daily_sent.clone(),
@@ -582,6 +625,45 @@ mod tests {
     use super::*;
 
     #[test]
+    fn transactional_batch_matches_individual_recording() {
+        let batch = AwarenessLedger::new();
+        let single = AwarenessLedger::new();
+        let reports: Vec<_> = baseline_seed_samples()
+            .iter()
+            .map(|sample| SlopDetector::new().analyze(sample))
+            .collect();
+        batch.try_record_batch(reports.clone()).unwrap();
+        for report in reports {
+            single.record(report);
+        }
+        assert_eq!(batch.scorecard(), single.scorecard());
+        batch.try_record_batch(Vec::new()).unwrap();
+        assert_eq!(batch.scorecard(), single.scorecard());
+    }
+
+    #[test]
+    fn transactional_batch_rejects_unavailable_ledger_before_mutation() {
+        let ledger = AwarenessLedger::new();
+        let _ = std::panic::catch_unwind(|| {
+            let _guard = ledger.inner.lock().unwrap();
+            panic!("synthetic ledger lock failure");
+        });
+        let sample = &baseline_seed_samples()[0];
+        let error = ledger
+            .try_record_batch(vec![SlopDetector::new().analyze(sample)])
+            .unwrap_err();
+        assert_eq!(error, "Ledger ingestion is unavailable.");
+        let inner = ledger
+            .inner
+            .lock()
+            .err()
+            .expect("poisoned ledger")
+            .into_inner();
+        assert!(inner.recent.is_empty());
+        assert_eq!(inner.sent.total_messages + inner.received.total_messages, 0);
+    }
+
+    #[test]
     fn scorecard_preserves_camel_case_schema_and_report_roundtrip() {
         let ledger = AwarenessLedger::new();
         let mut sample = crate::presets::build_preset_sample("my_outgoing_grenade", 1);
@@ -826,4 +908,27 @@ mod tests {
             .iter()
             .all(|slopper| slopper.name != hero.name)));
     }
+}
+#[test]
+fn clear_erases_reports_aggregates_and_leaderboards() {
+    let ledger = AwarenessLedger::new();
+    let detector = SlopDetector::new();
+    assert_eq!(ledger.scorecard().reset_generation, 0);
+    ledger.record(detector.analyze(&crate::presets::build_preset_sample("slop_grenade", 1)));
+
+    assert_eq!(ledger.clear(), Ok(1));
+    let scorecard = ledger.scorecard();
+    assert_eq!(scorecard.reset_generation, 1);
+    assert_eq!(scorecard.sent_by_me, DirectionalStats::default());
+    assert_eq!(scorecard.received_by_me, DirectionalStats::default());
+    assert_eq!(scorecard.daily_sent, DirectionalStats::default());
+    assert_eq!(scorecard.daily_received, DirectionalStats::default());
+    assert!(scorecard.recent_reports.is_empty());
+    assert!(scorecard.top_sloppers.is_empty());
+    assert!(scorecard.top_p_doomers.is_empty());
+    ledger.record(detector.analyze(&crate::presets::build_preset_sample("human_sparkle", 2)));
+    assert_eq!(ledger.scorecard().reset_generation, 1);
+    assert_eq!(ledger.clear(), Ok(1));
+    assert_eq!(ledger.clear(), Ok(0));
+    assert_eq!(ledger.scorecard().reset_generation, 3);
 }

@@ -12,7 +12,7 @@ let host: EventTarget;
 let documentHost: EventTarget & { visibilityState: string };
 function setup(fetcher: typeof fetch) {
   let state: MailboxState;
-  const controller = createMailbox((value) => { state = value; }, fetcher);
+  const controller = createMailbox((value) => { state = value; }, fetcher, undefined, true);
   controllers.push(controller);
   return { controller, state: () => state! };
 }
@@ -31,11 +31,53 @@ afterEach(() => {
 });
 
 describe('native mailbox controller', () => {
+  it.each([
+    ['google_auth_user_cancelled', 'Google authorization was cancelled.'],
+    ['google_auth_configuration', 'Google authorization configuration error. Check the Android OAuth package name and signing certificate.'],
+    ['google_auth_transient', 'Google authorization is temporarily unavailable. Check your network and Google Play Services, then retry.'],
+    ['google_auth_workspace_policy_denied', 'Google Workspace policy blocks authorization. Contact your administrator.'],
+    ['google_auth_consent_denied', 'Google did not grant Gmail read-only access. Check consent-screen and test-user access, then retry.'],
+    ['google_auth_unknown', 'Google authorization failed without a specific reason. Check Android OAuth configuration, account access, and Google Play Services.']
+  ])('surfaces only the local safe message for native auth code %s', async (code, message) => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      json({ code, error: 'synthetic@example.invalid synthetic-token raw Google response' }, 409));
+    const { controller, state } = setup(fetcher);
+    await controller.add();
+    expect(state().error).toBe(message);
+    expect(state().busy).toBe(false);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(state().accounts).toEqual([]);
+  });
+
+  it.each(['google_auth_not_registered', 'admin_policy_enforced', '__proto__', 'constructor', null, 10])(
+    'does not infer a category or expose provider text for untrusted code %j', async (code) => {
+      const { controller, state } = setup(vi.fn<typeof fetch>().mockResolvedValue(
+        json({ code, error: 'synthetic@example.invalid synthetic-token access_denied' }, 403)));
+      await controller.reconnect('synthetic-id');
+      expect(state().error).toBe('Mailbox operation failed (HTTP 403).');
+    }
+  );
+
+  it('sanitizes malformed native error JSON and rejected transport exceptions', async () => {
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response('synthetic-token not JSON', { status: 503 }))
+      .mockRejectedValueOnce(new Error('synthetic@example.invalid synthetic-token'));
+    const { controller, state } = setup(fetcher);
+    await controller.add();
+    expect(state().error).toBe('Mailbox operation failed (HTTP 503).');
+    await controller.add();
+    expect(state().error).toBe('Mailbox operation failed.');
+  });
+
   it('notifies the dashboard after successful add, reconnect and disconnect, not on failure', async () => {
     const changed = vi.fn();
-    const fetcher = vi.fn<typeof fetch>().mockImplementation(async (path) =>
-      path === '/api/v1/accounts' ? json(status) : json({ ok: true }));
-    const controller = createMailbox(vi.fn(), fetcher, changed);
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async (path, init) =>
+      path === '/api/v1/accounts'
+        ? json(status)
+        : json(init?.method === 'DELETE'
+          ? { ok: true, dataWiped: true, message: 'Signed out of Gmail. All communication data wiped.' }
+          : { ok: true }));
+    const controller = createMailbox(vi.fn(), fetcher, changed, true);
     controllers.push(controller);
     await controller.add();
     await controller.reconnect('local-account');
@@ -162,7 +204,7 @@ describe('native mailbox controller', () => {
     let finish: (response: Response) => void = () => {};
     const fetcher = vi.fn<typeof fetch>().mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
     const update = vi.fn();
-    const controller = createMailbox(update, fetcher);
+    const controller = createMailbox(update, fetcher, undefined, true);
     controllers.push(controller);
     const pending = controller.refresh();
     const count = update.mock.calls.length;

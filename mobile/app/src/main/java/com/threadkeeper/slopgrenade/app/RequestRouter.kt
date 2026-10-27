@@ -46,7 +46,7 @@ class RequestRouter(private val activity: MainActivity, private val runtime: Mob
                 response(200, JSONObject().put("ok", true).put("account", accountJson(account)))
             }, runtime.io).handle { value, failure ->
                 runtime.consentActive.set(false)
-                value ?: error(if (failure != null) 409 else 503, "Google authorization unavailable or cancelled")
+                value ?: AuthorizationErrorResponse.from(failure)
             }
         }
         if (method == "POST" && path == "/api/v1/overlay/permission") {

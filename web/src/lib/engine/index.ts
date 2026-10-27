@@ -21,6 +21,7 @@ export interface Stage {
   world: World;
   /** Re-create the world for a new canvas size (keeps nothing). */
   resize(): void;
+  reset(): void;
   stop(): void;
 }
 
@@ -45,6 +46,11 @@ export function runStage(canvas: HTMLCanvasElement, opts: WorldOptions = {}, max
   canvas.height = h;
   const stage: Stage = {
     world: new World(w, h, opts),
+    reset() {
+      stage.world.reset();
+      ctx.clearRect(0, 0, w, h);
+      wasIdle = false;
+    },
     resize() {
       const [nw, nh] = size();
       // small layout shifts just stretch the canvas; only a real size change

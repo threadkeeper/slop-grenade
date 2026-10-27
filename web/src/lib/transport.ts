@@ -202,6 +202,9 @@ export async function requestApi(input: RequestInfo | URL, init: RequestInit = {
 
 function animation(value: unknown): value is AnimationEvent {
   if (!record(value) || !Number.isSafeInteger(value.sequence) || (value.sequence as number) < 1) return false;
+  if (value.resetGeneration !== undefined &&
+      (!Number.isSafeInteger(value.resetGeneration) || (value.resetGeneration as number) < 0)) return false;
+  if (value.dataWiped === true) return true;
   if (value.squeegeeSide === 'left' || value.squeegeeSide === 'right') return true;
   return record(value.report) && ['left', 'right'].includes(value.report.monitorSide as string) &&
     ['human_sparkle', 'peaceful_cloud', 'innocent_fruit', 'slop_splat', 'slop_grenade']

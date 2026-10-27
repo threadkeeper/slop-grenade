@@ -40,6 +40,16 @@ namespace SlopGrenadeDesktop
 
         public bool IsEmpty { get { return Mass < 0.02f || _gi1 < 0; } }
 
+        public void Clear()
+        {
+            foreach (float[] field in new[] { _u, _v, _u0, _v0, _d, _d0, _c, _c0, _curl, _p, _div })
+                Array.Clear(field, 0, field.Length);
+            Sprite.Clear();
+            Mass = _time = 0f;
+            _gi0 = _gj0 = _px0 = _py0 = Bx0 = By0 = 0;
+            _gi1 = _gj1 = _px1 = _py1 = Bx1 = By1 = -1;
+        }
+
         private int Ix(int i, int j) { return i + (Nx + 2) * j; }
 
         public void Puff(float x, float y, float radius, float amount, float vx, float vy, float soot)

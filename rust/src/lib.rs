@@ -7,6 +7,13 @@
 pub mod auth;
 pub mod config;
 pub mod event_bus;
+pub mod gmail_account;
+pub mod gmail_auth;
+pub mod gmail_client;
+pub mod gmail_error;
+mod gmail_http;
+mod gmail_mime;
+pub mod gmail_scanner;
 pub mod ledger;
 pub mod llm_luna;
 pub mod refresh_phase;

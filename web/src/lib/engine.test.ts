@@ -9,6 +9,12 @@ import { synthAll } from './engine/sfxSynth';
 class RecordingSfx implements SfxSink {
   played: SfxName[] = [];
   loops = new Map<string, SfxName>();
+  stopped = 0;
+  stopAll(): void {
+    this.played.length = 0;
+    this.loops.clear();
+    ++this.stopped;
+  }
   play(name: SfxName): void {
     this.played.push(name);
   }
@@ -42,6 +48,38 @@ function activeFlies(world: World): number {
 }
 
 describe('Slop Grenade effects engine', () => {
+  it('immediately resets airborne and ten queued grenades, sticky residue and sounds without recreating old splats', () => {
+    const sfx = new RecordingSfx();
+    const world = new World(400, 240, { seed: 7, flyDelay: 3, sfx });
+    for (const tier of ['slop_splat', 'innocent_fruit', 'peaceful_cloud', 'human_sparkle', 'slop_grenade'] as const) {
+      world.trigger(tier, 'left');
+      world.update(0.05);
+    }
+    fire(world, 'slop_grenade', 'left', 10);
+    world.triggerLater(10, 'slop_grenade', 'right');
+    world.left.addSplat(90, 1, world.rng, 0, true);
+    world.right.addSplat(120, 1, world.rng, 0, true);
+    world.squeegee('left');
+    expect(world.grenades).toHaveLength(1);
+    expect(world.isIdle()).toBe(false);
+    world.reset();
+    expect(sfx.stopped).toBe(1);
+    expect(sfx.loops.size).toBe(0);
+    expect(world.sfx).toBe(sfx);
+    expect(world.flies.delay).toBe(3);
+    expect(world.slopCounts()).toEqual({ left: 0, right: 0 });
+    expect(world.timeScale).toBe(1);
+    expect(world.smoke.isEmpty()).toBe(true);
+    expect(world.isIdle()).toBe(true);
+    run(world, 20);
+    expect(world.isIdle()).toBe(true);
+    expect(world.slopCounts()).toEqual({ left: 0, right: 0 });
+    expect(sfx.played).toEqual([]);
+    world.trigger('human_sparkle', 'right');
+    world.update(0.05);
+    expect(world.twinkles.length).toBeGreaterThan(0);
+  });
+
   it('lobs a grenade in slow motion and splatters slop on the receiving (left) edge only', () => {
     const sfx = new RecordingSfx();
     const world = new World(1920, 1080, { seed: 7, sfx });

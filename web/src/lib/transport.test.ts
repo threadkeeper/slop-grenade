@@ -32,6 +32,19 @@ afterEach(() => {
 });
 
 describe('local API transport', () => {
+  it.each([
+    ['GET', '/api/v1/gmail/accounts'],
+    ['POST', '/api/v1/gmail/authorize'],
+    ['POST', '/api/v1/gmail/accounts/synthetic-id/reconnect'],
+    ['DELETE', '/api/v1/gmail/accounts/synthetic-id'],
+    ['POST', '/api/v1/gmail/scan'],
+    ['GET', '/api/v1/gmail/events'],
+    ['GET', '/api/v1/auth/google/callback']
+  ])('never exposes desktop Gmail OAuth routes through Android: %s %s', async (method, path) => {
+    await expect(requestApi(path, { method })).rejects.toThrow('Unsupported native API operation');
+    expect(host.SlopAndroid.postMessage).not.toHaveBeenCalled();
+  });
+
   it.each(['/api/v1/overlay/permission', '/api/v1/overlay/stop'])(
     'forwards explicit overlay lifecycle operations without payloads: %s', async (path) => {
       const pending = requestApi(path, { method: 'POST' });
@@ -267,6 +280,22 @@ describe('local API transport', () => {
 });
 
 describe('animation subscriptions', () => {
+  it('accepts report-free wipe markers with optional legacy generations and rejects malformed generations', () => {
+    vi.stubGlobal('window', new EventTarget());
+    let receive = (_event: { data: string }) => {};
+    vi.stubGlobal('EventSource', vi.fn(function () {
+      return { close: vi.fn(), addEventListener(_name: string, callback: typeof receive) { receive = callback; } };
+    }));
+    const listener = vi.fn();
+    const stop = subscribeAnimations(listener);
+    for (const resetGeneration of [undefined, 0, 7, -1, 0.5, '7']) {
+      receive({ data: JSON.stringify({ sequence: 1, dataWiped: true, resetGeneration }) });
+    }
+    expect(listener).toHaveBeenCalledTimes(3);
+    expect(listener.mock.lastCall?.[0]).toEqual({ sequence: 1, dataWiped: true, resetGeneration: 7 });
+    stop();
+  });
+
   it('retains desktop EventSource and closes it on cleanup', () => {
     vi.stubGlobal('window', new EventTarget());
     let receive: (event: { data: string }) => void = () => {};

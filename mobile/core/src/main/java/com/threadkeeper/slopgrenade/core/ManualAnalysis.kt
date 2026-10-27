@@ -41,7 +41,7 @@ class ManualAnalysis(private val core: CoreApi, private val luna: LunaClient = L
         return response(200, status())
     }
 
-    private fun analyze(input: JSONObject): JSONObject {
+    private fun analyze(input: JSONObject): JSONObject = core.communicationTransaction {
         for (key in listOf("useLuna", "recordInLedger", "triggerAnimation"))
             if (input.has(key)) require(input.opt(key) is Boolean)
         require(input.opt("body") is String && input.getString("body").isNotBlank())
@@ -56,7 +56,7 @@ class ManualAnalysis(private val core: CoreApi, private val luna: LunaClient = L
             body.put("lunaJudgment", luna.evaluate(current.token, body))
         }
         // Preserve recordInLedger/triggerAnimation and return the core's exact {report,event} envelope.
-        return core.request("POST", "/api/v1/analyze", body)
+        core.request("POST", "/api/v1/analyze", body)
     }
 
     private fun status(): JSONObject {

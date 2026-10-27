@@ -53,6 +53,7 @@ export interface SfxSink {
   play(name: SfxName, pan: number, gain: number, rate?: number): void;
   /** Start/update (name != null) or stop (name == null) a looping voice. */
   loop(id: string, name: SfxName | null, pan: number, gain: number, rate?: number): void;
+  stopAll?(): void;
 }
 
 export interface WorldOptions {
@@ -123,6 +124,8 @@ export class World {
   private shake = 0;
   private slowmoOn = false;
   private queue: Queued[] = [];
+  private scheduled: (Queued & { at: number })[] = [];
+  private clockReal = 0;
   private sinceGrenade = 99;
   private sinceFruit = 99;
   private readonly toon: ToonRenderer;
@@ -163,6 +166,10 @@ export class World {
     this.queue.push({ tier, side });
   }
 
+  triggerLater(delay: number, tier: EffectTier, side: Side): void {
+    this.scheduled.push({ at: this.clockReal + Math.max(0, delay), tier, side });
+  }
+
   /** Wipe one edge clean with the squeegee. */
   squeegee(side: Side): void {
     const L = this.layer(side);
@@ -172,10 +179,32 @@ export class World {
 
   /** Stop any looping sounds (fuse hiss, fly buzz) before this world is dropped. */
   dispose(): void {
+    this.reset();
+  }
+
+  /** Forget all communication-derived state without changing the stage's preferences. */
+  reset(): void {
+    this.sfx?.stopAll?.();
     for (const side of ['left', 'right'] as const) {
       this.sfx?.loop('fuse-' + side, null, 0, 0);
       this.sfx?.loop('buzz-' + side, null, 0, 0);
     }
+    this.queue.length = this.scheduled.length = this.emitters.length = 0;
+    this.grenades.length = this.explosions.length = this.particles.items.length = 0;
+    this.fruits.length = this.cannon.length = this.twinkles.length = this.squeegees.length = 0;
+    this.flies.clear();
+    this.smoke.clear();
+    this.left.clear();
+    this.right.clear();
+    this.left.flush();
+    this.right.flush();
+    this.stripCanvas.clear();
+    this.smokeCanvas = null;
+    this.smokeFrame = 0;
+    this.now = this.clockReal = this.hitStop = this.shake = 0;
+    this.timeScale = 1;
+    this.slowmoOn = false;
+    this.sinceGrenade = this.sinceFruit = 99;
   }
 
   /** Persistent pieces stuck to each edge (splats + stuck fruit). */
@@ -195,6 +224,8 @@ export class World {
   isIdle(): boolean {
     return (
       this.queue.length === 0 &&
+      this.scheduled.length === 0 &&
+      this.emitters.length === 0 &&
       this.grenades.length === 0 &&
       this.explosions.length === 0 &&
       this.particles.items.length === 0 &&
@@ -373,6 +404,13 @@ export class World {
   /** Advance everything by `dtReal` wall-clock seconds. */
   update(dtReal: number): void {
     const dtR = Math.max(0, Math.min(0.05, dtReal));
+    this.clockReal += dtR;
+    for (let i = this.scheduled.length - 1; i >= 0; --i) {
+      const effect = this.scheduled[i];
+      if (effect.at > this.clockReal) continue;
+      this.scheduled.splice(i, 1);
+      this.trigger(effect.tier, effect.side);
+    }
     // ---- bullet time
     let target = 1;
     for (const g of this.grenades) {

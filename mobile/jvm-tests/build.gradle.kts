@@ -7,6 +7,7 @@ kotlin {
             kotlin.include("**/AccountState.kt", "**/AccountRepository.kt", "**/CoreApi.kt",
                 "**/NativeCore.kt", "**/ScanEngine.kt", "**/BridgePolicy.kt",
                 "**/LunaClient.kt", "**/ManualAnalysis.kt", "**/AuthorizationRequired.kt",
+                "**/GoogleAuthorizationError.kt", "**/GoogleAuthorizationFailure.kt", "**/AuthorizationErrorResponse.kt",
                 "**/ContentSecurityPolicy.kt", "**/OverlaySoundPreferences.kt")
         }
         test {

@@ -16,6 +16,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Drawing;
 using System.Globalization;
@@ -45,7 +46,10 @@ namespace SlopGrenadeDesktop
         private static long _lastSeq;
         private static int _testSeq;
         private static readonly HashSet<string> _seenMessageIds = new HashSet<string>();
-        private static readonly string ApiBase = "http://127.0.0.1:8090";
+        private static readonly object _resetLock = new object();
+        private static long _resetEpoch, _resetGeneration;
+        private static readonly LocalDashboard Dashboard = new LocalDashboard(Environment.GetEnvironmentVariable("HTTP_BIND"));
+        private static readonly string ApiBase = Dashboard.ApiBase;
 
         // time of the last squeegee started from this app, per side, so the
         // daemon's echo of the same wipe is not played twice
@@ -128,6 +132,10 @@ namespace SlopGrenadeDesktop
                 case "squeegee-left": TriggerSqueegee(Side.Left); break;
                 case "squeegee-right": TriggerSqueegee(Side.Right); break;
                 case "dashboard": OpenDashboard(); break;
+                case "gmail-signin": OpenAccountDashboard("gmail-signin"); break;
+                case "gmail-signout": OpenAccountDashboard("gmail-signout"); break;
+                case "m365-signin": OpenAccountDashboard("m365-signin"); break;
+                case "m365-signout": OpenAccountDashboard("m365-signout"); break;
                 case "test": RunDesktopShowcase(); break;
                 case "quit": Quit(); break;
             }
@@ -143,6 +151,30 @@ namespace SlopGrenadeDesktop
         {
             try { Process.Start(ApiBase + "/"); }
             catch (Exception) { }
+        }
+
+        private static void OpenAccountDashboard(string action)
+        {
+            try
+            {
+                Action<string> open = delegate(string url) { Process.Start(url); };
+                switch (action)
+                {
+                    case "gmail-signin": Dashboard.OpenGmailSignIn(open); break;
+                    case "gmail-signout": Dashboard.OpenGmailSignOut(open); break;
+                    case "m365-signin": Dashboard.OpenM365SignIn(open); break;
+                    case "m365-signout": Dashboard.OpenM365SignOut(open); break;
+                    default: return;
+                }
+            }
+            catch (Win32Exception) { ShowAccountDashboardError(); }
+            catch (InvalidOperationException) { ShowAccountDashboardError(); }
+        }
+
+        private static void ShowAccountDashboardError()
+        {
+            MessageBox.Show("Could not open your browser. Open " + ApiBase + "/ in your browser to manage account connections.",
+                "Manage accounts", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
 
         // ------------------------------------------------------------------ daily gauges
@@ -233,6 +265,32 @@ namespace SlopGrenadeDesktop
             ContextMenuStrip menu = new ContextMenuStrip();
             menu.Items.Add("Open control panel", null, delegate { _flyout.ShowAboveTray(); });
             menu.Items.Add("Open dashboard (" + ApiBase + "/)", null, delegate { OpenDashboard(); });
+            menu.Items.Add("Sign in to Microsoft 365", null, delegate { OpenAccountDashboard("m365-signin"); });
+            menu.Items.Add("Sign out of Microsoft 365", null, delegate { OpenAccountDashboard("m365-signout"); });
+            menu.Items.Add("Sign in to Gmail", null, delegate { OpenAccountDashboard("gmail-signin"); });
+            menu.Items.Add("Sign out of Gmail", null, delegate { OpenAccountDashboard("gmail-signout"); });
+            ToolStripMenuItem appleMail = new ToolStripMenuItem("Apple Mail (Coming soon)");
+            appleMail.Enabled = false;
+            menu.Items.Add(appleMail);
+            ToolStripMenuItem yahooMail = new ToolStripMenuItem("Yahoo Mail (Coming soon)");
+            yahooMail.Enabled = false;
+            menu.Items.Add(yahooMail);
+            menu.Items.Add(new ToolStripSeparator());
+            ToolStripMenuItem watchTeams = new ToolStripMenuItem("Watch Microsoft Teams") { Name = "watch-teams", CheckOnClick = true };
+            watchTeams.Click += delegate { _settings.MonitorTeams = watchTeams.Checked; _settings.Save(); };
+            menu.Items.Add(watchTeams);
+            ToolStripMenuItem watchOutlook = new ToolStripMenuItem("Watch Outlook mail") { Name = "watch-outlook", CheckOnClick = true };
+            watchOutlook.Click += delegate { _settings.MonitorOutlook = watchOutlook.Checked; _settings.Save(); };
+            menu.Items.Add(watchOutlook);
+            ToolStripMenuItem watchGmail = new ToolStripMenuItem("Watch Gmail") { Name = "watch-gmail", CheckOnClick = true };
+            watchGmail.Click += delegate { _settings.MonitorGmail = watchGmail.Checked; _settings.Save(); };
+            menu.Items.Add(watchGmail);
+            menu.Opening += delegate
+            {
+                watchTeams.Checked = _settings.MonitorTeams;
+                watchOutlook.Checked = _settings.MonitorOutlook;
+                watchGmail.Checked = _settings.MonitorGmail;
+            };
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add("Lob a test grenade at the left edge", null, delegate { _overlay.Trigger(EffectTier.SlopGrenade, Side.Left, BuildTestEffectMessage(EffectTier.SlopGrenade, Side.Left)); });
             menu.Items.Add("Lob a test grenade at the right edge", null, delegate { _overlay.Trigger(EffectTier.SlopGrenade, Side.Right, BuildTestEffectMessage(EffectTier.SlopGrenade, Side.Right)); });
@@ -351,6 +409,7 @@ namespace SlopGrenadeDesktop
                 psi.WorkingDirectory = Path.GetDirectoryName(Path.GetFullPath(exe));
                 psi.UseShellExecute = false;
                 psi.CreateNoWindow = true;
+                psi.EnvironmentVariables["HTTP_BIND"] = ApiBase.Substring("http://".Length);
                 string webBuild = Path.GetFullPath(Path.Combine(baseDir, @"..\web\build"));
                 if (Directory.Exists(webBuild)) psi.EnvironmentVariables["WEB_ASSET_DIR"] = webBuild;
                 try { _daemonProcess = Process.Start(psi); }
@@ -424,6 +483,7 @@ namespace SlopGrenadeDesktop
                     using (Stream stream = resp.GetResponseStream())
                     using (StreamReader reader = new StreamReader(stream, Encoding.UTF8))
                     {
+                        _lastSeq = 0;
                         while (_running && !reader.EndOfStream)
                         {
                             string line = reader.ReadLine();
@@ -442,14 +502,28 @@ namespace SlopGrenadeDesktop
         {
             while (_running)
             {
+                SyncGmailStatus();
                 Thread.Sleep(5000);
                 if (!_running) break;
                 SyncLedgerReports();
             }
         }
 
+        private static void SyncGmailStatus()
+        {
+            GmailStatus status = Dashboard.ReadGmailStatus();
+            try
+            {
+                if (_running && _flyout != null && !_flyout.IsDisposed)
+                    _flyout.BeginInvoke(new Action(delegate { _flyout.UpdateGmailStatus(status); }));
+            }
+            catch (InvalidOperationException) { }
+        }
+
         private static void SyncLedgerReports()
         {
+            long epoch;
+            lock (_resetLock) epoch = _resetEpoch;
             try
             {
                 HttpWebRequest req = (HttpWebRequest)WebRequest.Create(ApiBase + "/api/v1/ledger");
@@ -459,22 +533,59 @@ namespace SlopGrenadeDesktop
                 using (Stream stream = resp.GetResponseStream())
                 using (StreamReader reader = new StreamReader(stream, Encoding.UTF8))
                 {
-                    EffectMessage[] reports = EffectNotice.ParseLedgerReports(reader.ReadToEnd());
-                    // Dispatch slop grenades and splats before fruits so fruits stick into the goop on the edge.
-                    for (int pass = 0; pass < 2; pass++)
-                    {
-                        for (int i = reports.Length - 1; i >= 0; i--)
-                        {
-                            EffectMessage report = reports[i];
-                            EffectTier tier = report.TierValue();
-                            bool isSplat = tier == EffectTier.SlopGrenade || tier == EffectTier.SlopSplat;
-                            if ((pass == 0) != isSplat) continue;
-                            DispatchMessageReport(report, false);
-                        }
-                    }
+                    QueueLedgerSnapshot(EffectNotice.ParseLedger(reader.ReadToEnd()), epoch);
                 }
             }
             catch (Exception) { }
+        }
+
+        private static void QueueLedgerSnapshot(LedgerSnapshot snapshot, long epoch)
+        {
+            lock (_resetLock)
+            {
+                if (epoch != _resetEpoch || snapshot.ResetGeneration < _resetGeneration) return;
+                bool reset = snapshot.ResetGeneration > _resetGeneration;
+                if (reset)
+                {
+                    _resetGeneration = snapshot.ResetGeneration;
+                    epoch = ++_resetEpoch;
+                }
+                QueueOverlayAction(epoch, delegate
+                {
+                    if (reset) ResetCommunicationState();
+                    // Splats precede fruit so fruit can stick to freshly restored goop.
+                    for (int pass = 0; pass < 2; pass++)
+                        for (int i = snapshot.RecentReports.Length - 1; i >= 0; i--)
+                        {
+                            EffectMessage report = snapshot.RecentReports[i];
+                            EffectTier tier = report.TierValue();
+                            bool isSplat = tier == EffectTier.SlopGrenade || tier == EffectTier.SlopSplat;
+                            if ((pass == 0) == isSplat) DispatchMessageReport(report, false);
+                        }
+                });
+            }
+        }
+
+        private static void QueueOverlayAction(long epoch, Action action)
+        {
+            _overlay.BeginInvoke(new Action(delegate
+            {
+                lock (_resetLock)
+                {
+                    if (epoch != _resetEpoch) return;
+                    action();
+                }
+            }));
+        }
+
+        private static void ResetCommunicationState()
+        {
+            _seenMessageIds.Clear();
+            _activeDay = DateTime.Now.Date;
+            _dailyRecAi = _dailyRecCount = _dailySentAi = _dailySentCount = 0;
+            _localWipeAt[0] = _localWipeAt[1] = DateTime.MinValue;
+            _overlay.Reset();
+            RefreshDailyTrayMetrics();
         }
 
         private static void HandleSsePayload(string json)
@@ -482,20 +593,41 @@ namespace SlopGrenadeDesktop
             try
             {
                 EffectNotice notice = EffectNotice.Parse(json);
-                if (notice.Sequence <= _lastSeq) return;
-                _lastSeq = notice.Sequence;
-                if (notice.SqueegeeSide == "left" || notice.SqueegeeSide == "right")
+                lock (_resetLock)
                 {
-                    Side sSide = notice.SqueegeeSide == "right" ? Side.Right : Side.Left;
-                    _overlay.BeginInvoke(new Action(delegate
+                    if (notice.DataWiped)
                     {
-                        // skip the echo of a wipe this app just started itself
-                        if ((DateTime.UtcNow - _localWipeAt[sSide == Side.Left ? 0 : 1]).TotalMilliseconds < 2500) return;
-                        _overlay.Squeegee(sSide);
-                    }));
-                    return;
+                        if (notice.ResetGeneration.GetValueOrDefault() > 0)
+                        {
+                            if (notice.ResetGeneration.Value <= _resetGeneration) return;
+                            _resetGeneration = notice.ResetGeneration.Value;
+                        }
+                        else if (notice.Sequence <= _lastSeq) return;
+                        _lastSeq = Math.Max(_lastSeq, notice.Sequence);
+                        QueueOverlayAction(++_resetEpoch, ResetCommunicationState);
+                        return;
+                    }
+                    if (notice.Sequence <= _lastSeq) return;
+                    _lastSeq = notice.Sequence;
+                    if (notice.ResetGeneration.HasValue && notice.ResetGeneration.Value < _resetGeneration) return;
+                    bool reset = notice.ResetGeneration.GetValueOrDefault() > _resetGeneration;
+                    if (reset)
+                    {
+                        _resetGeneration = notice.ResetGeneration.Value;
+                        ++_resetEpoch;
+                    }
+                    QueueOverlayAction(_resetEpoch, delegate
+                    {
+                        if (reset) ResetCommunicationState();
+                        if (notice.SqueegeeSide == "left" || notice.SqueegeeSide == "right")
+                        {
+                            Side side = notice.SqueegeeSide == "right" ? Side.Right : Side.Left;
+                            if ((DateTime.UtcNow - _localWipeAt[side == Side.Left ? 0 : 1]).TotalMilliseconds >= 2500)
+                                _overlay.Squeegee(side);
+                        }
+                        else DispatchMessageReport(notice.Report, true);
+                    });
                 }
-                DispatchMessageReport(notice.Report, true);
             }
             catch (FormatException error) { DrawLog.Report("event metadata", error); }
             catch (InvalidOperationException)
@@ -506,10 +638,7 @@ namespace SlopGrenadeDesktop
 
         private static void DispatchMessageReport(EffectMessage message, bool triggerTransient)
         {
-            lock (_seenMessageIds)
-            {
-                if (!_seenMessageIds.Add(message.MessageId)) return;
-            }
+            if (!_seenMessageIds.Add(message.MessageId)) return;
             string appStr = message.App;
             int score = message.SlopScore;
             // Automated mail (no-reply, calendar responses, bots) is not anyone's writing.
@@ -518,17 +647,15 @@ namespace SlopGrenadeDesktop
             Side side = message.MonitorSide == "right" ? Side.Right : Side.Left;
             bool isSticky = tier == EffectTier.SlopGrenade || tier == EffectTier.SlopSplat || tier == EffectTier.InnocentFruit;
 
-            _overlay.BeginInvoke(new Action(delegate
-            {
-                if (!automated) RecordDailyMessageMetric(side, score);
-                if (!triggerTransient && !isSticky) return;
-                if (appStr == "teams" && !_settings.MonitorTeams) return;
-                if (appStr == "outlook" && !_settings.MonitorOutlook) return;
-                bool isSlop = tier == EffectTier.SlopGrenade || tier == EffectTier.SlopSplat;
-                if (isSlop && !_settings.SlopEffects) return;
-                if (!isSlop && !_settings.CalmEffects) return;
-                _overlay.Trigger(tier, side, message);
-            }));
+            if (!automated) RecordDailyMessageMetric(side, score);
+            if (!triggerTransient && !isSticky) return;
+            if (appStr == "teams" && !_settings.MonitorTeams) return;
+            if (appStr == "outlook" && !_settings.MonitorOutlook) return;
+            if (appStr == "gmail" && !_settings.MonitorGmail) return;
+            bool isSlop = tier == EffectTier.SlopGrenade || tier == EffectTier.SlopSplat;
+            if (isSlop && !_settings.SlopEffects) return;
+            if (!isSlop && !_settings.CalmEffects) return;
+            _overlay.Trigger(tier, side, message);
         }
 
         private static string ExtractJsonString(string json, string key)

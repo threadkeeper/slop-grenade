@@ -17,6 +17,8 @@ namespace SlopGrenadeDesktop
         {
             Run("ledger metadata and escaped JSON", Metadata);
             Run("invalid events never echo message data", InvalidEvents);
+            Run("full reset removes ten queued grenades and scheduled metadata", ResetWorld);
+            Run("wipe invalidates stale ledger responses and queued UI applies", ResetDispatch);
             Run("independent effects keep their own message", Attribution);
             Run("goop hit testing ignores transparent gaps and clears with a wipe", Goop);
             Run("grenades and cannon splats retain attribution", Splats);
@@ -26,7 +28,12 @@ namespace SlopGrenadeDesktop
             Run("details never activate or intercept clicks", WindowStyles);
             Run("real overlay hover works without focus or input capture", OverlayIntegration);
             Run("concurrent metadata logging stays bounded and deduplicated", Logging);
-            Console.WriteLine("{0} desktop hover tests passed.", _passed);
+            Run("Gmail opens only the trusted loopback dashboard", GmailDesktopTests.TrustedDashboard);
+            Run("Gmail status projects only sanitized local metadata", GmailDesktopTests.StatusProjection);
+            Run("Gmail status stays loopback and rejects redirects", GmailDesktopTests.StatusTransport);
+            Run("Gmail flyout action and status preserve existing controls", GmailDesktopTests.Flyout);
+            Run("desktop shells never implement Gmail OAuth or token storage", GmailDesktopTests.ShellBoundary);
+            Console.WriteLine("{0} desktop tests passed.", _passed);
         }
 
         private static void Run(string name, Action test)
@@ -66,6 +73,110 @@ namespace SlopGrenadeDesktop
             return EffectNotice.Parse(EventJson(id, tier, side)).Report;
         }
 
+        private sealed class RecordingSfx : ISfxSink
+        {
+            public int Stops, Plays;
+            public void Play(string name, float pan, float gain, float rate) { Plays++; }
+            public void Loop(string id, string name, float pan, float gain, float rate) { }
+            public void StopAll() { Stops++; Plays = 0; }
+        }
+
+        private static void ResetWorld()
+        {
+            using (World world = new World(400, 240, 3f, 7))
+            {
+                RecordingSfx sfx = new RecordingSfx();
+                world.Sfx = sfx;
+                EffectMessage message = Message("forgotten", "slop_grenade", "left");
+                foreach (EffectTier tier in new[] { EffectTier.SlopSplat, EffectTier.InnocentFruit,
+                    EffectTier.PeacefulCloud, EffectTier.HumanSparkle, EffectTier.SlopGrenade })
+                {
+                    world.Trigger(tier, Side.Left, message);
+                    world.Update(0.05f);
+                }
+                for (int i = 0; i < 10; i++) world.Trigger(EffectTier.SlopGrenade, Side.Left, message);
+                world.TriggerLater(10f, EffectTier.SlopGrenade, Side.Right, message);
+                world.Left.AddSplat(90, 1, world.Rng, 0, true, message);
+                world.Right.AddSplat(120, 1, world.Rng, 0, true, message);
+                world.SqueegeeSide(Side.Left);
+                Check(world.Grenades.Count == 1 && world.HasHoverTargets && !world.IsIdle, "The reset fixture must include active and queued private effects.");
+                world.Reset();
+                Check(sfx.Stops == 1 && world.Sfx == sfx && world.Flies.Delay == 3f, "Reset must stop sounds without changing preferences.");
+                Check(world.IsIdle && !world.HasHoverTargets && world.Smoke.IsEmpty && world.TimeScale == 1f,
+                    "Reset must immediately clear active effects and private hover metadata.");
+                int left, right;
+                world.SlopCounts(out left, out right);
+                Check(left == 0 && right == 0, "Both sides must immediately be empty.");
+                for (int i = 0; i < 400; i++) world.Update(0.05f);
+                world.SlopCounts(out left, out right);
+                Check(world.IsIdle && left == 0 && right == 0 && sfx.Plays == 0,
+                    "Pre-wipe queued or scheduled effects must never recreate old splats or sounds.");
+                world.Trigger(EffectTier.HumanSparkle, Side.Right, Message("fresh", "human_sparkle", "right"));
+                world.Update(0.05f);
+                Check(world.Twinkles.Count > 0 && world.HasHoverTargets, "Later scans must still be able to populate the running world.");
+            }
+        }
+
+        private static void ResetDispatch()
+        {
+            const BindingFlags flags = BindingFlags.Static | BindingFlags.NonPublic;
+            Type program = typeof(Program);
+            string[] fields = { "_overlay", "_settings", "_lastSeq", "_resetEpoch", "_resetGeneration",
+                "_dailyRecAi", "_dailyRecCount", "_dailySentAi", "_dailySentCount" };
+            object[] saved = new object[fields.Length];
+            for (int i = 0; i < fields.Length; i++) saved[i] = program.GetField(fields[i], flags).GetValue(null);
+            System.Collections.Generic.HashSet<string> seen = (System.Collections.Generic.HashSet<string>)
+                program.GetField("_seenMessageIds", flags).GetValue(null);
+            MethodInfo queue = program.GetMethod("QueueLedgerSnapshot", flags);
+            MethodInfo receive = program.GetMethod("HandleSsePayload", flags);
+            using (OverlayForm overlay = new OverlayForm(60))
+            {
+                try
+                {
+                    overlay.Show();
+                    program.GetField("_overlay", flags).SetValue(null, overlay);
+                    Settings settings = new Settings();
+                    program.GetField("_settings", flags).SetValue(null, settings);
+                    foreach (string field in new[] { "_lastSeq", "_resetEpoch", "_resetGeneration" })
+                        program.GetField(field, flags).SetValue(null, 0L);
+                    seen.Clear();
+                    EffectMessage stale = Message("stale", "slop_grenade", "left");
+                    // This represents a completed HTTP read whose UI callback has not run yet.
+                    queue.Invoke(null, new object[] { new LedgerSnapshot { RecentReports = new[] { stale } }, 0L });
+                    receive.Invoke(null, new object[] { "{\"sequence\":1,\"dataWiped\":true,\"resetGeneration\":2}" });
+                    // This represents a slower HTTP response issued before the wipe.
+                    queue.Invoke(null, new object[] { new LedgerSnapshot { RecentReports = new[] { stale } }, 0L });
+                    receive.Invoke(null, new object[] { EventJson("stale-event", "slop_grenade", "left")
+                        .Replace("\"sequence\":42", "\"resetGeneration\":1,\"sequence\":2") });
+                    System.Windows.Forms.Application.DoEvents();
+                    Check(seen.Count == 0 && !overlay.World.HasHoverTargets && overlay.World.Squeegees.Count == 0,
+                        "A wipe must invalidate pending UI callbacks and stale responses without spawning squeegees.");
+                    Check((int)program.GetField("_dailyRecCount", flags).GetValue(null) == 0,
+                        "Stale callbacks must not restore tray metrics.");
+                    queue.Invoke(null, new object[] { new LedgerSnapshot { ResetGeneration = 2,
+                        RecentReports = new[] { Message("fresh", "slop_splat", "right") } }, 1L });
+                    System.Windows.Forms.Application.DoEvents();
+                    Check(seen.Contains("fresh") && seen.Count == 1 && overlay.World.HasHoverTargets,
+                        "A post-wipe snapshot must populate only fresh metadata.");
+                    receive.Invoke(null, new object[] { "{\"sequence\":3,\"dataWiped\":true,\"resetGeneration\":2}" });
+                    System.Windows.Forms.Application.DoEvents();
+                    Check(seen.Contains("fresh"), "A duplicate durable marker must not erase a later scan.");
+                    queue.Invoke(null, new object[] { new LedgerSnapshot { ResetGeneration = 3,
+                        RecentReports = new EffectMessage[0] }, 1L });
+                    System.Windows.Forms.Application.DoEvents();
+                    Check(seen.Count == 0 && !overlay.World.HasHoverTargets,
+                        "A newer snapshot must reconcile a missed SSE wipe.");
+                    Check(settings.MonitorTeams && settings.MonitorOutlook && settings.MonitorGmail,
+                        "Reset must preserve all source preferences.");
+                }
+                finally
+                {
+                    seen.Clear();
+                    for (int i = 0; i < fields.Length; i++) program.GetField(fields[i], flags).SetValue(null, saved[i]);
+                }
+            }
+        }
+
         private static void Metadata()
         {
             EffectNotice notice = EffectNotice.Parse(EventJson("fixture-1", "innocent_fruit", "left"));
@@ -81,6 +192,13 @@ namespace SlopGrenadeDesktop
             Check(outgoing.DetailsText().Contains("To: Team / Recipient"), "Outgoing labels must match the ledger.");
             EffectNotice wipe = EffectNotice.Parse("{\"sequence\":43,\"squeegeeSide\":\"left\"}");
             Check(wipe.SqueegeeSide == "left" && wipe.Report == null, "Wipes must keep their existing contract.");
+            EffectNotice dataWipe = EffectNotice.Parse("{\"sequence\":44,\"dataWiped\":true}");
+            Check(dataWipe.DataWiped && dataWipe.Report == null, "Data wipes must not require communication metadata.");
+            Check(!dataWipe.ResetGeneration.HasValue && EffectNotice.ParseLedger("{\"recentReports\":[]}").ResetGeneration == 0,
+                "Older responders must remain compatible with optional reset metadata.");
+            Check(EffectNotice.Parse("{\"sequence\":45,\"dataWiped\":true,\"resetGeneration\":7}").ResetGeneration == 7
+                && EffectNotice.ParseLedger("{\"resetGeneration\":7,\"recentReports\":[]}").ResetGeneration == 7,
+                "Durable remote reset generations must survive parsing.");
         }
 
         private static void InvalidEvents()
@@ -276,12 +394,17 @@ namespace SlopGrenadeDesktop
                 cursor = new Point(overlay.Left + 400, overlay.Top + 300);
                 Check(PumpUntil(delegate { return !details.Visible; }, 2000) && details.AccessibleDescription.Length == 0,
                     "Leaving must hide and clear private details.");
+                cursor = new Point(overlay.Left + 200, overlay.Top + 200);
+                Check(PumpUntil(delegate { return details.Visible; }, 5000), "Returning must show the details again.");
+                overlay.Reset();
+                Check(!details.Visible && details.AccessibleDescription.Length == 0 && !overlay.World.HasHoverTargets,
+                    "A full reset must synchronously hide and forget the hover popup without moving the cursor.");
             }
         }
 
         private static void Logging()
         {
-            string path = Path.Combine(Path.GetTempPath(), "slop-grenade-log-test-" + Guid.NewGuid() + ".log");
+            string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "slop-grenade-log-test-" + Guid.NewGuid() + ".log");
             FieldInfo field = typeof(DrawLog).GetField("_path", BindingFlags.Static | BindingFlags.NonPublic);
             object original = field.GetValue(null);
             try

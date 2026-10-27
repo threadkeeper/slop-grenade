@@ -38,6 +38,8 @@ pub struct WorkIqStatus {
     pub version: Option<String>,
     /// Whether the MCP stdio handshake (`initialize` + `tools/list`) succeeded.
     pub mcp_ready: bool,
+    /// Whether this daemon session considers the user signed in to Microsoft 365.
+    pub authenticated: bool,
     /// Number of MCP tools exposed by the user's WorkIQ server.
     pub mcp_tool_count: usize,
     /// Optional configured or detected M365 account email.
@@ -50,6 +52,7 @@ pub struct WorkIqStatus {
 pub struct WorkIqClient {
     binary_path: Option<PathBuf>,
     account: RwLock<Option<String>>,
+    authenticated: RwLock<Option<bool>>,
 }
 
 impl WorkIqClient {
@@ -59,6 +62,7 @@ impl WorkIqClient {
         Self {
             binary_path,
             account: RwLock::new(sanitize_workiq_account(account)),
+            authenticated: RwLock::new(None),
         }
     }
 
@@ -82,6 +86,7 @@ impl WorkIqClient {
                 binary_path: None,
                 version: None,
                 mcp_ready: false,
+                authenticated: false,
                 mcp_tool_count: 0,
                 account: self.account(),
                 message: "WorkIQ CLI not found. Install @microsoft/workiq or set WORKIQ_BIN."
@@ -97,6 +102,12 @@ impl WorkIqClient {
                 binary_path: Some(display_bin),
                 version,
                 mcp_ready: tool_count > 0,
+                authenticated: self
+                    .authenticated
+                    .read()
+                    .ok()
+                    .and_then(|value| *value)
+                    .unwrap_or(tool_count > 0),
                 mcp_tool_count: tool_count,
                 account: self.account(),
                 message: format!(
@@ -108,6 +119,7 @@ impl WorkIqClient {
                 binary_path: Some(display_bin),
                 version,
                 mcp_ready: false,
+                authenticated: false,
                 mcp_tool_count: 0,
                 account: self.account(),
                 message: format!(
@@ -117,32 +129,59 @@ impl WorkIqClient {
         }
     }
 
-    /// Trigger `workiq auth login` to authenticate the user with their M365 tenant.
+    /// Trigger WorkIQ's first-party brokered sign-in using the installed CLI.
     pub async fn start_interactive_login(&self) -> Result<String, String> {
         let Some(ref bin) = self.binary_path else {
             return Err("WorkIQ binary not found on this machine.".to_string());
         };
         let mut cmd = Command::new(bin);
-        cmd.arg("auth").arg("login");
         if let Some(acct) = self.account() {
             cmd.arg("--account").arg(acct);
         }
+        cmd.arg("ask")
+            .arg("--question")
+            .arg("Confirm Microsoft 365 sign-in for Slop Grenade.");
         cmd.env_remove("NODE_OPTIONS");
-        let output = tokio::time::timeout(Duration::from_secs(60), cmd.output())
+        let output = tokio::time::timeout(Duration::from_secs(180), cmd.output())
             .await
-            .map_err(|_| "WorkIQ login timed out after 60s".to_string())?
-            .map_err(|e| format!("Failed to spawn workiq auth login: {e}"))?;
+            .map_err(|_| {
+                "WorkIQ sign-in timed out. Finish browser sign-in and try again.".to_string()
+            })?
+            .map_err(|_| "Could not start WorkIQ sign-in.".to_string())?;
 
         if output.status.success() {
+            if let Ok(mut authenticated) = self.authenticated.write() {
+                *authenticated = Some(true);
+            }
             let _ = self
                 .run_mcp_jsonrpc(bin, build_mcp_accept_eula_request())
                 .await;
             Ok("WorkIQ M365 authentication succeeded.".to_string())
         } else {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            Err(if !stderr.is_empty() { stderr } else { stdout })
+            Err("WorkIQ could not complete Microsoft 365 sign-in.".to_string())
         }
+    }
+
+    /// Sign out of WorkIQ and clear its cached Microsoft 365 authentication tokens.
+    pub async fn sign_out(&self) -> Result<String, String> {
+        let Some(ref bin) = self.binary_path else {
+            return Err("WorkIQ binary not found on this machine.".to_string());
+        };
+        let mut cmd = Command::new(bin);
+        cmd.arg("logout");
+        cmd.env_remove("NODE_OPTIONS");
+        let output = tokio::time::timeout(Duration::from_secs(30), cmd.output())
+            .await
+            .map_err(|_| "WorkIQ sign-out timed out.".to_string())?
+            .map_err(|_| "Could not start WorkIQ sign-out.".to_string())?;
+        if !output.status.success() {
+            return Err("WorkIQ could not complete Microsoft 365 sign-out.".to_string());
+        }
+        self.set_account(None);
+        if let Ok(mut authenticated) = self.authenticated.write() {
+            *authenticated = Some(false);
+        }
+        Ok("Signed out of Microsoft 365.".to_string())
     }
 
     /// Poll recent sent and received Microsoft 365 messages (Outlook + Teams) via WorkIQ MCP `fetch`.

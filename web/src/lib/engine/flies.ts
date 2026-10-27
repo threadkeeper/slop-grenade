@@ -51,6 +51,11 @@ export class FlySwarm {
     return n;
   }
 
+  clear(): void {
+    this.flies.length = 0;
+    this.cooldown = 0;
+  }
+
   /** Flies for this splat id and side should scatter. */
   scatter(side: 'left' | 'right', aboveY: number, rng: Rng): void {
     for (const f of this.flies) {
