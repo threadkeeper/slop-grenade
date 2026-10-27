@@ -150,8 +150,8 @@ impl WorkIqClient {
 
         let entity_urls = vec![
             "/me?$select=id,displayName,mail,userPrincipalName".to_string(),
-            "/me/mailFolders/inbox/messages?$select=id,subject,from,bodyPreview,uniqueBody,body,receivedDateTime&$top=15".to_string(),
-            "/me/mailFolders/sentitems/messages?$select=id,subject,from,bodyPreview,uniqueBody,body,sentDateTime&$top=15".to_string(),
+            "/me/mailFolders/inbox/messages?$select=id,subject,from,bodyPreview,uniqueBody,body,receivedDateTime&$top=30".to_string(),
+            "/me/mailFolders/sentitems/messages?$select=id,subject,from,bodyPreview,uniqueBody,body,sentDateTime&$top=30".to_string(),
             "/me/chats?$select=id,topic,chatType&$top=5".to_string(),
         ];
 
