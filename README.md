@@ -84,6 +84,28 @@ The signer SHA-1 must match `GOOGLE_ANDROID_TEST_CERT_SHA1`, registered with Goo
 
 ---
 
+## Read-Only Architecture, Security Controls, Privacy & Terms
+
+Slop Grenade is designed from the ground up as a **strictly read-only, local-first** application:
+
+- **Strictly Read-Only Access**:
+  - **Gmail**: Requests only `https://www.googleapis.com/auth/gmail.readonly`. Slop Grenade cannot compose, send, reply, modify, label, draft, or delete emails.
+  - **Microsoft 365**: Reads recent Teams and Outlook activity through your local first-party brokered WorkIQ MCP client (`workiq`) without requiring an enterprise admin app registration.
+- **Google API Services User Data Policy (Limited Use)**: Slop Grenade's use and transfer to any other app of information received from Google APIs will adhere to the [Google API Services User Data Policy](https://developers.google.com/terms/api-services-user-data-policy), including the Limited Use requirements.
+- **Current Security Controls**:
+  - **Ephemeral On-Device Scoring**: Message bodies are scored in volatile memory on your device and immediately discarded. No raw emails, chat messages, or OAuth tokens are ever stored on a remote server or shared with third parties.
+  - **In-Memory Credentials & Sign-Out Wipe**: Desktop OAuth tokens live exclusively in local daemon process memory (`127.0.0.1:8090`) and are never written to disk; restarting the daemon requires re-authorization. Signing out revokes the OAuth grant and immediately wipes all communication-derived ledger history and active screen effects.
+  - **OAuth 2.0 PKCE (`S256`) & Loopback Isolation**: Uses 32-byte CSPRNG `state` and PKCE verifiers with 5-minute expiry, loopback-only socket verification, SHA-256 hashed account IDs, allowlisted error codes, and `Cache-Control: no-store`.
+  - **Memory-Safe & Audited Supply Chain**: Enforces `unsafe_code = "forbid"` in Rust (`core/` and `rust/`), `rustls` TLS verification (`openssl` banned), locked manifests, `cargo-deny` + RustSec checks, and SHA-256 release checksums.
+
+### Dedicated Policy & Security Pages
+
+- [**Privacy Policy & Google User Data Disclosure (`PRIVACY.md`)**](./PRIVACY.md)
+- [**Terms of Service (`TERMS.md`)**](./TERMS.md)
+- [**Security Controls & Architecture (`SECURITY.md`)**](./SECURITY.md)
+
+---
+
 ## Documentation
 
 - **Desktop Gmail:** Set `GMAIL_OAUTH_CLIENT_ID` to your release's Google Desktop app client ID, then use **Connect Gmail account** in the dashboard or tray/menu. Only `gmail.readonly` is requested. Tokens remain in daemon memory; restarting requires authorization again. Local polling quietly imports the last seven days before monitoring new messages. No client secret or credential JSON is needed. Public distribution requires the release-owner approvals in the [production Gmail setup and release gates](./docs/GMAIL_DESKTOP_PRODUCTION.md).
