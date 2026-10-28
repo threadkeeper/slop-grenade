@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/screenshots/slop-grenade-icon.png" width="160" alt="Slop Grenade funky pink grenade icon">
+</p>
+
 # Slop Grenade - a single pane of glass to detect AI generated content across all of your communications platforms.
 
 Slop Grenade is built to work across all of your communications platforms—spanning team chat, direct messaging, email, and collaborative channels—from a single unified desktop overlay and habit dashboard.
