@@ -22,6 +22,11 @@ on:
       - ".github/workflows/macos.yml"
   workflow_dispatch:
   workflow_call:
+    inputs:
+      release_tag:
+        description: Validated release tag supplied by the complete release workflow
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -99,6 +104,8 @@ jobs:
           lipo -info macos/build/slop-grenade-overlay
 
       - name: Package Universal macOS installer, portable bundle and SHA-256 checksums
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
           STAGE="$RUNNER_TEMP/slop-grenade-macos-universal"
@@ -106,7 +113,11 @@ jobs:
           mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/web"
           cp macos/Info.plist "$APP/Contents/Info.plist"
           VERSION="$(cat VERSION)"
-          if [[ "$GITHUB_REF_TYPE" == tag ]]; then VERSION="${GITHUB_REF_NAME#v}"; fi
+          if [[ -n "$RELEASE_TAG" ]]; then
+            VERSION="${RELEASE_TAG#v}"
+          elif [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" "$APP/Contents/Info.plist"
           cp macos/build/slop-grenade-overlay "$APP/Contents/MacOS/slop-grenade-overlay"

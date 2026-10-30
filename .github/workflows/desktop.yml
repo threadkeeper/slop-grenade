@@ -24,6 +24,11 @@ on:
       - ".github/workflows/desktop.yml"
   workflow_dispatch:
   workflow_call:
+    inputs:
+      release_tag:
+        description: Validated release tag supplied by the complete release workflow
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -59,6 +64,8 @@ jobs:
           cargo build --locked --manifest-path rust/Cargo.toml --release
       - name: Package Windows installer, portable bundle and SHA-256 checksums
         shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           $ErrorActionPreference = 'Stop'
           $stage = Join-Path $env:RUNNER_TEMP 'slop-grenade-windows-x64'
@@ -68,7 +75,7 @@ jobs:
           Copy-Item -Recurse -Force 'web\build' (Join-Path $stage 'web\build')
           Copy-Item -Force 'README.md' (Join-Path $stage 'README.md')
           Copy-Item -Force 'LICENSE' (Join-Path $stage 'LICENSE')
-          $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME.TrimStart('v') } else { (Get-Content VERSION -Raw).Trim() }
+          $version = if ($env:RELEASE_TAG) { $env:RELEASE_TAG.Substring(1) } elseif ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME.TrimStart('v') } else { (Get-Content VERSION -Raw).Trim() }
           $compiler = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
           if (-not (Test-Path $compiler)) { throw 'Inno Setup 6 is required to build the Windows installer.' }
           & $compiler "/DSourceDir=$stage" "/DAppVersion=$version" "/DOutputDir=$PWD" desktop\installer.iss

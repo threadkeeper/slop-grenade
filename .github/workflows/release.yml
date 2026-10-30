@@ -9,39 +9,54 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: complete-platform-release
   cancel-in-progress: false
 
 jobs:
   validate:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Require a version tag, including for manual runs
-        env:
-          REF_TYPE: ${{ github.ref_type }}
-          TAG: ${{ github.ref_name }}
-        run: |
-          test "$REF_TYPE" = tag
-          python3 scripts/release.py validate-tag "$TAG"
       - name: Release policy regression tests
         run: python3 -m unittest discover -s scripts -p 'test_releases.py'
+      - name: Select and reserve release tag
+        id: version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          TAG="$(python3 scripts/release.py select-tag "$(cat VERSION)")"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Release tag: $TAG"
 
   windows:
     needs: validate
     uses: ./.github/workflows/desktop.yml
+    with:
+      release_tag: ${{ needs.validate.outputs.tag }}
 
   macos:
     needs: validate
     uses: ./.github/workflows/macos.yml
+    with:
+      release_tag: ${{ needs.validate.outputs.tag }}
 
   android:
     needs: validate
     uses: ./.github/workflows/android.yml
     with:
       release: true
+      release_tag: ${{ needs.validate.outputs.tag }}
     secrets:
       SLOP_ANDROID_KEYSTORE_BASE64: ${{ secrets.SLOP_ANDROID_KEYSTORE_BASE64 }}
       SLOP_ANDROID_STORE_PASSWORD: ${{ secrets.SLOP_ANDROID_STORE_PASSWORD }}
@@ -49,7 +64,7 @@ jobs:
       SLOP_ANDROID_KEY_PASSWORD: ${{ secrets.SLOP_ANDROID_KEY_PASSWORD }}
 
   publish:
-    needs: [windows, macos, android]
+    needs: [validate, windows, macos, android]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -65,5 +80,5 @@ jobs:
       - name: Verify all local and uploaded packages before publishing
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ needs.validate.outputs.tag }}
         run: python3 scripts/release.py publish "$TAG" release-assets

@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -22,6 +23,21 @@ def version_from_tag(tag):
     if not re.fullmatch(r"v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", tag):
         raise ValueError("Releases require a tag in the form vMAJOR.MINOR.PATCH.")
     return tag[1:]
+
+
+def next_tag(refs, baseline):
+    """Choose the next patch after both the version file and existing stable tags."""
+    highest = tuple(map(int, version_from_tag("v" + baseline).split(".")))
+    for ref in refs:
+        if not ref.startswith("refs/tags/"):
+            continue
+        try:
+            version = version_from_tag(ref[len("refs/tags/"):])
+        except ValueError:
+            continue
+        highest = max(highest, tuple(map(int, version.split("."))))
+    major, minor, patch = highest
+    return f"v{major}.{minor}.{patch + 1}"
 
 
 def verify_assets(directory):
@@ -48,6 +64,20 @@ def gh(*arguments):
     return subprocess.run(
         ["gh", *arguments], check=True, text=True, stdout=subprocess.PIPE,
     ).stdout
+
+
+def select_tag(event_name, ref_type, ref_name, commit, repository, baseline):
+    """Use a selected tag, or reserve the next patch tag for a manual branch run."""
+    if ref_type == "tag":
+        version_from_tag(ref_name)
+        return ref_name
+    if event_name != "workflow_dispatch" or ref_type != "branch":
+        raise ValueError("Release requires a version tag or a manually selected branch.")
+    refs = gh("api", "--paginate", f"repos/{repository}/git/matching-refs/tags/", "--jq", ".[].ref")
+    tag = next_tag(refs.splitlines(), baseline)
+    gh("api", "--method", "POST", f"repos/{repository}/git/refs",
+       "-f", f"ref=refs/tags/{tag}", "-f", f"sha={commit}")
+    return tag
 
 
 def publish(tag, directory):
@@ -90,12 +120,15 @@ Microsoft 365 requires the local WorkIQ CLI and user sign-in. Gmail requires Goo
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("validate-tag", "verify", "publish"))
-    parser.add_argument("value", help="Version tag, or asset directory for verify")
+    parser.add_argument("command", choices=("validate-tag", "select-tag", "verify", "publish"))
+    parser.add_argument("value", help="Version tag, baseline version, or asset directory for verify")
     parser.add_argument("directory", nargs="?", type=Path)
     args = parser.parse_args()
     if args.command == "validate-tag":
         version_from_tag(args.value)
+    elif args.command == "select-tag":
+        print(select_tag(os.environ["EVENT_NAME"], os.environ["REF_TYPE"], os.environ["REF_NAME"],
+                         os.environ["COMMIT_SHA"], os.environ["GITHUB_REPOSITORY"], args.value))
     elif args.command == "verify":
         verify_assets(Path(args.value))
     else:

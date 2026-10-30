@@ -25,6 +25,10 @@ on:
         description: Build the release-signed APK for the complete platform release
         type: boolean
         default: false
+      release_tag:
+        description: Validated release tag supplied by the complete release workflow
+        type: string
+        default: ""
     secrets:
       SLOP_ANDROID_KEYSTORE_BASE64:
         required: true
@@ -231,10 +235,15 @@ jobs:
           echo "SLOP_ANDROID_KEYSTORE=$keystore" >> "$GITHUB_ENV"
       - name: Build and verify release-signed Android installer
         env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
           SLOP_ANDROID_STORE_PASSWORD: ${{ secrets.SLOP_ANDROID_STORE_PASSWORD }}
           SLOP_ANDROID_KEY_ALIAS: ${{ secrets.SLOP_ANDROID_KEY_ALIAS }}
           SLOP_ANDROID_KEY_PASSWORD: ${{ secrets.SLOP_ANDROID_KEY_PASSWORD }}
-        run: bash mobile/scripts/build-android.sh release
+        run: |
+          set -euo pipefail
+          python3 scripts/release.py validate-tag "$RELEASE_TAG"
+          export SLOP_RELEASE_VERSION="${RELEASE_TAG#v}"
+          bash mobile/scripts/build-android.sh release
       - name: Stage Android installer and checksum
         run: |
           set -euo pipefail

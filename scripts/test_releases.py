@@ -2,11 +2,15 @@
 
 import hashlib
 import importlib.util
+import io
 import json
+import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from unittest.mock import patch
 
 
@@ -72,6 +76,59 @@ class ReleaseTests(unittest.TestCase):
         for tag in ("main", "v1.2", "v1.2.3-preview", "v1.2.3-experimental", "v1.2.3\n"):
             with self.subTest(tag=tag), self.assertRaises(ValueError):
                 release.version_from_tag(tag)
+
+    def test_next_tag_uses_highest_numeric_version_and_version_file(self):
+        cases = (
+            ([], "0.2.1", "v0.2.2"),
+            (["refs/tags/v0.2.9", "refs/tags/v0.2.10"], "0.2.1", "v0.2.11"),
+            (["refs/tags/v1.9.9", "refs/tags/v2.0.0"], "0.2.1", "v2.0.1"),
+            (["refs/tags/v0.1.9"], "0.2.1", "v0.2.2"),
+            (["refs/tags/v99.0.0-rc1", "refs/tags/v01.0.0", "refs/tags/other"],
+             "0.2.1", "v0.2.2"),
+        )
+        for tags, baseline, expected in cases:
+            with self.subTest(tags=tags, baseline=baseline):
+                self.assertEqual(release.next_tag(tags, baseline), expected)
+        with self.assertRaises(ValueError):
+            release.next_tag([], "not-a-version")
+
+    def test_manual_branch_reserves_next_tag_at_selected_commit(self):
+        with patch.object(release, "gh", side_effect=["refs/tags/v0.2.9\nrefs/tags/v0.2.10\n", ""]) as gh:
+            tag = release.select_tag("workflow_dispatch", "branch", "main", "abc123", "owner/repo", "0.2.1")
+        self.assertEqual(tag, "v0.2.11")
+        self.assertEqual(gh.call_args_list[0].args, (
+            "api", "--paginate", "repos/owner/repo/git/matching-refs/tags/", "--jq", ".[].ref"))
+        self.assertEqual(gh.call_args_list[1].args, (
+            "api", "--method", "POST", "repos/owner/repo/git/refs",
+            "-f", "ref=refs/tags/v0.2.11", "-f", "sha=abc123"))
+
+    def test_selected_existing_tag_is_used_without_creating_a_tag(self):
+        with patch.object(release, "gh") as gh:
+            for event in ("push", "workflow_dispatch"):
+                self.assertEqual(
+                    release.select_tag(event, "tag", "v2.3.4", "abc123", "owner/repo", "0.2.1"),
+                    "v2.3.4")
+            with self.assertRaises(ValueError):
+                release.select_tag("push", "tag", "v2.3.4-preview", "abc123", "owner/repo", "0.2.1")
+            with self.assertRaises(ValueError):
+                release.select_tag("push", "branch", "main", "abc123", "owner/repo", "0.2.1")
+            gh.assert_not_called()
+
+    def test_selection_does_not_hide_github_lookup_or_tag_creation_failures(self):
+        for responses in ([subprocess.CalledProcessError(1, "gh")],
+                          ["refs/tags/v0.2.2\n", subprocess.CalledProcessError(1, "gh")]):
+            with self.subTest(responses=responses):
+                with patch.object(release, "gh", side_effect=responses), self.assertRaises(subprocess.CalledProcessError):
+                    release.select_tag("workflow_dispatch", "branch", "main", "abc123", "owner/repo", "0.2.1")
+
+    def test_select_tag_command_reads_event_context_and_prints_only_tag(self):
+        context = {"EVENT_NAME": "workflow_dispatch", "REF_TYPE": "branch", "REF_NAME": "main",
+                   "COMMIT_SHA": "abc123", "GITHUB_REPOSITORY": "owner/repo"}
+        output = io.StringIO()
+        with patch.dict(os.environ, context), patch.object(sys, "argv", ["release.py", "select-tag", "0.2.1"]), \
+             patch.object(release, "gh", side_effect=["refs/tags/v0.2.2\n", ""]), redirect_stdout(output):
+            release.main()
+        self.assertEqual(output.getvalue(), "v0.2.3\n")
 
     def run_publisher(self, existing=None, remote_change=None):
         commands = []
@@ -149,8 +206,8 @@ class PackagingPolicyTests(unittest.TestCase):
             ("windows", "desktop.yml"), ("macos", "macos.yml"), ("android", "android.yml")
         ):
             self.assertIn(f"uses: ./.github/workflows/{filename}", workflow)
-            self.assertIn(platform, workflow.split("needs: [windows, macos, android]")[0])
-        self.assertIn("needs: [windows, macos, android]", workflow)
+            self.assertIn(platform, workflow.split("needs: [validate, windows, macos, android]")[0])
+        self.assertIn("needs: [validate, windows, macos, android]", workflow)
         self.assertIn("python3 scripts/release.py publish", workflow)
         for filename in ("desktop.yml", "macos.yml", "android.yml"):
             build = self.workflow(filename)
@@ -158,6 +215,22 @@ class PackagingPolicyTests(unittest.TestCase):
             self.assertNotIn("gh release", build)
             self.assertNotIn("contents: write", build)
             self.assertNotIn('tags: ["v*"]', build)
+
+    def test_manual_release_reserves_one_tag_and_passes_it_to_all_builds(self):
+        workflow = self.workflow("release.yml")
+        self.assertIn("group: complete-platform-release", workflow)
+        self.assertIn("github.event_name", workflow)
+        self.assertIn("github.ref_type", workflow)
+        self.assertIn("github.sha", workflow)
+        self.assertIn("scripts/release.py select-tag", workflow)
+        self.assertIn("tag: ${{ steps.version.outputs.tag }}", workflow)
+        self.assertEqual(workflow.count("release_tag: ${{ needs.validate.outputs.tag }}"), 3)
+        self.assertIn("TAG: ${{ needs.validate.outputs.tag }}", workflow)
+        for filename in ("desktop.yml", "macos.yml", "android.yml"):
+            self.assertIn("release_tag:", self.workflow(filename))
+        self.assertIn("SLOP_RELEASE_VERSION", self.workflow("android.yml"))
+        self.assertIn('System.getenv("SLOP_RELEASE_VERSION")',
+                      (ROOT / "mobile/app/build.gradle.kts").read_text())
 
     def test_windows_installer_is_self_contained_per_user_and_uninstallable(self):
         installer = (ROOT / "desktop/installer.iss").read_text()
