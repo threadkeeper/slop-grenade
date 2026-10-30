@@ -182,15 +182,6 @@ namespace SlopGrenadeDesktop
             return Loopify(Finish(Retro(o, 5000f), 0.3f, 0f), 0.04f);
         }
 
-        /// <summary>Bullet-time: a soft two-note "woo" falling a fourth.</summary>
-        public static float[] SlowmoIn()
-        {
-            float[] o = Buffer(0.5f);
-            Tone(o, 0, 0.48, 880, 330, Wave.Sine, 0.7, 0.03, 1.5);
-            Tone(o, 0, 0.48, 660, 247, Wave.Sine, 0.4, 0.03, 1.5);
-            return Finish(Retro(o, 4500f), 0.4f, 0f);
-        }
-
         /// <summary>Goo landing: a round "plop".</summary>
         public static float[] Splat()
         {
@@ -298,7 +289,6 @@ namespace SlopGrenadeDesktop
             d["explosion"] = Explosion();
             d["throw"] = Throw();
             d["fuse"] = Fuse();
-            d["slowmo_in"] = SlowmoIn();
             d["splat"] = Splat();
             d["cannon"] = Cannon();
             d["whoosh"] = Whoosh();

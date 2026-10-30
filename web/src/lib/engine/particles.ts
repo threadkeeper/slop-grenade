@@ -50,7 +50,7 @@ export class ParticleSystem {
   }
 
   /** Emits `n` spark streaks from (x, y). */
-  sparks(x: number, y: number, n: number, speed: number, s: number, rng: Rng, dirX = 0, dirY = 0, spread = Math.PI): void {
+  sparks(x: number, y: number, n: number, speed: number, s: number, motionScale: number, rng: Rng, dirX = 0, dirY = 0, spread = Math.PI): void {
     const base = Math.atan2(dirY, dirX);
     for (let i = 0; i < n; i++) {
       const p = this.spawn(P_SPARK);
@@ -61,7 +61,7 @@ export class ParticleSystem {
       p.vx = Math.cos(a) * v;
       p.vy = Math.sin(a) * v;
       p.life = rng.range(0.25, 0.7);
-      p.gravity = 900 * s;
+      p.gravity = 900 * motionScale;
       p.drag = 2.2;
       p.r = rng.range(1.2, 2.4) * s;
       p.color = rng.chance(0.5) ? 0xffffff : 0xffd23f;

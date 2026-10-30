@@ -60,6 +60,7 @@ namespace SlopGrenadeDesktop
         public readonly SlopPalette Pal;
         public readonly int ViewW, ViewH, StripW;
         public readonly float S;
+        private readonly float _motionScale;
         public List<GooBlob> Blobs = new List<GooBlob>();
         public List<Drip> Drips = new List<Drip>();
         public List<GooDrop> Drops = new List<GooDrop>();
@@ -74,13 +75,14 @@ namespace SlopGrenadeDesktop
         private readonly Rng _rng;
         private int _upY0 = int.MaxValue, _upY1 = int.MinValue;
 
-        public SlopLayer(Side side, SlopPalette pal, int viewW, int viewH, float scale)
+        public SlopLayer(Side side, SlopPalette pal, int viewW, int viewH, float scale, float motionScale)
         {
             Side = side;
             Pal = pal;
             ViewW = viewW;
             ViewH = viewH;
             S = scale;
+            _motionScale = motionScale;
             StripW = Math.Max(64, (int)Math.Round(Math.Min(viewW * 0.22f, 380f * scale)));
             Field = new float[StripW * viewH];
             Sprite = new PixelSprite(StripW, viewH);
@@ -110,7 +112,7 @@ namespace SlopGrenadeDesktop
                 Len = 0f,
                 MaxLen = b * rng.Range(0.8f, 1.1f),
                 BaseLen = b,
-                Speed = rng.Range(9f, 20f) * S,
+                Speed = rng.Range(9f, 20f) * _motionScale,
                 Phase = rng.Range(0f, M.TAU),
                 Wob = rng.Range(0.7f, 1.4f),
                 R = r
@@ -293,7 +295,7 @@ namespace SlopGrenadeDesktop
             {
                 GooDrop drop = Drops[i];
                 SelectMessage(x - drop.X, y - drop.Y, drop.R, drop.Message, ref best, ref message);
-                float stretch = Math.Min(1.8f, 0.6f + drop.Vy / (420f * S));
+                float stretch = Math.Min(1.8f, 0.6f + drop.Vy / (420f * _motionScale));
                 SelectMessage(x - drop.X, y - drop.Y + drop.R * 0.95f * stretch, drop.R * 0.62f, drop.Message, ref best, ref message);
             }
             return message;
@@ -388,7 +390,7 @@ namespace SlopGrenadeDesktop
             {
                 GooDrop p = Drops[i];
                 float oldY = p.Y;
-                p.Vy += 700f * S * dt;
+                p.Vy += 700f * _motionScale * dt;
                 p.Y += p.Vy * dt;
                 MarkDirty(oldY - p.R * 4.5f, p.Y + p.R * 2.5f);
                 if (p.Y - p.R * 3f > ViewH) Drops.RemoveAt(i);
@@ -571,7 +573,7 @@ namespace SlopGrenadeDesktop
             {
                 // a teardrop: round body plus a thinner tail that stretches as it speeds up
                 GooDrop p = Drops[i];
-                float stretch = Math.Min(1.8f, 0.6f + p.Vy / (420f * S));
+                float stretch = Math.Min(1.8f, 0.6f + p.Vy / (420f * _motionScale));
                 float tailY = p.Y - p.R * 0.95f * stretch;
                 if (p.Y + p.R * Support < y0 || tailY - p.R * Support > y1) continue;
                 SplatKernel(p.X, p.Y, p.R, y0, y1);

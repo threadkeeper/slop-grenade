@@ -16,7 +16,7 @@ namespace SlopGrenadeDesktop
         public float Age;
         public bool Done;
 
-        /// <summary>`s` is the screen scale (1 at 1080p); `lead` glints are the big ones.</summary>
+        /// <summary>`s` is the glint artwork scale; `lead` glints are the big ones.</summary>
         public Twinkle(float x, float y, float delay, float s, Rng rng, bool lead)
         {
             X = x;

@@ -5,6 +5,7 @@
 // completely when nothing is moving.
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -35,18 +36,21 @@ namespace SlopGrenadeDesktop
         private bool _needFull = true;
         private int _frame;
         private DirtyRegion _dirty;
+        private SmokeRasterizer _smokeRasterizer;
         private readonly SolidBrush _clearBrush = new SolidBrush(Color.FromArgb(0, 0, 0, 0));
         private IntPtr _ptDst, _size, _ptSrc, _blend, _rc;
         private readonly float _flyDelay;
+        private readonly bool _optimizedSmoke;
 
         public event Action<int, int> SlopCountsChanged;
         private int _lastLeft = -1, _lastRight = -1;
 
         public ISfxSink Sfx { get; set; }
 
-        public OverlayForm(float flyDelaySeconds, Func<Point> cursorPosition = null)
+        public OverlayForm(float flyDelaySeconds, Func<Point> cursorPosition = null, bool optimizedSmoke = true)
         {
             _flyDelay = flyDelaySeconds;
+            _optimizedSmoke = optimizedSmoke;
             _cursorPosition = cursorPosition ?? delegate { return Cursor.Position; };
             FormBorderStyle = FormBorderStyle.None;
             ShowInTaskbar = false;
@@ -115,9 +119,15 @@ namespace SlopGrenadeDesktop
             _g.PixelOffsetMode = PixelOffsetMode.Half;
             _g.InterpolationMode = InterpolationMode.NearestNeighbor;
             _g.CompositingQuality = CompositingQuality.HighSpeed;
-            if (_world != null) _world.Dispose();
-            _world = new World(_w, _h, _flyDelay, (uint)Environment.TickCount);
+            World replacement = new World(_w, _h, _flyDelay, (uint)Environment.TickCount);
+            if (_world != null)
+            {
+                _world.TransferPendingTo(replacement);
+                _world.Dispose();
+            }
+            _world = replacement;
             _world.Sfx = Sfx;
+            _smokeRasterizer = new SmokeRasterizer(_w, _h);
             _dirty = new DirtyRegion(_w, _h);
             _needFull = true;
         }
@@ -258,19 +268,31 @@ namespace SlopGrenadeDesktop
         private void RenderAndPresent()
         {
             bool full = _dirty.IsFull;
-            foreach (Rectangle rc in _dirty.Rects())
+            if (_optimizedSmoke) _smokeRasterizer.Prepare(_world.Smoke, _world.SmokeScreenRect());
+            bool preparedSmoke = _optimizedSmoke && _smokeRasterizer.Ready;
+            List<Rectangle> rects = _dirty.Rects();
+            foreach (Rectangle rc in rects)
             {
-                // always start each area from a clean state: no leftover rotation,
-                // offset or clip from an earlier draw can skew the clear or the art
                 _g.ResetTransform();
                 _g.ResetClip();
                 _g.SetClip(rc);
                 _g.CompositingMode = CompositingMode.SourceCopy;
                 _g.FillRectangle(_clearBrush, rc);
                 _g.CompositingMode = CompositingMode.SourceOver;
+            }
+            if (preparedSmoke)
+            {
+                _g.Flush(FlushIntention.Sync);
+                foreach (Rectangle rc in rects) _smokeRasterizer.CopyTo(_bits, _w * 4, rc);
+            }
+            foreach (Rectangle rc in rects)
+            {
+                _g.ResetTransform();
+                _g.ResetClip();
+                _g.SetClip(rc);
                 try
                 {
-                    _world.Render(_g, rc);
+                    _world.Render(_g, rc, !preparedSmoke);
                 }
                 catch (Exception ex)
                 {
@@ -288,7 +310,7 @@ namespace SlopGrenadeDesktop
             _g.Flush(FlushIntention.Sync);
             NativeMethods.GdiFlush();
             if (full) Present(null);
-            else foreach (Rectangle rc in _dirty.Rects()) Present(rc);
+            else foreach (Rectangle rc in rects) Present(rc);
         }
 
         private void Present(Rectangle? dirty)

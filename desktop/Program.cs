@@ -4,9 +4,9 @@
 // turns each scored Teams/Outlook message into an on-screen effect:
 //   human (0-19)        -> a barely-there crystal twinkle
 //   polish (20-39)      -> smoke plumes rolling in from the edge
-//   sprinkled (40-59)   -> a 3D fruit tumbling across in slow motion
+//   sprinkled (40-59)   -> a 3D fruit tumbling across the screen
 //   ai-cannon (60-79)   -> a goo cannonball splatting the edge
-//   slop-grenade (80+)  -> a cute grenade lobbed in bullet-time that blows up
+//   slop-grenade (80+)  -> a cute grenade that blows up
 //                          and splatters the edge (flies gather if left there)
 // Incoming slop lands on the LEFT edge (pink), your own on the RIGHT (blue).
 //

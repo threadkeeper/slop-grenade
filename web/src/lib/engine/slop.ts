@@ -82,6 +82,7 @@ export class SlopLayer {
   readonly viewH: number;
   readonly stripW: number;
   readonly s: number;
+  private readonly motionScale: number;
   blobs: GooBlob[] = [];
   drips: Drip[] = [];
   drops: GooDrop[] = [];
@@ -103,12 +104,13 @@ export class SlopLayer {
   private upY0 = 1e9;
   private upY1 = -1e9;
 
-  constructor(side: Side, pal: SlopPalette, viewW: number, viewH: number, scale: number) {
+  constructor(side: Side, pal: SlopPalette, viewW: number, viewH: number, scale: number, motionScale: number) {
     this.side = side;
     this.pal = pal;
     this.viewW = viewW;
     this.viewH = viewH;
     this.s = scale;
+    this.motionScale = motionScale;
     this.stripW = Math.max(64, Math.round(Math.min(viewW * 0.22, 380 * scale)));
     this.field = new Float32Array(this.stripW * viewH);
     this.pixels = new Uint8ClampedArray(this.stripW * viewH * 4);
@@ -150,7 +152,7 @@ export class SlopLayer {
       len: 0,
       maxLen: base * rng.range(0.8, 1.1),
       baseLen: base,
-      speed: rng.range(9, 20) * this.s,
+      speed: rng.range(9, 20) * this.motionScale,
       phase: rng.range(0, Math.PI * 2),
       wob: rng.range(0.7, 1.4),
       r,
@@ -303,7 +305,6 @@ export class SlopLayer {
       }
     }
     this.time += dt;
-    const s = this.s;
     for (const d of this.drips) {
       const old = d.len;
       if (d.recoil > 0) {
@@ -333,7 +334,7 @@ export class SlopLayer {
     for (let i = this.drops.length - 1; i >= 0; i--) {
       const p = this.drops[i];
       const oldY = p.y;
-      p.vy += 700 * s * dt;
+      p.vy += 700 * this.motionScale * dt;
       p.y += p.vy * dt;
       this.markDirty(oldY - p.r * 4.5, p.y + p.r * 2.5);
       if (p.y - p.r * 3 > this.viewH) this.drops.splice(i, 1);
@@ -501,7 +502,7 @@ export class SlopLayer {
     }
     for (const p of this.drops) {
       // a teardrop: round body plus a thinner tail that stretches as it speeds up
-      const stretch = Math.min(1.8, 0.6 + p.vy / (420 * this.s));
+      const stretch = Math.min(1.8, 0.6 + p.vy / (420 * this.motionScale));
       const tailY = p.y - p.r * 0.95 * stretch;
       if (p.y + p.r * SUPPORT < y0 || tailY - p.r * SUPPORT > y1) continue;
       this.splatKernel(p.x, p.y, p.r, y0, y1);

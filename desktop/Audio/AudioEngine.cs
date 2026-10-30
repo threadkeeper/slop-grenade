@@ -1,7 +1,7 @@
 // AudioEngine.cs
 // Small real-time mixer on top of the Win32 waveOut API: 44.1 kHz stereo,
-// four ~23 ms buffers, equal-power panning, per-voice pitch (bullet-time
-// slows the fuse) and click-free loops. Sound is optional and off by default.
+// four ~23 ms buffers, equal-power panning, per-voice pitch and click-free
+// loops. Sound is optional and off by default.
 
 using System;
 using System.Collections.Generic;

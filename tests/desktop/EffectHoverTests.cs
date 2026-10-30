@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Reflection;
@@ -18,11 +19,23 @@ namespace SlopGrenadeDesktop
             Run("ledger metadata and escaped JSON", Metadata);
             Run("invalid events never echo message data", InvalidEvents);
             Run("full reset removes ten queued grenades and scheduled metadata", ResetWorld);
+            Run("grenade flight and impact keep the world at normal speed", NormalSpeed);
+            Run("effects are smaller without changing grenade gravity", EffectSizes);
+            Run("fly rendering is half its previous size", FlyArtworkSize);
+            Run("mixed bursts respect the across-screen limit and drain", AnimationQueue);
+            Run("cloud emission slots honor limits and release before smoke clears", PlumeSlots);
+            Run("smoke uses half-resolution grid and remains visible", SmokeResolution);
+            Run("parallel smoke compositing matches the GDI reference", SmokeRasterizerTests.MatchesGdi);
+            Run("parallel smoke preserves clipped foreground layering", SmokeRasterizerTests.Layering);
+            Run("real overlay displays parallel smoke and clears it on reset", SmokeOverlayIntegration);
+            Run("queued fruit can wait for its prerequisite splat", QueueDependencies);
+            Run("large grenade bursts queue every animation with attribution", QueueAttribution);
+            Run("display rebuild preserves queued and scheduled effects", QueueDisplayRebuild);
             Run("wipe invalidates stale ledger responses and queued UI applies", ResetDispatch);
             Run("independent effects keep their own message", Attribution);
             Run("goop hit testing ignores transparent gaps and clears with a wipe", Goop);
             Run("grenades and cannon splats retain attribution", Splats);
-            Run("overflow splats and detached drops keep their source", Descendants);
+            Run("detached drops keep their source", Descendants);
             Run("hover dwell, expiry and leaving an effect", Hover);
             Run("tooltip stays inside the working area", Placement);
             Run("details never activate or intercept clicks", WindowStyles);
@@ -46,6 +59,156 @@ namespace SlopGrenadeDesktop
         private static void Check(bool condition, string message)
         {
             if (!condition) throw new InvalidOperationException(message);
+        }
+
+        private static void AnimationQueue()
+        {
+            using (World world = new World(400, 240, 60f, 19, 2))
+            {
+                RecordingSfx sfx = new RecordingSfx();
+                world.Sfx = sfx;
+                world.Trigger(EffectTier.SlopGrenade, Side.Left);
+                world.Trigger(EffectTier.SlopSplat, Side.Right);
+                world.Trigger(EffectTier.InnocentFruit, Side.Right);
+                world.Trigger(EffectTier.PeacefulCloud, Side.Left);
+                world.Trigger(EffectTier.HumanSparkle, Side.Right);
+                Check(world.MaxAcrossScreenAnimations == Math.Min(2, Environment.ProcessorCount), "Limit must respect available logical processors.");
+                for (int i = 0; i < 10; i++)
+                {
+                    world.Update(0.01f);
+                    Check(world.ActiveAcrossScreenAnimations <= world.MaxAcrossScreenAnimations, "Mixed effects exceeded the limit.");
+                }
+                Check(sfx.Names.Contains("twinkle"), "Sparkles should not wait for an across-screen slot.");
+                Check(!sfx.Names.Contains("whoosh") && !sfx.Names.Contains("smoke"), "Excess across-screen effects must wait.");
+                for (int i = 0; i < 600 && (!sfx.Names.Contains("whoosh") || !sfx.Names.Contains("smoke")); i++)
+                {
+                    world.Update(0.05f);
+                    Check(world.ActiveAcrossScreenAnimations <= world.MaxAcrossScreenAnimations, "Queued effects exceeded the limit.");
+                }
+                Check(sfx.Names.Contains("whoosh") && sfx.Names.Contains("smoke"), "Queued effects must eventually start.");
+                world.Reset();
+                Check(world.ActiveAcrossScreenAnimations == 0, "Reset must release all active slots.");
+                world.Trigger(EffectTier.PeacefulCloud, Side.Left);
+                world.Update(0.01f);
+                Check(world.ActiveAcrossScreenAnimations == 1, "A new plume must start after reset.");
+            }
+        }
+
+        private static void QueueAttribution()
+        {
+            using (World world = new World(400, 240, 60f, 23, 2))
+            {
+                RecordingSfx sfx = new RecordingSfx();
+                world.Sfx = sfx;
+                List<EffectMessage> messages = new List<EffectMessage>();
+                for (int i = 0; i < 13; i++)
+                {
+                    EffectMessage message = Message("queued-" + i, "slop_grenade", "left");
+                    messages.Add(message);
+                    world.Trigger(EffectTier.SlopGrenade, Side.Left, message);
+                }
+                Check(world.Left.Splats.Count == 0, "Queued grenades must not become immediate splats.");
+                HashSet<EffectMessage> launched = new HashSet<EffectMessage>();
+                for (int i = 0; i < 1200 && launched.Count < messages.Count; i++)
+                {
+                    world.Update(0.05f);
+                    Check(world.ActiveAcrossScreenAnimations <= world.MaxAcrossScreenAnimations, "Grenades exceeded the limit.");
+                    foreach (Grenade grenade in world.Grenades) launched.Add(grenade.Message);
+                }
+                foreach (EffectMessage message in messages) Check(launched.Contains(message), "A queued grenade lost its attribution or never launched.");
+                Check(sfx.Names.FindAll(delegate(string name) { return name == "throw"; }).Count == 13, "Each queued grenade must launch exactly once.");
+            }
+        }
+
+        private static void PlumeSlots()
+        {
+            bool rejectedZero = false;
+            try { using (World invalid = new World(400, 240, 60f, 27, 0)) { } }
+            catch (ArgumentOutOfRangeException) { rejectedZero = true; }
+            Check(rejectedZero, "A non-positive animation limit must be rejected.");
+            foreach (int limit in new[] { 1, 2, 4 })
+            {
+                using (World world = new World(400, 240, 60f, 27, limit))
+                {
+                    RecordingSfx sfx = new RecordingSfx();
+                    world.Sfx = sfx;
+                    for (int i = 0; i < 4; i++) world.Trigger(EffectTier.PeacefulCloud, Side.Left);
+                    for (int i = 0; i < 10; i++) world.Update(0.01f);
+                    Check(world.ActiveAcrossScreenAnimations == Math.Min(limit, Environment.ProcessorCount),
+                        "Cloud emission sequences must each occupy one slot.");
+                    for (int i = 0; i < 500 &&
+                        (sfx.Names.FindAll(delegate(string name) { return name == "smoke"; }).Count < 4 ||
+                        world.ActiveAcrossScreenAnimations > 0); i++)
+                    {
+                        world.Update(0.05f);
+                        Check(world.ActiveAcrossScreenAnimations <= world.MaxAcrossScreenAnimations, "Plumes exceeded the limit.");
+                    }
+                    Check(sfx.Names.FindAll(delegate(string name) { return name == "smoke"; }).Count == 4,
+                        "Every queued plume must start.");
+                    Check(world.ActiveAcrossScreenAnimations == 0 && !world.Smoke.IsEmpty,
+                        "Plume slots must release when emission ends even while smoke remains.");
+                }
+            }
+        }
+
+        private static void SmokeResolution()
+        {
+            using (World world = new World(1920, 1080, 60f, 27))
+            using (SmokeField previous = new SmokeField(1920, 1080, 90))
+            {
+                Check(world.Smoke.Ny * 2 == previous.Ny && world.Smoke.Nx * 2 == previous.Nx,
+                    "Smoke grid dimensions must be halved.");
+                Check(world.Smoke.Sprite.Width * 2 == previous.Sprite.Width &&
+                    world.Smoke.Sprite.Height * 2 == previous.Sprite.Height, "Smoke sprite dimensions must be halved.");
+                world.Trigger(EffectTier.PeacefulCloud, Side.Left);
+                bool visible = false;
+                for (int i = 0; i < 180; i++)
+                {
+                    world.Update(0.05f);
+                    world.PrepareFrame();
+                    if (world.Smoke.Bx1 >= world.Smoke.Bx0) visible = true;
+                }
+                Check(visible, "Reduced-resolution smoke must remain visible.");
+            }
+        }
+
+        private static void QueueDependencies()
+        {
+            using (World world = new World(400, 240, 60f, 29, 1))
+            {
+                RecordingSfx sfx = new RecordingSfx();
+                world.Sfx = sfx;
+                world.Trigger(EffectTier.InnocentFruit, Side.Left);
+                world.Trigger(EffectTier.SlopGrenade, Side.Left);
+                for (int i = 0; i < 400 && !sfx.Names.Contains("whoosh"); i++) world.Update(0.05f);
+                Check(sfx.Names.Contains("explosion") && sfx.Names.Contains("whoosh") &&
+                    sfx.Names.IndexOf("explosion") < sfx.Names.IndexOf("whoosh"),
+                    "A fruit waiting for a later splat must not deadlock the queue.");
+            }
+        }
+
+        private static void QueueDisplayRebuild()
+        {
+            using (OverlayForm form = new OverlayForm(60f))
+            {
+                EffectMessage queued = Message("resize-queued", "slop_grenade", "left");
+                EffectMessage scheduled = Message("resize-scheduled", "human_sparkle", "right");
+                form.World.Trigger(EffectTier.SlopGrenade, Side.Left, queued);
+                form.World.TriggerLater(1f, EffectTier.HumanSparkle, Side.Right, scheduled);
+                for (int i = 0; i < 8; i++) form.World.Update(0.05f);
+                form.World.Trigger(EffectTier.SlopGrenade, Side.Left, queued);
+                MethodInfo rebuild = typeof(OverlayForm).GetMethod("BuildSurface", BindingFlags.Instance | BindingFlags.NonPublic);
+                rebuild.Invoke(form, new object[] { form.Bounds });
+                World world = form.World;
+                world.Update(0.05f);
+                Check(world.Grenades.Count == 1 && world.Grenades[0].Message == queued,
+                    "A display rebuild must retain queued effects and their attribution.");
+                for (int i = 0; i < 10; i++) world.Update(0.05f);
+                Check(world.Twinkles.Count == 0, "A scheduled effect must retain its remaining delay.");
+                for (int i = 0; i < 5; i++) world.Update(0.05f);
+                Check(world.Twinkles.Count > 0 && world.Twinkles[0].Message == scheduled,
+                    "A scheduled effect must survive display rebuild with its attribution.");
+            }
         }
 
         private static string EventJson(string id, string tier, string side)
@@ -76,9 +239,112 @@ namespace SlopGrenadeDesktop
         private sealed class RecordingSfx : ISfxSink
         {
             public int Stops, Plays;
-            public void Play(string name, float pan, float gain, float rate) { Plays++; }
-            public void Loop(string id, string name, float pan, float gain, float rate) { }
+            public readonly List<string> Names = new List<string>();
+            public readonly List<float> FuseRates = new List<float>();
+            public void Play(string name, float pan, float gain, float rate) { Plays++; Names.Add(name); }
+            public void Loop(string id, string name, float pan, float gain, float rate)
+            {
+                if (name == "fuse") FuseRates.Add(rate);
+            }
             public void StopAll() { Stops++; Plays = 0; }
+        }
+
+        private static void NormalSpeed()
+        {
+            using (World world = new World(1920, 1080, 45f, 7))
+            {
+                RecordingSfx sfx = new RecordingSfx();
+                world.Sfx = sfx;
+                world.Trigger(EffectTier.SlopGrenade, Side.Left);
+                world.Trigger(EffectTier.InnocentFruit, Side.Right);
+                bool sawLateFlight = false, sawImpact = false;
+                const float dt = 1f / 60f;
+                for (int i = 0; i < 240; i++)
+                {
+                    float before = world.Now;
+                    Grenade grenade = world.Grenades.Count > 0 ? world.Grenades[0] : null;
+                    float grenadeAge = grenade == null ? 0f : grenade.Age;
+                    Explosion explosion = world.Explosions.Count > 0 ? world.Explosions[0] : null;
+                    float explosionAge = explosion == null ? 0f : explosion.Age;
+                    world.Update(dt);
+                    Check(Math.Abs(world.Now - before - dt) < 0.00001f, "Every frame must advance at normal speed, including after impact.");
+                    if (grenade != null) Check(Math.Abs(grenade.Age - grenadeAge - dt) < 0.00001f, "Grenade flight must advance at normal speed.");
+                    if (explosion != null) Check(Math.Abs(explosion.Age - explosionAge - dt) < 0.00001f, "Explosion must advance at normal speed after impact.");
+                    foreach (Grenade g in world.Grenades) if (g.T > 0.8f) sawLateFlight = true;
+                    if (sfx.Names.Contains("explosion")) sawImpact = true;
+                }
+                int left, right;
+                world.SlopCounts(out left, out right);
+                Check(sawLateFlight && sawImpact && left > 0 && right == 0, "The grenade must fly and splatter the correct edge.");
+                Check(!sfx.Names.Contains("slowmo_in") && sfx.FuseRates.Count > 0, "Flight must not play slow-motion audio.");
+                foreach (float rate in sfx.FuseRates) Check(rate == 1f, "Fuse audio must stay at normal speed.");
+            }
+        }
+
+        private static void EffectSizes()
+        {
+            using (World world = new World(1920, 1080, 45f, 19))
+            {
+                Check(Math.Abs(world.S - 0.42f * 0.7f) < 0.000001f, "Effect artwork must be 30% smaller.");
+                Check(Math.Abs(world.FlyDrawScale - 0.65f * 0.5f) < 0.000001f, "Fly artwork and redraw bounds must be 50% smaller.");
+                world.Trigger(EffectTier.SlopGrenade, Side.Left);
+                world.Trigger(EffectTier.HumanSparkle, Side.Right);
+                world.Update(0.01f);
+                world.Update(0.01f);
+                Check(world.Grenades.Count == 1 && Math.Abs(world.Grenades[0].Gravity - 1500f * 0.42f) < 0.001f,
+                    "Resizing must not slow the grenade's motion.");
+                Check(world.Twinkles.Count > 0 && world.Twinkles[0].Size >= 26f * 0.7f &&
+                    world.Twinkles[0].Size <= 34f * 0.7f, "Sparkles must also be 30% smaller.");
+                Check(world.Particles.Items.Count > 0 && Math.Abs(world.Particles.Items[0].Gravity - 1600f * 0.42f) < 0.001f,
+                    "Grenade parts must keep their original gravity.");
+                world.Reset();
+                world.Trigger(EffectTier.InnocentFruit, Side.Right);
+                world.Update(0.01f);
+                Check(world.Fruits.Count == 1 && Math.Abs(world.Fruits[0].Gravity - 1100f * 0.42f) < 0.001f,
+                    "Resizing must not slow fruit gravity.");
+                world.Reset();
+                world.Trigger(EffectTier.SlopSplat, Side.Right);
+                world.Update(0.01f);
+                Check(world.Cannon.Count == 1, "The cannonball must launch.");
+                float vy = world.Cannon[0].Vy;
+                world.Update(0.01f);
+                Check(Math.Abs(world.Cannon[0].Vy - vy - 1700f * 0.42f * 0.01f) < 0.001f,
+                    "Resizing must not slow cannonball gravity.");
+            }
+        }
+
+        private static Rectangle DrawnBounds(Bitmap bitmap)
+        {
+            int left = bitmap.Width, top = bitmap.Height, right = -1, bottom = -1;
+            for (int y = 0; y < bitmap.Height; y++)
+                for (int x = 0; x < bitmap.Width; x++)
+                    if (bitmap.GetPixel(x, y).A != 0)
+                    {
+                        left = Math.Min(left, x); top = Math.Min(top, y);
+                        right = Math.Max(right, x); bottom = Math.Max(bottom, y);
+                    }
+            return right < left ? Rectangle.Empty : Rectangle.FromLTRB(left, top, right + 1, bottom + 1);
+        }
+
+        private static void FlyArtworkSize()
+        {
+            using (World world = new World(480, 2160, 45f, 19))
+            using (Bitmap previous = new Bitmap(480, 240))
+            using (Bitmap current = new Bitmap(480, 240))
+            using (Graphics oldGraphics = Graphics.FromImage(previous))
+            using (Graphics newGraphics = Graphics.FromImage(current))
+            {
+                world.Flies.Flies.Add(new Fly { X = 200f, Y = 100f, State = FlyState.Landed });
+                oldGraphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                newGraphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                world.Flies.Draw(oldGraphics, world.UI * 0.65f);
+                world.Render(newGraphics, new Rectangle(0, 0, current.Width, current.Height));
+                Rectangle oldBounds = DrawnBounds(previous), newBounds = DrawnBounds(current);
+                Check(!oldBounds.IsEmpty && !newBounds.IsEmpty &&
+                    Math.Abs(newBounds.Width * 2 - oldBounds.Width) <= 3 &&
+                    Math.Abs(newBounds.Height * 2 - oldBounds.Height) <= 3,
+                    "Rendered fly dimensions must be half the previous size within pixel rounding.");
+            }
         }
 
         private static void ResetWorld()
@@ -88,8 +354,8 @@ namespace SlopGrenadeDesktop
                 RecordingSfx sfx = new RecordingSfx();
                 world.Sfx = sfx;
                 EffectMessage message = Message("forgotten", "slop_grenade", "left");
-                foreach (EffectTier tier in new[] { EffectTier.SlopSplat, EffectTier.InnocentFruit,
-                    EffectTier.PeacefulCloud, EffectTier.HumanSparkle, EffectTier.SlopGrenade })
+                foreach (EffectTier tier in new[] { EffectTier.SlopGrenade, EffectTier.SlopSplat,
+                    EffectTier.InnocentFruit, EffectTier.PeacefulCloud, EffectTier.HumanSparkle })
                 {
                     world.Trigger(tier, Side.Left, message);
                     world.Update(0.05f);
@@ -102,7 +368,7 @@ namespace SlopGrenadeDesktop
                 Check(world.Grenades.Count == 1 && world.HasHoverTargets && !world.IsIdle, "The reset fixture must include active and queued private effects.");
                 world.Reset();
                 Check(sfx.Stops == 1 && world.Sfx == sfx && world.Flies.Delay == 3f, "Reset must stop sounds without changing preferences.");
-                Check(world.IsIdle && !world.HasHoverTargets && world.Smoke.IsEmpty && world.TimeScale == 1f,
+                Check(world.IsIdle && !world.HasHoverTargets && world.Smoke.IsEmpty,
                     "Reset must immediately clear active effects and private hover metadata.");
                 int left, right;
                 world.SlopCounts(out left, out right);
@@ -342,12 +608,13 @@ namespace SlopGrenadeDesktop
         {
             using (World world = new World(800, 600, 60f, 19))
             {
-                EffectMessage message = Message("overflow", "slop_grenade", "left");
-                for (int i = 0; i < 13; i++) world.Trigger(EffectTier.SlopGrenade, Side.Left, message);
-                Check(world.Left.Splats.Count == 1, "The overflow must create one immediate splat.");
+                EffectMessage message = Message("impact-drop", "slop_grenade", "left");
+                world.Trigger(EffectTier.SlopGrenade, Side.Left, message);
+                for (int i = 0; i < 200 && world.Left.Splats.Count == 0; i++) world.Update(0.05f);
+                Check(world.Left.Splats.Count == 1, "The grenade must create an attributed splat.");
                 world.Left.Update(1); world.Left.Flush(10000);
                 Point point = OpaquePoint(world.Left, 0, 600);
-                Check(world.Left.MessageAt(point.X, point.Y) == message, "Overflow splats lost their metadata.");
+                Check(world.Left.MessageAt(point.X, point.Y) == message, "Impact splats lost their metadata.");
                 Drip drip = world.Left.Drips[0];
                 drip.MaxLen = 1; drip.Len = 0.99f; drip.Speed = 100;
                 world.Left.Update(0.1f);
@@ -403,7 +670,7 @@ namespace SlopGrenadeDesktop
             {
                 overlay.Show();
                 EffectMessage message = Message("hover-integration", "innocent_fruit", "left");
-                Fruit fruit = new Fruit(0, Side.Left, overlay.World.W, overlay.World.H, overlay.World.S, overlay.World.Rng, 200);
+                Fruit fruit = new Fruit(0, Side.Left, overlay.World.W, overlay.World.H, overlay.World.S, overlay.World.MotionScale, overlay.World.Rng, 200);
                 fruit.X = 200; fruit.Y = 200; fruit.State = FruitState.Stuck;
                 fruit.RenderedAngle = fruit.Angle;
                 fruit.Sprite = new PixelSprite(4, 4);
@@ -428,6 +695,34 @@ namespace SlopGrenadeDesktop
                 overlay.Reset();
                 Check(!details.Visible && details.AccessibleDescription.Length == 0 && !overlay.World.HasHoverTargets,
                     "A full reset must synchronously hide and forget the hover popup without moving the cursor.");
+            }
+        }
+
+        private static void SmokeOverlayIntegration()
+        {
+            foreach (bool optimized in new[] { true, false })
+            using (OverlayForm overlay = new OverlayForm(60, null, optimized))
+            {
+                overlay.Show();
+                int x = overlay.World.W / 2, y = overlay.World.H / 2;
+                overlay.World.Smoke.Puff(x, y, overlay.World.H * 0.1f, 4f, 0f, 0f, 0.3f);
+                overlay.Trigger(EffectTier.HumanSparkle, Side.Left);
+                FieldInfo rasterField = typeof(OverlayForm).GetField("_smokeRasterizer", BindingFlags.Instance | BindingFlags.NonPublic);
+                Check(rasterField != null, "The overlay must use the smoke rasterizer.");
+                Bitmap surface = (Bitmap)typeof(OverlayForm).GetField("_surface", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(overlay);
+                Check(PumpUntil(delegate
+                {
+                    SmokeRasterizer raster = (SmokeRasterizer)rasterField.GetValue(overlay);
+                    return raster.Ready == optimized && surface.GetPixel(x, y).A > 0;
+                }, 5000), "Prepared smoke must appear in the actual overlay surface.");
+                overlay.Reset();
+                Check(surface.GetPixel(x, y).A == 0, "Reset must not redraw cached smoke.");
+                if (optimized)
+                {
+                    SmokeRasterizer raster = (SmokeRasterizer)rasterField.GetValue(overlay);
+                    Check(typeof(SmokeRasterizer).GetField("_pixels", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(raster) == null,
+                        "Reset must release the cached smoke buffer.");
+                }
             }
         }
 

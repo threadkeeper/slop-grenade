@@ -1,5 +1,5 @@
 // Grenade.cs
-// The cute inked hand grenade: slow-motion ballistic flight with a lit fuse,
+// The cute inked hand grenade: ballistic flight with a lit fuse,
 // detonating at the monitor edge. Mirrors web/src/lib/engine/grenade.ts.
 
 using System;
@@ -21,7 +21,7 @@ namespace SlopGrenadeDesktop
 
         public float T { get { return Math.Min(1f, Age / FlightTime); } }
 
-        public Grenade(Side side, SlopPalette pal, int viewW, int viewH, float scale, Rng rng)
+        public Grenade(Side side, SlopPalette pal, int viewW, int viewH, float scale, float motionScale, Rng rng)
         {
             Side = side;
             Pal = pal;
@@ -33,7 +33,7 @@ namespace SlopGrenadeDesktop
             X = viewW * 0.5f + inward * viewW * rng.Range(0.1f, 0.32f);
             Y = viewH + 70f * scale;
             FlightTime = rng.Range(1.35f, 1.6f);
-            Gravity = 1500f * scale;
+            Gravity = 1500f * motionScale;
             float T0 = FlightTime;
             Vx = (TargetX - X) / T0;
             Vy = (TargetY - Y - 0.5f * Gravity * T0 * T0) / T0;

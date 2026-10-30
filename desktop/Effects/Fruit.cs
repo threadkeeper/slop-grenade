@@ -27,19 +27,21 @@ namespace SlopGrenadeDesktop
         public readonly float[] Base = new float[9];
         public readonly float[] Rot = new float[9];
         private readonly float[] _tmp = new float[9];
+        private readonly float _motionScale;
         public PixelSprite Sprite;
 
-        public Fruit(int kind, Side side, int viewW, int viewH, float s, Rng rng, float targetY)
+        public Fruit(int kind, Side side, int viewW, int viewH, float s, float motionScale, Rng rng, float targetY)
         {
             Kind = kind;
             Side = side;
+            _motionScale = motionScale;
             R = 46f * s;
             float inward = side == Side.Left ? 1f : -1f;
             float edge = side == Side.Left ? 0f : viewW;
             X = viewW * 0.5f + inward * viewW * rng.Range(0.05f, 0.35f);
             Y = viewH + R * 1.6f;
             float T = rng.Range(1.5f, 2.1f);
-            Gravity = 1100f * s;
+            Gravity = 1100f * motionScale;
             float tx = edge - inward * R * 0.2f;
             Vx = (tx - X) / T;
             Vy = (targetY - Y - 0.5f * Gravity * T * T) / T;
@@ -89,7 +91,7 @@ namespace SlopGrenadeDesktop
             }
             else if (State == FruitState.Falling)
             {
-                Vy += 1500f * (R / 46f) * dt;
+                Vy += 1500f * _motionScale * dt;
                 X += Vx * dt;
                 Y += Vy * dt;
                 Angle += Omega * 6f * dt;

@@ -1,5 +1,5 @@
 /**
- * A 3D fruit tumbling across the screen in slow motion about a random axis.
+ * A 3D fruit tumbling across the screen about a random axis.
  * It only sticks if it actually hits slop on the edge; otherwise it sails off.
  * Mirrored in `desktop/Effects/Fruit.cs`.
  */
@@ -34,12 +34,14 @@ export class Fruit {
   readonly base = new Float32Array(9);
   readonly rot = new Float32Array(9);
   private readonly tmp = new Float32Array(9);
+  private readonly motionScale: number;
   /** Opaque renderer-side sprite handle. */
   sprite: unknown = null;
 
-  constructor(kind: FruitKind, side: 'left' | 'right', viewW: number, viewH: number, s: number, rng: Rng, targetY: number) {
+  constructor(kind: FruitKind, side: 'left' | 'right', viewW: number, viewH: number, s: number, motionScale: number, rng: Rng, targetY: number) {
     this.kind = kind;
     this.side = side;
+    this.motionScale = motionScale;
     this.R = 46 * s;
     const inward = side === 'left' ? 1 : -1;
     const edge = side === 'left' ? 0 : viewW;
@@ -47,7 +49,7 @@ export class Fruit {
     this.x = viewW * 0.5 + inward * viewW * rng.range(0.05, 0.35);
     this.y = viewH + this.R * 1.6;
     const T = rng.range(1.5, 2.1);
-    this.gravity = 1100 * s;
+    this.gravity = 1100 * motionScale;
     // aim a little past the edge so it exits cleanly if nothing catches it
     const tx = edge - inward * this.R * 0.2;
     this.vx = (tx - this.x) / T;
@@ -97,7 +99,7 @@ export class Fruit {
     } else if (this.state === FRUIT_STUCK) {
       this.stuckT += dt;
     } else if (this.state === FRUIT_FALLING) {
-      this.vy += 1500 * (this.R / 40) * dt;
+      this.vy += 1500 * (46 / 40) * this.motionScale * dt;
       this.x += this.vx * dt;
       this.y += this.vy * dt;
       this.angle += this.omega * 6 * dt;

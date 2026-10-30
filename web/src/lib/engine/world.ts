@@ -1,6 +1,6 @@
 /**
  * The Slop Grenade "game world": owns every effect, the event director
- * (pacing bursts of messages), bullet-time and the render order.
+ * (pacing bursts of messages) and the render order.
  *
  * The desktop overlay runs the same design in `desktop/Engine/World.cs`.
  */
@@ -20,14 +20,12 @@ import { FruitShader, fruitJuice, fruitMesh, type FruitKind } from './fruitModel
 import { ToonRenderer } from './toon3d';
 
 /** Size of grenades, fruit, slop, smoke and explosions relative to the screen scale. */
-export const ITEM_SCALE = 0.42;
-/** Bullet-time window: only the last moment of the grenade's flight is slowed. */
-const SLOWMO_FROM = 0.8;
-const SLOWMO_TO = 0.97;
-const SLOWMO_SCALE = 0.3;
-/** Business-friendly blast: smaller, a brief freeze and only a slight shake. */
+export const ITEM_SCALE = 0.42 * 0.7;
+const MOTION_SCALE = 0.42;
+const SPARKLE_SCALE = 0.7;
+const FLY_SIZE_SCALE = 0.65 * 0.5;
+/** Business-friendly blast: smaller and only a slight shake. */
 const EXPLOSION_SIZE = 0.75;
-const HIT_STOP = 0.04;
 const SHAKE = 0.3;
 
 /** The five message tiers, by their engine names. */
@@ -36,8 +34,6 @@ export type EffectTier = 'human_sparkle' | 'peaceful_cloud' | 'innocent_fruit' |
 export type SfxName =
   | 'throw'
   | 'fuse'
-  | 'slowmo_in'
-  | 'slowmo_out'
   | 'explosion'
   | 'splat'
   | 'cannon'
@@ -60,7 +56,13 @@ export interface WorldOptions {
   seed?: number;
   /** Seconds before flies gather on slop (default 45). */
   flyDelay?: number;
+  /** Maximum concurrent projectile flights and cloud emissions (default 2, capped by available logical processors). */
+  maxAcrossScreenAnimations?: number;
   sfx?: SfxSink | null;
+}
+
+interface Plume {
+  remaining: number;
 }
 
 interface Queued {
@@ -80,7 +82,7 @@ class CannonBall {
   done = false;
   age = 0;
 
-  constructor(side: Side, w: number, h: number, s: number, rng: Rng) {
+  constructor(side: Side, w: number, h: number, s: number, motionScale: number, rng: Rng) {
     this.side = side;
     const inward = side === 'left' ? 1 : -1;
     this.r = 20 * s;
@@ -88,7 +90,7 @@ class CannonBall {
     this.x = w * 0.5 + inward * w * rng.range(0.1, 0.4);
     this.y = h + 40 * s;
     const T = rng.range(0.75, 0.95);
-    const g = 1700 * s;
+    const g = 1700 * motionScale;
     const tx = side === 'left' ? 0 : w;
     this.vx = (tx - this.x) / T;
     this.vy = (this.targetY - this.y - 0.5 * g * T * T) / T;
@@ -101,8 +103,20 @@ export class World {
   /** Art scale (1 at 1080p). */
   /** Item scale: everything that flies, splats or explodes is drawn at this scale. */
   readonly s: number;
-  /** Screen scale (1 at 1080p) for things that must stay readable: twinkles, flies. */
+  /** Screen scale (1 at 1080p). */
   readonly ui: number;
+  /** Original motion scale, independent of artwork size. */
+  readonly motionScale: number;
+  /** Scale for fly artwork. */
+  readonly flyDrawScale: number;
+  /** Maximum simultaneous across-screen effects. */
+  readonly maxAcrossScreenAnimations: number;
+  /** Active projectile flights and cloud emission sequences. */
+  get activeAcrossScreenAnimations(): number {
+    let active = this.grenades.length + this.cannon.length + this.plumes.length;
+    for (const fruit of this.fruits) if (fruit.state === FRUIT_FLYING) active++;
+    return active;
+  }
   readonly rng: Rng;
   readonly left: SlopLayer;
   readonly right: SlopLayer;
@@ -116,13 +130,9 @@ export class World {
   readonly twinkles: Twinkle[] = [];
   readonly squeegees: Squeegee[] = [];
   sfx: SfxSink | null;
-  /** Game clock (seconds, slowed by bullet-time). */
+  /** Game clock in seconds. */
   now = 0;
-  /** Current bullet-time factor (1 = normal speed). */
-  timeScale = 1;
-  private hitStop = 0;
   private shake = 0;
-  private slowmoOn = false;
   private queue: Queued[] = [];
   private scheduled: (Queued & { at: number })[] = [];
   private clockReal = 0;
@@ -135,14 +145,23 @@ export class World {
   private smokeFrame = 0;
 
   constructor(w: number, h: number, opts: WorldOptions = {}) {
+    const requestedLimit = opts.maxAcrossScreenAnimations ?? 2;
+    if (!Number.isSafeInteger(requestedLimit) || requestedLimit < 1) {
+      throw new RangeError('maxAcrossScreenAnimations must be a positive integer');
+    }
+    const processors = typeof navigator !== 'undefined' && Number.isSafeInteger(navigator.hardwareConcurrency) &&
+      navigator.hardwareConcurrency > 0 ? navigator.hardwareConcurrency : 1;
+    this.maxAcrossScreenAnimations = Math.min(requestedLimit, processors);
     this.w = w;
     this.h = h;
     this.ui = Math.max(0.35, Math.min(2.5, h / 1080));
     this.s = this.ui * ITEM_SCALE;
+    this.motionScale = this.ui * MOTION_SCALE;
+    this.flyDrawScale = this.ui * FLY_SIZE_SCALE;
     this.rng = new Rng(opts.seed ?? (Date.now() & 0xffffff));
-    this.left = new SlopLayer('left', SLOP_PINK, w, h, this.s);
-    this.right = new SlopLayer('right', SLOP_BLUE, w, h, this.s);
-    this.smoke = new SmokeField(w, h, 72);
+    this.left = new SlopLayer('left', SLOP_PINK, w, h, this.s, this.motionScale);
+    this.right = new SlopLayer('right', SLOP_BLUE, w, h, this.s, this.motionScale);
+    this.smoke = new SmokeField(w, h, 36);
     this.flies = new FlySwarm(opts.flyDelay ?? 45, 12);
     this.sfx = opts.sfx ?? null;
     this.toon = new ToonRenderer(Math.ceil(46 * this.s * 2.9), 2, 2.2 * Math.max(0.6, this.s));
@@ -158,16 +177,21 @@ export class World {
 
   /** Queue an effect for a message tier on a monitor side. */
   trigger(tier: EffectTier, side: Side): void {
-    // collapse huge bursts: beyond 12 queued grenades, splat directly
-    if (tier === 'slop_grenade' && this.queue.filter((q) => q.tier === 'slop_grenade').length >= 12) {
-      this.layer(side).addSplat(this.h * this.rng.range(0.15, 0.8), 0.8, this.rng, this.now, true);
-      return;
-    }
     this.queue.push({ tier, side });
   }
 
   triggerLater(delay: number, tier: EffectTier, side: Side): void {
     this.scheduled.push({ at: this.clockReal + Math.max(0, delay), tier, side });
+  }
+
+  /** Move pending effects to a replacement world, retaining scheduled delays. */
+  transferPendingTo(target: World): void {
+    if (target === this) throw new RangeError('replacement world must be different');
+    for (const effect of this.queue) target.queue.push(effect);
+    for (const effect of this.scheduled) {
+      target.triggerLater(Math.max(0, effect.at - this.clockReal), effect.tier, effect.side);
+    }
+    this.queue.length = this.scheduled.length = 0;
   }
 
   /** Wipe one edge clean with the squeegee. */
@@ -190,6 +214,7 @@ export class World {
       this.sfx?.loop('buzz-' + side, null, 0, 0);
     }
     this.queue.length = this.scheduled.length = this.emitters.length = 0;
+    this.plumes.length = 0;
     this.grenades.length = this.explosions.length = this.particles.items.length = 0;
     this.fruits.length = this.cannon.length = this.twinkles.length = this.squeegees.length = 0;
     this.flies.clear();
@@ -201,9 +226,7 @@ export class World {
     this.stripCanvas.clear();
     this.smokeCanvas = null;
     this.smokeFrame = 0;
-    this.now = this.clockReal = this.hitStop = this.shake = 0;
-    this.timeScale = 1;
-    this.slowmoOn = false;
+    this.now = this.clockReal = this.shake = 0;
     this.sinceGrenade = this.sinceFruit = 99;
   }
 
@@ -236,14 +259,15 @@ export class World {
       this.smoke.isEmpty() &&
       !this.left.isAnimating() &&
       !this.right.isAnimating() &&
-      !this.fruits.some((f) => f.state !== FRUIT_STUCK || f.stuckT < 1.2) &&
-      this.timeScale > 0.99
+      !this.fruits.some((f) => f.state !== FRUIT_STUCK || f.stuckT < 1.2)
     );
   }
 
   private startNext(): void {
+    const atCapacity = this.activeAcrossScreenAnimations >= this.maxAcrossScreenAnimations;
     for (let i = 0; i < this.queue.length; i++) {
       const q = this.queue[i];
+      if (q.tier !== 'human_sparkle' && atCapacity) continue;
       if (q.tier === 'slop_grenade') {
         if (this.grenades.length >= 2 || this.sinceGrenade < 1.1) continue;
         this.queue.splice(i, 1);
@@ -267,16 +291,16 @@ export class World {
 
   private launchGrenade(side: Side): void {
     const pal: SlopPalette = side === 'left' ? SLOP_PINK : SLOP_BLUE;
-    const g = new Grenade(side, pal, this.w, this.h, this.s, this.rng);
+    const g = new Grenade(side, pal, this.w, this.h, this.s, this.motionScale, this.rng);
     this.grenades.push(g);
     this.sinceGrenade = 0;
     // the pulled pin ring tumbles away
     const ring = this.particles.spawn(P_RING);
     ring.x = g.x;
     ring.y = this.h - 10 * this.s;
-    ring.vx = -g.vx * 0.15 + this.rng.range(-80, 80) * this.s;
-    ring.vy = -this.rng.range(500, 700) * this.s;
-    ring.gravity = 1600 * this.s;
+    ring.vx = -g.vx * 0.15 + this.rng.range(-80, 80) * this.motionScale;
+    ring.vy = -this.rng.range(500, 700) * this.motionScale;
+    ring.gravity = 1600 * this.motionScale;
     ring.spin = this.rng.range(-9, 9);
     ring.life = 3;
     ring.r = this.s;
@@ -290,13 +314,13 @@ export class World {
       const sp = L.splats[this.rng.int(L.splats.length)];
       ty = sp.y + this.rng.range(-50, 60) * this.s;
     }
-    this.fruits.push(new Fruit(Fruit.randomKind(this.rng), side, this.w, this.h, this.s, this.rng, ty));
+    this.fruits.push(new Fruit(Fruit.randomKind(this.rng), side, this.w, this.h, this.s, this.motionScale, this.rng, ty));
     this.sinceFruit = 0;
     this.sfx?.play('whoosh', this.pan(side) * 0.4, 0.5, 0.7);
   }
 
   private fireCannon(side: Side): void {
-    this.cannon.push(new CannonBall(side, this.w, this.h, this.s, this.rng));
+    this.cannon.push(new CannonBall(side, this.w, this.h, this.s, this.motionScale, this.rng));
     this.sfx?.play('cannon', this.pan(side) * 0.4, 0.7);
   }
 
@@ -306,14 +330,17 @@ export class World {
     const inward = side === 'left' ? 1 : -1;
     // a small rolling plume: a handful of puffs over ~1.6s that drift in and rise
     const n = 22;
+    const plume: Plume = { remaining: n };
+    this.plumes.push(plume);
     for (let i = 0; i < n; i++) {
       const k = i / n;
       this.emitters.push({
+        plume,
         t: k * 1.6 + this.rng.range(0, 0.05),
         x,
         y: y + Math.sin(k * 7) * 18 * this.s + this.rng.range(-12, 12) * this.s,
-        vx: inward * this.rng.range(240, 360) * this.s * (1 - 0.35 * k),
-        vy: -this.rng.range(50, 140) * this.s,
+        vx: inward * this.rng.range(240, 360) * this.motionScale * (1 - 0.35 * k),
+        vy: -this.rng.range(50, 140) * this.motionScale,
         amount: this.rng.range(0.3, 0.42) * (1 - 0.3 * k),
         soot: 0.04
       });
@@ -321,7 +348,8 @@ export class World {
     this.sfx?.play('smoke', this.pan(side), 0.55);
   }
 
-  private emitters: { t: number; x: number; y: number; vx: number; vy: number; amount: number; soot: number }[] = [];
+  private emitters: { plume: Plume; t: number; x: number; y: number; vx: number; vy: number; amount: number; soot: number }[] = [];
+  private plumes: Plume[] = [];
 
   private twinkle(side: Side): void {
     const inward = side === 'left' ? 1 : -1;
@@ -333,7 +361,7 @@ export class World {
     for (let i = 0; i < n; i++) {
       const dx = i === 0 ? 0 : inward * this.rng.range(20, 60) * this.ui;
       const dy = i === 0 ? 0 : this.rng.range(-55, 55) * this.ui;
-      this.twinkles.push(new Twinkle(x0 + dx, y + dy, i * this.rng.range(0.25, 0.45), this.ui, this.rng, i === 0));
+      this.twinkles.push(new Twinkle(x0 + dx, y + dy, i * this.rng.range(0.25, 0.45), this.ui * SPARKLE_SCALE, this.rng, i === 0));
     }
     this.sfx?.play('twinkle', this.pan(side), 0.4, this.rng.range(0.9, 1.15));
   }
@@ -351,22 +379,21 @@ export class World {
       const p = this.particles.spawn(P_GLOB);
       const toEdge = i < 7;
       const a = toEdge ? (inward > 0 ? Math.PI : 0) + this.rng.range(-1.1, 1.1) : (inward > 0 ? 0 : Math.PI) + this.rng.range(-1.4, 1.4);
-      const sp = this.rng.range(300, 750) * s;
+      const sp = this.rng.range(300, 750) * this.motionScale;
       p.x = g.x + inward * this.rng.range(10, 30) * s;
       p.y = g.y + this.rng.range(-20, 20) * s;
       p.vx = Math.cos(a) * sp;
-      p.vy = Math.sin(a) * sp - this.rng.range(80, 280) * s;
+      p.vy = Math.sin(a) * sp - this.rng.range(80, 280) * this.motionScale;
       p.r = this.rng.range(4, 12) * s;
-      p.gravity = 1300 * s;
+      p.gravity = 1300 * this.motionScale;
       p.drag = 0.6;
       p.life = 4;
       p.pal = L.pal;
       p.sticky = toEdge ? (side === 'left' ? 0 : 1) : -1;
     }
-    this.particles.sparks(g.x, g.y, 12, 800 * s, s, this.rng);
+    this.particles.sparks(g.x, g.y, 12, 800 * this.motionScale, s, this.motionScale, this.rng);
     // the blast itself dumps soot + an outward push into the smoke field
-    this.smoke.puff(g.x + inward * 40 * s, g.y, 80 * s, 1.1, inward * 200 * s, -100 * s, 0.7);
-    this.hitStop = HIT_STOP;
+    this.smoke.puff(g.x + inward * 40 * s, g.y, 80 * s, 1.1, inward * 200 * this.motionScale, -100 * this.motionScale, 0.7);
     this.shake = SHAKE;
     this.sfx?.loop('fuse-' + side, null, 0, 0);
     this.sfx?.play('explosion', this.pan(side), 1);
@@ -383,13 +410,13 @@ export class World {
     for (let i = 0; i < 10; i++) {
       const p = this.particles.spawn(P_JUICE);
       const a = (inward > 0 ? 0 : Math.PI) + this.rng.range(-1.3, 1.3) - Math.PI * 0.15 * inward;
-      const sp = this.rng.range(140, 420) * this.s;
+      const sp = this.rng.range(140, 420) * this.motionScale;
       p.x = f.leadX();
       p.y = f.y;
       p.vx = Math.cos(a) * sp;
-      p.vy = Math.sin(a) * sp - 120 * this.s;
+      p.vy = Math.sin(a) * sp - 120 * this.motionScale;
       p.r = this.rng.range(2.5, 5) * this.s;
-      p.gravity = 1100 * this.s;
+      p.gravity = 1100 * this.motionScale;
       p.life = 1.4;
       p.color = juice;
     }
@@ -411,26 +438,7 @@ export class World {
       this.scheduled.splice(i, 1);
       this.trigger(effect.tier, effect.side);
     }
-    // ---- bullet time
-    let target = 1;
-    for (const g of this.grenades) {
-      const t = g.t;
-      if (t > SLOWMO_FROM && t < SLOWMO_TO) target = SLOWMO_SCALE;
-    }
-    if (this.hitStop > 0) {
-      this.hitStop -= dtR;
-      this.timeScale = 0.04;
-    } else {
-      const rate = target < this.timeScale ? 18 : 9;
-      this.timeScale += (target - this.timeScale) * (1 - Math.exp(-rate * dtR));
-    }
-    if (!this.slowmoOn && this.timeScale < 0.6 && this.hitStop <= 0) {
-      this.slowmoOn = true;
-      this.sfx?.play('slowmo_in', 0, 0.35);
-    } else if (this.slowmoOn && this.timeScale > 0.7) {
-      this.slowmoOn = false;
-    }
-    const dt = dtR * this.timeScale;
+    const dt = dtR;
     this.now += dt;
     this.sinceGrenade += dtR;
     this.sinceFruit += dtR;
@@ -447,9 +455,9 @@ export class World {
         const sp = this.particles.spawn(P_SPOON);
         sp.x = g.x;
         sp.y = g.y;
-        sp.vx = g.vx * 0.6 + this.rng.range(-120, 120) * this.s;
-        sp.vy = g.vy * 0.5 - 200 * this.s;
-        sp.gravity = 1400 * this.s;
+        sp.vx = g.vx * 0.6 + this.rng.range(-120, 120) * this.motionScale;
+        sp.vy = g.vy * 0.5 - 200 * this.motionScale;
+        sp.gravity = 1400 * this.motionScale;
         sp.spin = this.rng.range(-14, 14);
         sp.life = 4;
         sp.r = this.s * 1.05;
@@ -458,8 +466,8 @@ export class World {
         // trail smoke + stir
         if (this.rng.chance(0.7)) this.smoke.puff(g.x, g.y - 30 * this.s, 16 * this.s, 0.16, -g.vx * 0.15, -g.vy * 0.15, 0.35);
         this.smoke.stir(g.x, g.y, 50 * this.s, g.vx, g.vy, 0.5);
-        if (this.rng.chance(0.5)) this.particles.sparks(g.x + Math.sin(g.angle) * 58 * 1.55 * this.s, g.y - Math.cos(g.angle) * 58 * 1.55 * this.s, 1, 260 * this.s, this.s, this.rng);
-        this.sfx?.loop('fuse-' + g.side, 'fuse', this.pan(g.side) * g.t, 0.35, Math.max(0.5, this.timeScale));
+        if (this.rng.chance(0.5)) this.particles.sparks(g.x + Math.sin(g.angle) * 58 * 1.55 * this.s, g.y - Math.cos(g.angle) * 58 * 1.55 * this.s, 1, 260 * this.motionScale, this.s, this.motionScale, this.rng);
+        this.sfx?.loop('fuse-' + g.side, 'fuse', this.pan(g.side) * g.t, 0.35, 1);
       } else {
         this.detonate(g);
       }
@@ -471,7 +479,7 @@ export class World {
       e.update(dt);
       for (const p of e.puffs) {
         const st = e.puffState(p);
-        if (st.u > 0.45 && st.u < 0.95 && this.rng.chance(0.15)) this.smoke.puff(st.x, st.y, st.r * 0.6, 0.11, 0, -40 * this.s, 0.8);
+        if (st.u > 0.45 && st.u < 0.95 && this.rng.chance(0.15)) this.smoke.puff(st.x, st.y, st.r * 0.6, 0.11, 0, -40 * this.motionScale, 0.8);
       }
     }
     for (let i = this.explosions.length - 1; i >= 0; i--) if (this.explosions[i].done) this.explosions.splice(i, 1);
@@ -479,7 +487,7 @@ export class World {
     // ---- cannon balls
     for (const c of this.cannon) {
       c.age += dt;
-      c.vy += 1700 * this.s * dt;
+      c.vy += 1700 * this.motionScale * dt;
       c.x += c.vx * dt;
       c.y += c.vy * dt;
       this.smoke.stir(c.x, c.y, 40 * this.s, c.vx, c.vy, 0.4);
@@ -491,13 +499,13 @@ export class World {
         for (let i = 0; i < 12; i++) {
           const p = this.particles.spawn(P_GLOB);
           const a = (inward > 0 ? 0 : Math.PI) + this.rng.range(-1.2, 1.2);
-          const sp = this.rng.range(200, 600) * this.s;
+          const sp = this.rng.range(200, 600) * this.motionScale;
           p.x = c.x;
           p.y = c.y;
           p.vx = Math.cos(a) * sp;
-          p.vy = Math.sin(a) * sp - 150 * this.s;
+          p.vy = Math.sin(a) * sp - 150 * this.motionScale;
           p.r = this.rng.range(3, 8) * this.s;
-          p.gravity = 1300 * this.s;
+          p.gravity = 1300 * this.motionScale;
           p.life = 3;
           p.pal = L.pal;
         }
@@ -510,9 +518,13 @@ export class World {
     // ---- smoke emitters
     for (const em of this.emitters) {
       em.t -= dt;
-      if (em.t <= 0) this.smoke.puff(em.x, em.y, 36 * this.s, em.amount, em.vx, em.vy, em.soot);
+      if (em.t <= 0) {
+        this.smoke.puff(em.x, em.y, 36 * this.s, em.amount, em.vx, em.vy, em.soot);
+        em.plume.remaining--;
+      }
     }
     this.emitters = this.emitters.filter((e) => e.t > 0);
+    this.plumes = this.plumes.filter((plume) => plume.remaining > 0);
 
     // ---- particles
     this.particles.update(dt, this.w, this.h, (p) => this.onGlobStick(p));
@@ -542,8 +554,8 @@ export class World {
       for (const f of this.fruits) {
         if (f.side === q.side && f.state === FRUIT_STUCK && f.y < q.y) {
           f.state = FRUIT_FALLING;
-          f.vx = (q.side === 'left' ? 1 : -1) * this.rng.range(60, 160) * this.s;
-          f.vy = -this.rng.range(80, 220) * this.s;
+          f.vx = (q.side === 'left' ? 1 : -1) * this.rng.range(60, 160) * this.motionScale;
+          f.vy = -this.rng.range(80, 220) * this.motionScale;
         }
       }
       if (q.done) L.clear();
@@ -562,7 +574,7 @@ export class World {
         }
       }
     }
-    this.flies.update(dt, this.s, this.w, this.h, this.rng, (side, y) => this.layer(side).surfaceXAt(y));
+    this.flies.update(dt, this.motionScale, this.w, this.h, this.rng, (side, y) => this.layer(side).surfaceXAt(y));
     for (const side of ['left', 'right'] as Side[]) {
       let n = 0;
       for (const f of this.flies.flies) if (f.side === side) n++;
@@ -692,10 +704,10 @@ export class World {
     }
     for (const e of this.explosions) e.draw(ctx);
     this.particles.draw(ctx, s);
-    for (const t of this.twinkles) t.draw(ctx, this.ui);
+    for (const t of this.twinkles) t.draw(ctx, this.ui * SPARKLE_SCALE);
     for (const q of this.squeegees) q.draw(ctx, s);
     // flies stay big enough to read as flies
-    this.flies.draw(ctx, this.ui * 0.65);
+    this.flies.draw(ctx, this.flyDrawScale);
     ctx.restore();
   }
 

@@ -2,7 +2,7 @@
  * Real-time smoke: a coarse "stable fluids" grid (semi-Lagrangian advection,
  * pressure projection, vorticity confinement, buoyancy). Things that move
  * through it stir the velocity field, so plumes curl and swirl around the
- * grenade and the fruit. Rendered at 2x grid resolution with soft
+ * grenade and the fruit. Rendered at 3x grid resolution with soft
  * self-shadowing and fine wisp noise, then up-scaled.
  *
  * Mirrored in `desktop/Effects/SmokeField.cs`.

@@ -33,12 +33,14 @@ Slop Grenade consists of three coordinated components:
      | `Program.cs` | Entry point, tray icon and menu, daemon start-up, SSE listener, daily gauges, run-at-startup |
      | `Settings.cs` | Preferences in `HKCU\Software\SlopGrenade` (sound on/off, volume, Teams/Outlook, slop/calm effects, fly delay) |
      | `Native.cs` | Win32 P/Invoke (layered window, DIB section, `waveOut`) |
-     | `Engine/` | `World` (director queue, short slow-motion moment, hit-stop, slight shake, render order; each effect is drawn in isolation so one failure cannot affect the rest), `OverlayForm` (presenter), dirty-rect tracking, software toon 3D renderer, ink and palette helpers |
+     | `Engine/` | `World` (director queue, slight shake, render order; each effect is drawn in isolation so one failure cannot affect the rest), `OverlayForm` (presenter), dirty-rect tracking, software toon 3D renderer, ink and palette helpers |
      | `Effects/` | Grenade, explosion, particles, slop goo (metaball field with drips and soft-serve swirls), 20 tumbling 3D fruit models, fluid smoke, flies, crystal twinkle, squeegee |
      | `Audio/` | Procedurally synthesised sound bank and a small `waveOut` mixer (stereo pan, loops, soft limiter) |
      | `UI/` | Steampunk tray control panel and its brass/ink drawing helpers |
    - Live solid effects carry only their existing sanitized ledger report. Hovering a fruit, grenade, cannonball, sparkle, splat or drip for 500 ms displays a non-activating, layered, click-through details card. Fruit hit testing uses sprite alpha; goop requires a visible pixel and selects the strongest local contributing shape where splats have merged. Metadata follows queued effects and their child goop/drops, and disappears with the effects or a squeegee. Diffuse shared smoke, ambient flies and test shots do not invent message attribution. Details are memory-only, use the existing redacted preview, hide immediately on leaving and expire after ten seconds. A low-frequency cursor timer runs only while attributed effects remain, so the animation loop can still sleep.
    - The effects are a 1:1 port of the TypeScript engine in `web/src/lib/engine/`, which is the visual reference and is covered by unit tests.
+   - At most two grenade, cannonball or fruit flights and cloud emission sequences run at once, capped by the reported logical processor count (the web engine falls back to one if that count is unavailable). Additional across-screen effects wait in memory; stationary sparkles may pass them. On desktop, fruit may also wait for a pending splat on its side. A flight releases its slot on impact or exit, and a cloud releases its slot after its final puff; lingering smoke, goo, flies, explosions, particles and wipe-triggered falling fruit do not hold slots. Existing per-type pacing still applies. The queue is not itself a thread scheduler and does not limit the total cost of lingering effects.
+   - The animation backlog is intentionally unbounded and is not persisted: a sustained burst can increase memory use and delay, and reset or shutdown clears pending effects. Display or canvas resizing preserves queued and scheduled effects and their remaining delays, though already-active effects still clear on world recreation. The previous behavior that converted grenades beyond twelve queued shots into immediate splats has been removed. This guarantee applies to events received by the engine, not events lost upstream.
    - Message tiers map to effects as follows (incoming lands on the left edge in pink, your own messages on the right edge in blue):
      | Tier | Score | Effect |
      | :--- | :--- | :--- |
@@ -46,9 +48,10 @@ Slop Grenade consists of three coordinated components:
      | `peaceful_cloud` | 20-39 | Smoke plumes rolling in from the edge; they swirl when things fly through and fade after about 30 s |
      | `innocent_fruit` | 40-59 | A cel-shaded 3D fruit tossed across the screen, tumbling; it sticks only if it hits slop, otherwise it sails off screen |
      | `slop_splat` | 60-79 | A goo cannonball that splats against the edge |
-     | `slop_grenade` | 80-100 | A small grenade thrown at normal speed, with a brief slow-motion moment just before it pops and splatters the edge |
+     | `slop_grenade` | 80-100 | A small grenade thrown at normal speed before it pops and splatters the edge |
    - Slop left on an edge attracts flies after `FlyDelaySeconds` (default 45). Squeegeeing an edge wipes the slop and the stuck fruit and sends the flies away.
-   - Items are drawn at `World.ItemScale` (0.42) of the screen scale so the effects stay out of the way on a work screen; twinkles and flies use the screen scale so they stay readable.
+   - Items are drawn at `World.ItemScale` (0.294) of the screen scale. Twinkles use 70% of the screen scale and flies use 0.325 of the screen scale; motion scaling remains independent of artwork size.
+   - Smoke uses approximately half its former grid and sprite dimensions: 45 grid rows on Windows and 36 in the web engine. On Windows, the smoke sprite is bilinearly scaled in independent screen-row ranges using up to four thread-pool workers, capped by available logical processors; small regions and single-processor machines use the serial path. The finished premultiplied pixels are copied into cleared dirty regions before the UI thread draws foreground effects and presents the window. A reusable buffer grows geometrically up to four bytes per screen pixel; its reference is released when smoke clears. The solver, foreground drawing and web engine remain single-threaded.
    - Slop drips ooze continuously (creep, neck, release a drop, spring back), so the overlay keeps animating at about 30 fps while slop is on screen.
    - Sound is off by default and can be switched on in the tray panel; all sounds are synthesised at start-up (soft sine/triangle tones with a 22 kHz grain), so no audio files ship with the app.
    - Drawing failures are logged to `%LOCALAPPDATA%\SlopGrenade\overlay-errors.log` (each distinct error once per run). The failing effect skips that frame, the next frame is fully repainted, and every frame starts from a clean drawing state.
@@ -187,7 +190,7 @@ npm --prefix web run test
 npm --prefix web run check
 npm --prefix web run build
 ```
-Unit tests: `web/src/lib/dashboard.test.ts` (time/direction filters, local timestamps, full-result sorting, 50-row pages, gauges and leaderboards), `web/src/lib/refresh.test.ts` (span-to-days mapping, legacy/Android compatibility, correlated live counters, non-overlap, disposal and visible failures), and `web/src/lib/engine.test.ts` (grenade slow-motion moment and edge splat, cannon side, fruit sticks only on slop, squeegee clears one side, flies arrive and leave, smoke and twinkles fade, 20 fruit models with no labels, sound bank levels).
+Unit tests: `web/src/lib/dashboard.test.ts` (time/direction filters, local timestamps, full-result sorting, 50-row pages, gauges and leaderboards), `web/src/lib/refresh.test.ts` (span-to-days mapping, legacy/Android compatibility, correlated live counters, non-overlap, disposal and visible failures), and `web/src/lib/engine.test.ts` (normal-speed grenade flight and edge splat, cannon side, fruit sticks only on slop, squeegee clears one side, flies arrive and leave, smoke and twinkles fade, 20 fruit models with no labels, sound bank levels).
 
 ### Native Windows Desktop Overlay (`desktop/`)
 

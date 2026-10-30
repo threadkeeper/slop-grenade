@@ -1,5 +1,5 @@
 /**
- * The cute, inked hand grenade: ballistic flight in slow motion with a lit
+ * The cute, inked hand grenade: ballistic flight with a lit
  * fuse, then detonation at the monitor edge.
  *
  * Mirrored in `desktop/Effects/Grenade.cs`.
@@ -33,7 +33,7 @@ export class Grenade {
     return Math.min(1, this.age / this.flightTime);
   }
 
-  constructor(side: 'left' | 'right', pal: SlopPalette, viewW: number, viewH: number, scale: number, rng: Rng) {
+  constructor(side: 'left' | 'right', pal: SlopPalette, viewW: number, viewH: number, scale: number, motionScale: number, rng: Rng) {
     this.side = side;
     this.pal = pal;
     this.s = scale;
@@ -45,7 +45,7 @@ export class Grenade {
     this.x = viewW * 0.5 + inward * viewW * rng.range(0.1, 0.32);
     this.y = viewH + 70 * scale;
     this.flightTime = rng.range(1.35, 1.6);
-    this.gravity = 1500 * scale;
+    this.gravity = 1500 * motionScale;
     const T = this.flightTime;
     this.vx = (this.targetX - this.x) / T;
     this.vy = (this.targetY - this.y - 0.5 * this.gravity * T * T) / T;

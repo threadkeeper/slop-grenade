@@ -187,14 +187,6 @@ export function synthFuse(seed = 13): Float32Array {
   return loopify(finish(retro(out, 5000), 0.3, 0), 0.04);
 }
 
-/** Bullet-time: a soft two-note "woo" falling a fourth. */
-export function synthSlowmoIn(): Float32Array {
-  const out = buffer(0.5);
-  tone(out, 0, 0.48, 880, 330, 'sine', 0.7, 0.03, 1.5);
-  tone(out, 0, 0.48, 660, 247, 'sine', 0.4, 0.03, 1.5);
-  return finish(retro(out, 4500), 0.4, 0);
-}
-
 /** Goo landing: a round "plop". */
 export function synthSplat(seed = 19): Float32Array {
   const out = buffer(0.22);
@@ -301,7 +293,6 @@ export function synthAll(): Record<string, Float32Array> {
     explosion: synthExplosion(),
     throw: synthThrow(),
     fuse: synthFuse(),
-    slowmo_in: synthSlowmoIn(),
     splat: synthSplat(),
     cannon: synthCannon(),
     whoosh: synthWhoosh(),

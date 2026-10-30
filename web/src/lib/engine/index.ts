@@ -61,8 +61,10 @@ export function runStage(canvas: HTMLCanvasElement, opts: WorldOptions = {}, max
       canvas.width = w;
       canvas.height = h;
       const sfx = stage.world.sfx;
+      const replacement = new World(w, h, { ...opts, sfx });
+      stage.world.transferPendingTo(replacement);
       stage.world.dispose();
-      stage.world = new World(w, h, { ...opts, sfx });
+      stage.world = replacement;
     },
     stop() {
       running = false;

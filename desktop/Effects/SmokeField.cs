@@ -17,6 +17,8 @@ namespace SlopGrenadeDesktop
         private readonly float[] _u, _v, _u0, _v0, _d, _d0, _c, _c0, _curl, _p, _div;
         public readonly PixelSprite Sprite;
         public const int Scale = 3;
+        /// <summary>Changes whenever the rendered sprite is replaced or cleared.</summary>
+        public int RenderVersion { get; private set; }
         private float _time;
         public float Mass;
         private int _gi0, _gj0, _gi1 = -1, _gj1 = -1;
@@ -42,6 +44,7 @@ namespace SlopGrenadeDesktop
 
         public void Clear()
         {
+            unchecked { RenderVersion++; }
             foreach (float[] field in new[] { _u, _v, _u0, _v0, _d, _d0, _c, _c0, _curl, _p, _div })
                 Array.Clear(field, 0, field.Length);
             Sprite.Clear();
@@ -254,6 +257,7 @@ namespace SlopGrenadeDesktop
         /// <summary>Renders premultiplied pixels into Sprite and updates Bx0..By1.</summary>
         public void Render()
         {
+            unchecked { RenderVersion++; }
             int rw = Sprite.Width, rh = Sprite.Height;
             int[] P = Sprite.Pixels;
             if (_px1 >= _px0)

@@ -15,7 +15,7 @@ export class Twinkle {
   readonly spin: number;
   done = false;
 
-  /** `s` is the screen scale (1 at 1080p); `lead` glints are the big ones. */
+  /** `s` is the glint artwork scale; `lead` glints are the big ones. */
   constructor(x: number, y: number, delay: number, s: number, rng: Rng, lead = true) {
     this.x = x;
     this.y = y;

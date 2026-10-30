@@ -46,7 +46,7 @@ namespace SlopGrenadeDesktop
             return p;
         }
 
-        public void Sparks(float x, float y, int n, float speed, float s, Rng rng)
+        public void Sparks(float x, float y, int n, float speed, float s, float motionScale, Rng rng)
         {
             for (int i = 0; i < n; i++)
             {
@@ -56,7 +56,7 @@ namespace SlopGrenadeDesktop
                 p.X = x; p.Y = y;
                 p.Vx = M.Cos(a) * v; p.Vy = M.Sin(a) * v;
                 p.Life = rng.Range(0.25f, 0.7f);
-                p.Gravity = 900f * s;
+                p.Gravity = 900f * motionScale;
                 p.Drag = 2.2f;
                 p.R = rng.Range(1.2f, 2.4f) * s;
                 p.Color = rng.Chance(0.5f) ? 0xffffff : 0xffd23f;

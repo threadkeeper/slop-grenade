@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { World, type EffectTier, type SfxName, type SfxSink } from './engine/world';
 import { FRUIT_KINDS, fruitMesh } from './engine/fruitModels';
 import { FRUIT_STUCK } from './engine/fruit';
@@ -9,6 +9,7 @@ import { synthAll } from './engine/sfxSynth';
 class RecordingSfx implements SfxSink {
   played: SfxName[] = [];
   loops = new Map<string, SfxName>();
+  fuseRates: number[] = [];
   stopped = 0;
   stopAll(): void {
     this.played.length = 0;
@@ -18,9 +19,10 @@ class RecordingSfx implements SfxSink {
   play(name: SfxName): void {
     this.played.push(name);
   }
-  loop(id: string, name: SfxName | null): void {
+  loop(id: string, name: SfxName | null, _pan: number, _gain: number, rate = 1): void {
     if (name) this.loops.set(id, name);
     else this.loops.delete(id);
+    if (name === 'fuse') this.fuseRates.push(rate);
   }
 }
 
@@ -48,10 +50,122 @@ function activeFlies(world: World): number {
 }
 
 describe('Slop Grenade effects engine', () => {
+  it('limits mixed across-screen effects, lets sparkles pass, and drains the queue', () => {
+    const sfx = new RecordingSfx();
+    const world = new World(400, 240, { seed: 19, sfx, maxAcrossScreenAnimations: 2 });
+    for (const tier of ['slop_grenade', 'slop_splat', 'innocent_fruit', 'peaceful_cloud', 'human_sparkle'] as const) {
+      world.trigger(tier, tier === 'slop_grenade' || tier === 'peaceful_cloud' ? 'left' : 'right');
+    }
+    for (let i = 0; i < 10; i++) {
+      world.update(0.01);
+      expect(world.activeAcrossScreenAnimations).toBeLessThanOrEqual(world.maxAcrossScreenAnimations);
+    }
+    expect(sfx.played).toContain('twinkle');
+    expect(sfx.played).not.toContain('whoosh');
+    expect(sfx.played).not.toContain('smoke');
+    for (let i = 0; i < 600 && (!sfx.played.includes('whoosh') || !sfx.played.includes('smoke')); i++) {
+      world.update(0.05);
+      expect(world.activeAcrossScreenAnimations).toBeLessThanOrEqual(world.maxAcrossScreenAnimations);
+    }
+    expect(sfx.played).toContain('whoosh');
+    expect(sfx.played).toContain('smoke');
+    world.reset();
+    expect(world.activeAcrossScreenAnimations).toBe(0);
+    world.trigger('peaceful_cloud', 'left');
+    world.update(0.01);
+    expect(world.activeAcrossScreenAnimations).toBe(1);
+  }, 30000);
+
+  it('queues and eventually launches more than twelve grenades without immediate splats', () => {
+    const sfx = new RecordingSfx();
+    const world = new World(400, 240, { seed: 23, sfx, maxAcrossScreenAnimations: 2 });
+    fire(world, 'slop_grenade', 'left', 13);
+    expect(world.left.splats).toHaveLength(0);
+    for (let i = 0; i < 1200 && sfx.played.filter((name) => name === 'throw').length < 13; i++) {
+      world.update(0.05);
+      expect(world.activeAcrossScreenAnimations).toBeLessThanOrEqual(world.maxAcrossScreenAnimations);
+    }
+    expect(sfx.played.filter((name) => name === 'throw')).toHaveLength(13);
+  }, 30000);
+
+  it('counts each cloud emission, caps it by logical processors, and releases slots before smoke clears', () => {
+    for (const limit of [1, 2, 4]) {
+      const sfx = new RecordingSfx();
+      const world = new World(400, 240, { seed: 27, sfx, maxAcrossScreenAnimations: limit });
+      fire(world, 'peaceful_cloud', 'left', 4);
+      for (let i = 0; i < 10; i++) world.update(0.01);
+      expect(world.activeAcrossScreenAnimations).toBe(world.maxAcrossScreenAnimations);
+      expect(world.maxAcrossScreenAnimations).toBeLessThanOrEqual(limit);
+      for (let i = 0; i < 500 &&
+        (sfx.played.filter((name) => name === 'smoke').length < 4 || world.activeAcrossScreenAnimations > 0); i++) {
+        world.update(0.05);
+        expect(world.activeAcrossScreenAnimations).toBeLessThanOrEqual(world.maxAcrossScreenAnimations);
+      }
+      expect(sfx.played.filter((name) => name === 'smoke')).toHaveLength(4);
+      expect(world.activeAcrossScreenAnimations).toBe(0);
+      expect(world.smoke.isEmpty()).toBe(false);
+    }
+    expect(() => new World(400, 240, { maxAcrossScreenAnimations: 0 })).toThrow(RangeError);
+    expect(() => new World(400, 240, { maxAcrossScreenAnimations: 1.5 })).toThrow(RangeError);
+  }, 30000);
+
+  it('uses the reported processor count, or one when unavailable', () => {
+    try {
+      vi.stubGlobal('navigator', { hardwareConcurrency: 1 });
+      expect(new World(400, 240, { maxAcrossScreenAnimations: 4 }).maxAcrossScreenAnimations).toBe(1);
+      vi.stubGlobal('navigator', { hardwareConcurrency: 8 });
+      expect(new World(400, 240).maxAcrossScreenAnimations).toBe(2);
+      vi.stubGlobal('navigator', undefined);
+      expect(new World(400, 240).maxAcrossScreenAnimations).toBe(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('uses a half-resolution smoke grid that still produces visible pixels', () => {
+    const world = new World(1920, 1080, { seed: 27 });
+    expect(world.smoke.ny).toBe(36);
+    expect(world.smoke.rh).toBe(108);
+    world.trigger('peaceful_cloud', 'left');
+    let visible = false;
+    for (let i = 0; i < 180; i++) {
+      world.update(0.05);
+      world.smoke.render();
+      visible ||= world.smoke.bx1 >= world.smoke.bx0;
+    }
+    expect(visible).toBe(true);
+  });
+
+  it('reduces effect artwork by 30% without changing grenade gravity', () => {
+    const world = new World(1920, 1080, { seed: 19 });
+    expect(world.s).toBeCloseTo(0.42 * 0.7, 8);
+    expect(world.flyDrawScale).toBeCloseTo(0.65 * 0.5, 8);
+    world.trigger('slop_grenade', 'left');
+    world.trigger('human_sparkle', 'right');
+    world.update(0.01);
+    world.update(0.01);
+    expect(world.grenades[0].gravity).toBeCloseTo(1500 * 0.42, 8);
+    expect(world.twinkles[0].size).toBeGreaterThanOrEqual(26 * 0.7);
+    expect(world.twinkles[0].size).toBeLessThanOrEqual(34 * 0.7);
+    expect(world.particles.items[0].gravity).toBeCloseTo(1600 * 0.42, 8);
+    world.reset();
+    world.trigger('innocent_fruit', 'right');
+    world.update(0.01);
+    expect(world.fruits[0].gravity).toBeCloseTo(1100 * 0.42, 8);
+    world.reset();
+    world.trigger('slop_splat', 'right');
+    world.update(0.01);
+    const cannon = world.cannon[0];
+    expect(cannon).toBeDefined();
+    const vy = cannon.vy;
+    world.update(0.01);
+    expect(cannon.vy - vy).toBeCloseTo(1700 * 0.42 * 0.01, 8);
+  });
+
   it('immediately resets airborne and ten queued grenades, sticky residue and sounds without recreating old splats', () => {
     const sfx = new RecordingSfx();
     const world = new World(400, 240, { seed: 7, flyDelay: 3, sfx });
-    for (const tier of ['slop_splat', 'innocent_fruit', 'peaceful_cloud', 'human_sparkle', 'slop_grenade'] as const) {
+    for (const tier of ['slop_grenade', 'slop_splat', 'innocent_fruit', 'peaceful_cloud', 'human_sparkle'] as const) {
       world.trigger(tier, 'left');
       world.update(0.05);
     }
@@ -68,7 +182,6 @@ describe('Slop Grenade effects engine', () => {
     expect(world.sfx).toBe(sfx);
     expect(world.flies.delay).toBe(3);
     expect(world.slopCounts()).toEqual({ left: 0, right: 0 });
-    expect(world.timeScale).toBe(1);
     expect(world.smoke.isEmpty()).toBe(true);
     expect(world.isIdle()).toBe(true);
     run(world, 20);
@@ -80,20 +193,37 @@ describe('Slop Grenade effects engine', () => {
     expect(world.twinkles.length).toBeGreaterThan(0);
   });
 
-  it('lobs a grenade in slow motion and splatters slop on the receiving (left) edge only', () => {
+  it('runs the entire world at normal speed through grenade flight and impact', () => {
     const sfx = new RecordingSfx();
     const world = new World(1920, 1080, { seed: 7, sfx });
     fire(world, 'slop_grenade', 'left');
-    let minScale = 1;
-    run(world, 7, (w) => (minScale = Math.min(minScale, w.timeScale)));
-    expect(minScale).toBeLessThan(0.4);
+    fire(world, 'innocent_fruit', 'right');
+    let sawLateFlight = false;
+    let sawImpact = false;
+    const dt = 1 / 60;
+    for (let i = 0; i < 240; i++) {
+      const before = world.now;
+      const grenade = world.grenades[0];
+      const grenadeAge = grenade?.age;
+      const explosion = world.explosions[0];
+      const explosionAge = explosion?.age;
+      world.update(dt);
+      expect(world.now - before).toBeCloseTo(dt, 8);
+      if (grenade && grenadeAge !== undefined) expect(grenade.age - grenadeAge).toBeCloseTo(dt, 8);
+      if (explosion && explosionAge !== undefined) expect(explosion.age - explosionAge).toBeCloseTo(dt, 8);
+      if (world.grenades.some((g) => g.t > 0.8)) sawLateFlight = true;
+      if (sfx.played.includes('explosion')) sawImpact = true;
+    }
+    expect(sawLateFlight).toBe(true);
+    expect(sawImpact).toBe(true);
     const counts = world.slopCounts();
     expect(counts.left).toBeGreaterThan(0);
     expect(counts.right).toBe(0);
     expect(sfx.played).toContain('throw');
     expect(sfx.played).toContain('explosion');
-    // back to normal speed once the bang is over
-    expect(world.timeScale).toBeGreaterThan(0.95);
+    expect(sfx.played.some((name) => name.startsWith('slowmo'))).toBe(false);
+    expect(sfx.fuseRates.length).toBeGreaterThan(0);
+    expect(sfx.fuseRates.every((rate) => rate === 1)).toBe(true);
   }, 30000);
 
   it('fires the ai-cannon at the sending (right) edge', () => {
