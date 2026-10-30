@@ -141,6 +141,38 @@ class PackagingPolicyTests(unittest.TestCase):
     def workflow(self, name):
         return (ROOT / ".github/workflows" / name).read_text()
 
+    def test_branch_dispatch_runs_policy_tests_without_requiring_a_tag(self):
+        workflow = self.workflow("release.yml")
+        validate = workflow.split("  validate:\n", 1)[1].split("\n  windows:", 1)[0]
+        self.assertIn("  workflow_dispatch:", workflow)
+        self.assertIn(
+            "- name: Validate version tag\n"
+            "        if: github.ref_type == 'tag'\n",
+            validate,
+        )
+        self.assertIn('python3 scripts/release.py validate-tag "$TAG"', validate)
+        self.assertIn(
+            "- name: Release policy regression tests\n"
+            "        run: python3 -m unittest discover -s scripts -p 'test_releases.py'",
+            validate,
+        )
+
+    def test_builds_and_publication_require_a_tag_and_successful_dependencies(self):
+        workflow = self.workflow("release.yml")
+        for job, needs in (
+            ("windows", "validate"), ("macos", "validate"), ("android", "validate"),
+            ("publish", "[windows, macos, android]"),
+        ):
+            with self.subTest(job=job):
+                self.assertIn(
+                    f"  {job}:\n"
+                    "    if: github.ref_type == 'tag'\n"
+                    f"    needs: {needs}\n",
+                    workflow,
+                )
+        self.assertIn("TAG: ${{ github.ref_name }}", workflow)
+        self.assertNotIn("always()", workflow)
+
     def test_one_publisher_waits_for_all_platforms(self):
         workflow = self.workflow("release.yml")
         self.assertIn('tags: ["v*"]', workflow)

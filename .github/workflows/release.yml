@@ -19,7 +19,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Require a version tag, including for manual runs
+      - name: Validate version tag
+        if: github.ref_type == 'tag'
         env:
           REF_TYPE: ${{ github.ref_type }}
           TAG: ${{ github.ref_name }}
@@ -30,14 +31,17 @@ jobs:
         run: python3 -m unittest discover -s scripts -p 'test_releases.py'
 
   windows:
+    if: github.ref_type == 'tag'
     needs: validate
     uses: ./.github/workflows/desktop.yml
 
   macos:
+    if: github.ref_type == 'tag'
     needs: validate
     uses: ./.github/workflows/macos.yml
 
   android:
+    if: github.ref_type == 'tag'
     needs: validate
     uses: ./.github/workflows/android.yml
     with:
@@ -49,6 +53,7 @@ jobs:
       SLOP_ANDROID_KEY_PASSWORD: ${{ secrets.SLOP_ANDROID_KEY_PASSWORD }}
 
   publish:
+    if: github.ref_type == 'tag'
     needs: [windows, macos, android]
     runs-on: ubuntu-24.04
     permissions:
