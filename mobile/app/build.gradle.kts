@@ -19,7 +19,7 @@ android {
         targetSdk = 35
         ndk { abiFilters += setOf("arm64-v8a", "x86_64") }
         versionCode = 1
-        versionName = System.getenv("SLOP_RELEASE_VERSION") ?: "0.3.0"
+        versionName = System.getenv("SLOP_ANDROID_VERSION_NAME") ?: "0.3.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     signingConfigs {

@@ -26,8 +26,9 @@ on:
   workflow_call:
     inputs:
       release_tag:
-        description: Validated release tag supplied by the complete release workflow
+        description: Optional version tag for the complete platform release
         type: string
+        required: false
         default: ""
 
 permissions:
@@ -40,6 +41,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -75,7 +77,12 @@ jobs:
           Copy-Item -Recurse -Force 'web\build' (Join-Path $stage 'web\build')
           Copy-Item -Force 'README.md' (Join-Path $stage 'README.md')
           Copy-Item -Force 'LICENSE' (Join-Path $stage 'LICENSE')
-          $version = if ($env:RELEASE_TAG) { $env:RELEASE_TAG.Substring(1) } elseif ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME.TrimStart('v') } else { (Get-Content VERSION -Raw).Trim() }
+          $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME.TrimStart('v') } else { (Get-Content VERSION -Raw).Trim() }
+          if ($env:RELEASE_TAG) {
+            python scripts/release.py validate-tag "$env:RELEASE_TAG"
+            if ($LASTEXITCODE -ne 0) { throw 'Invalid release tag.' }
+            $version = $env:RELEASE_TAG.Substring(1)
+          }
           $compiler = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
           if (-not (Test-Path $compiler)) { throw 'Inno Setup 6 is required to build the Windows installer.' }
           & $compiler "/DSourceDir=$stage" "/DAppVersion=$version" "/DOutputDir=$PWD" desktop\installer.iss

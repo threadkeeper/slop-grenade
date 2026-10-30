@@ -24,15 +24,16 @@ on:
   workflow_call:
     inputs:
       release_tag:
-        description: Validated release tag supplied by the complete release workflow
+        description: Optional version tag for the complete platform release
         type: string
+        required: false
         default: ""
 
 permissions:
   contents: read
 
 concurrency:
-  group: macos-${{ github.workflow }}-${{ github.ref }}
+  group: macos-${{ github.workflow }}-${{ inputs.release_tag || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -43,6 +44,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -113,10 +115,10 @@ jobs:
           mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/web"
           cp macos/Info.plist "$APP/Contents/Info.plist"
           VERSION="$(cat VERSION)"
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then VERSION="${GITHUB_REF_NAME#v}"; fi
           if [[ -n "$RELEASE_TAG" ]]; then
+            python3 scripts/release.py validate-tag "$RELEASE_TAG"
             VERSION="${RELEASE_TAG#v}"
-          elif [[ "$GITHUB_REF_TYPE" == tag ]]; then
-            VERSION="${GITHUB_REF_NAME#v}"
           fi
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" "$APP/Contents/Info.plist"
