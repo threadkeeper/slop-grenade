@@ -4,48 +4,58 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag (vMAJOR.MINOR.PATCH)
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
   cancel-in-progress: false
 
 jobs:
   validate:
     runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
       - name: Validate version tag
-        if: github.ref_type == 'tag'
+        id: version
         env:
-          REF_TYPE: ${{ github.ref_type }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
         run: |
-          test "$REF_TYPE" = tag
+          set -euo pipefail
           python3 scripts/release.py validate-tag "$TAG"
+          printf 'tag=%s\n' "$TAG" >> "$GITHUB_OUTPUT"
       - name: Release policy regression tests
         run: python3 -m unittest discover -s scripts -p 'test_releases.py'
 
   windows:
-    if: github.ref_type == 'tag'
     needs: validate
     uses: ./.github/workflows/desktop.yml
+    with:
+      release_tag: ${{ needs.validate.outputs.tag }}
 
   macos:
-    if: github.ref_type == 'tag'
     needs: validate
     uses: ./.github/workflows/macos.yml
+    with:
+      release_tag: ${{ needs.validate.outputs.tag }}
 
   android:
-    if: github.ref_type == 'tag'
     needs: validate
     uses: ./.github/workflows/android.yml
     with:
       release: true
+      release_tag: ${{ needs.validate.outputs.tag }}
     secrets:
       SLOP_ANDROID_KEYSTORE_BASE64: ${{ secrets.SLOP_ANDROID_KEYSTORE_BASE64 }}
       SLOP_ANDROID_STORE_PASSWORD: ${{ secrets.SLOP_ANDROID_STORE_PASSWORD }}
@@ -53,14 +63,14 @@ jobs:
       SLOP_ANDROID_KEY_PASSWORD: ${{ secrets.SLOP_ANDROID_KEY_PASSWORD }}
 
   publish:
-    if: github.ref_type == 'tag'
-    needs: [windows, macos, android]
+    needs: [validate, windows, macos, android]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
@@ -70,5 +80,6 @@ jobs:
       - name: Verify all local and uploaded packages before publishing
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ github.ref_name }}
-        run: python3 scripts/release.py publish "$TAG" release-assets
+          TAG: ${{ needs.validate.outputs.tag }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: python3 scripts/release.py publish "$TAG" release-assets --target "$SOURCE_SHA"
