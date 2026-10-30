@@ -21,6 +21,11 @@ on:
   workflow_dispatch:
   workflow_call:
     inputs:
+      release_tag:
+        description: Optional version tag for the complete platform release
+        type: string
+        required: false
+        default: ""
       release:
         description: Build the release-signed APK for the complete platform release
         type: boolean
@@ -47,7 +52,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: android-${{ github.workflow }}-${{ github.ref }}
+  group: android-${{ github.workflow }}-${{ inputs.release_tag || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -57,6 +62,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -117,6 +123,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -197,6 +204,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.sha }}
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -231,10 +239,17 @@ jobs:
           echo "SLOP_ANDROID_KEYSTORE=$keystore" >> "$GITHUB_ENV"
       - name: Build and verify release-signed Android installer
         env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
           SLOP_ANDROID_STORE_PASSWORD: ${{ secrets.SLOP_ANDROID_STORE_PASSWORD }}
           SLOP_ANDROID_KEY_ALIAS: ${{ secrets.SLOP_ANDROID_KEY_ALIAS }}
           SLOP_ANDROID_KEY_PASSWORD: ${{ secrets.SLOP_ANDROID_KEY_PASSWORD }}
-        run: bash mobile/scripts/build-android.sh release
+        run: |
+          set -euo pipefail
+          if [[ -n "$RELEASE_TAG" ]]; then
+            python3 scripts/release.py validate-tag "$RELEASE_TAG"
+            export SLOP_ANDROID_VERSION_NAME="${RELEASE_TAG#v}"
+          fi
+          bash mobile/scripts/build-android.sh release
       - name: Stage Android installer and checksum
         run: |
           set -euo pipefail
