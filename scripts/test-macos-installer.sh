@@ -8,7 +8,7 @@ test -x "$app/Contents/MacOS/slop-grenade"
 test -s "$app/Contents/Resources/web/build/index.html"
 codesign --verify --deep --strict "$app"
 for binary in slop-grenade slop-grenade-overlay; do
-  lipo -verify_arch arm64 x86_64 "$app/Contents/MacOS/$binary"
+  lipo "$app/Contents/MacOS/$binary" -verify_arch arm64 x86_64
 done
 
 HTTP_BIND=127.0.0.1:18090 SLOP_AUTO_POLL=0 GMAIL_ENABLED=0 \
