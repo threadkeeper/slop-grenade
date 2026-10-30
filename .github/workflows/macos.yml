@@ -3,13 +3,13 @@ name: macOS desktop compatibility
 on:
   push:
     branches: [main]
-    tags: ["v*"]
     paths:
       - "core/**"
       - "rust/**"
       - "web/**"
       - "macos/**"
       - "scripts/install-macos.sh"
+      - "scripts/test-macos-installer.sh"
       - ".github/workflows/macos.yml"
   pull_request:
     paths:
@@ -18,11 +18,13 @@ on:
       - "web/**"
       - "macos/**"
       - "scripts/install-macos.sh"
+      - "scripts/test-macos-installer.sh"
       - ".github/workflows/macos.yml"
   workflow_dispatch:
+  workflow_call:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: macos-${{ github.workflow }}-${{ github.ref }}
@@ -96,21 +98,34 @@ jobs:
             -output macos/build/slop-grenade-overlay
           lipo -info macos/build/slop-grenade-overlay
 
-      - name: Package Universal macOS bundle and SHA-256 checksum
+      - name: Package Universal macOS installer, portable bundle and SHA-256 checksums
         run: |
           set -euo pipefail
           STAGE="$RUNNER_TEMP/slop-grenade-macos-universal"
           APP="$STAGE/Slop Grenade.app"
-          rm -rf "$STAGE"
-          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/web" "$STAGE/web"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/web"
           cp macos/Info.plist "$APP/Contents/Info.plist"
+          VERSION="$(cat VERSION)"
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then VERSION="${GITHUB_REF_NAME#v}"; fi
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" "$APP/Contents/Info.plist"
           cp macos/build/slop-grenade-overlay "$APP/Contents/MacOS/slop-grenade-overlay"
           cp rust/target/universal-apple-darwin/release/slop-grenade "$APP/Contents/MacOS/slop-grenade"
           cp -R web/build "$APP/Contents/Resources/web/build"
           chmod +x "$APP/Contents/MacOS/slop-grenade-overlay" "$APP/Contents/MacOS/slop-grenade"
           codesign --force --deep --sign - "$APP"
 
+          pkgbuild --analyze --root "$STAGE" "$RUNNER_TEMP/components.plist"
+          /usr/libexec/PlistBuddy -c "Set :0:BundleIsRelocatable false" "$RUNNER_TEMP/components.plist"
+          pkgbuild --root "$STAGE" \
+            --component-plist "$RUNNER_TEMP/components.plist" \
+            --install-location /Applications \
+            --identifier com.threadkeeper.slop-grenade \
+            --version "$VERSION" \
+            "$PWD/slop-grenade-macos-universal.pkg"
+
           cp rust/target/universal-apple-darwin/release/slop-grenade "$STAGE/slop-grenade"
+          mkdir -p "$STAGE/web"
           cp -R web/build "$STAGE/web/build"
           cp scripts/install-macos.sh "$STAGE/install-macos.sh"
           chmod +x "$STAGE/slop-grenade" "$STAGE/install-macos.sh"
@@ -119,26 +134,22 @@ jobs:
 
           TAR_NAME="slop-grenade-macos-universal.tar.gz"
           tar -C "$STAGE" -czf "$PWD/$TAR_NAME" .
-          HASH="$(shasum -a 256 "$PWD/$TAR_NAME" | awk '{print $1}')"
-          printf "%s  %s" "$HASH" "$TAR_NAME" > "$PWD/$TAR_NAME.sha256"
-          shasum -a 256 -c "$PWD/$TAR_NAME.sha256"
+          for NAME in "$TAR_NAME" slop-grenade-macos-universal.pkg; do
+            HASH="$(shasum -a 256 "$PWD/$NAME" | awk '{print $1}')"
+            printf "%s  %s\n" "$HASH" "$NAME" > "$PWD/$NAME.sha256"
+            shasum -a 256 -c "$PWD/$NAME.sha256"
+          done
 
-      - name: Upload verified macOS Universal bundle
+      - name: Install and launch the macOS package
+        run: bash scripts/test-macos-installer.sh "$PWD/slop-grenade-macos-universal.pkg"
+
+      - name: Upload verified macOS Universal installer and portable bundle
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: slop-grenade-macos-universal
           path: |
+            slop-grenade-macos-universal.pkg
+            slop-grenade-macos-universal.pkg.sha256
             slop-grenade-macos-universal.tar.gz
             slop-grenade-macos-universal.tar.gz.sha256
           if-no-files-found: error
-
-      - name: Attach macOS Universal bundle to GitHub Release on tag push
-        if: startsWith(github.ref, 'refs/tags/v')
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          TAG="${GITHUB_REF#refs/tags/}"
-          gh release upload "$TAG" \
-            slop-grenade-macos-universal.tar.gz \
-            slop-grenade-macos-universal.tar.gz.sha256 \
-            --clobber

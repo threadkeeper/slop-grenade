@@ -4,6 +4,22 @@ This document covers the internal architecture, API contracts, build/test comman
 
 ---
 
+## Release packaging
+
+The [complete release workflow](./.github/workflows/release.yml) is the only automated GitHub Release publisher. Push an ordinary `vMAJOR.MINOR.PATCH` tag, or rerun that workflow manually **on the tag**, not on a branch. It calls the Windows, macOS and Android build workflows at the same commit, with no path filters. A failed or skipped platform prevents publication; never work around a failed build by publishing just the successful platform.
+
+Every release includes a Windows x64 setup executable, a Universal macOS `.pkg`, a release-signed Android APK, and the optional desktop portable archives, each with a matching SHA-256 file. Windows setup is built with Inno Setup 6 on the Windows runner and installs under `%LOCALAPPDATA%\SlopGrenade`, with executables in `bin` and dashboard assets in `web\build`. macOS `pkgbuild` installs the complete app into `/Applications`. Native runner smoke tests install these packages and check that the installed daemon serves its dashboard; Windows additionally checks overlay startup, its shortcut, and uninstall.
+
+Configure the private release signing secrets `SLOP_ANDROID_KEYSTORE_BASE64`, `SLOP_ANDROID_STORE_PASSWORD`, `SLOP_ANDROID_KEY_ALIAS` and `SLOP_ANDROID_KEY_PASSWORD` before running a release. The keystore is restored only in a temporary private file and removed even on failure. Missing credentials fail the whole release; debug keys and the separate OAuth test key are never substitutes. Keep the release certificate registered with Google OAuth and complete the existing provider acceptance gates before distributing it.
+
+Windows packages are not Authenticode-signed. macOS apps are ad-hoc signed; the package is not Developer ID-signed or notarized. Release notes must state these limitations accurately without branding any release as "experimental". Signing/notarization is not implied by a successful packaging test.
+
+`python3 scripts/release.py verify DIRECTORY` requires the exact complete asset set and validates every checksum. Publication creates or resumes a draft, uploads the verified files, verifies GitHub's asset names, sizes and digests, then publishes and marks it latest. Upload failures leave a draft rather than a partial public release. Reruns can resume drafts but refuse to overwrite public releases. Do not manually attach individual platform artifacts or publish a platform-only release.
+
+Run `python3 -m unittest discover -s scripts -p 'test_*.py'` for release policy, checksum and publication-order regressions. The ordinary platform workflows retain read-only repository permissions and upload CI artifacts only; OAuth test APKs remain separate from releases.
+
+---
+
 ## 1. System Architecture
 
 Slop Grenade consists of three coordinated components:

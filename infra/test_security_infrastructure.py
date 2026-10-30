@@ -82,7 +82,8 @@ class SecurityInfrastructureTests(unittest.TestCase):
         self.assertIn("x86_64-apple-darwin", self.macos_workflow)
         self.assertIn("cargo build --locked --manifest-path rust/Cargo.toml --release", self.macos_workflow)
         self.assertIn("slop-grenade-macos-universal.tar.gz.sha256", self.macos_workflow)
-        self.assertIn("gh release upload", self.macos_workflow)
+        self.assertIn("slop-grenade-macos-universal.pkg.sha256", self.macos_workflow)
+        self.assertNotIn("gh release upload", self.macos_workflow)
 
     def test_desktop_gmail_release_metadata_requires_explicit_production_approval(self) -> None:
         windows_workflow = (

@@ -43,7 +43,8 @@ class AndroidSigningPolicyTests(unittest.TestCase):
 
     def test_untrusted_validation_cannot_publish_or_receive_signing_secrets(self):
         workflow = (MOBILE.parent / ".github" / "workflows" / "android.yml").read_text()
-        compatibility, artifact = workflow.split("  oauth-test-apk:\n", 1)
+        compatibility, artifacts = workflow.split("  oauth-test-apk:\n", 1)
+        artifact = artifacts.split("  release-apk:\n", 1)[0]
         self.assertNotIn("secrets.", compatibility)
         self.assertNotIn("upload-artifact@", compatibility)
         for gate in ("Rust compatibility gates", "Web compatibility gates",
@@ -51,7 +52,7 @@ class AndroidSigningPolicyTests(unittest.TestCase):
                      "testDebugUnitTest", "lintDebug", "build-android.sh debug"):
             self.assertIn(gate, compatibility)
         self.assertIn("needs: compatibility", artifact)
-        self.assertIn("if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'", artifact)
+        self.assertIn("if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && !inputs.release", artifact)
         self.assertNotIn("pull_request_target", workflow)
         self.assertIn("contents: read", workflow)
         self.assertNotIn("gh release upload", workflow)

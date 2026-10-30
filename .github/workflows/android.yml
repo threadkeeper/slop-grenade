@@ -3,7 +3,6 @@ name: Android and shared-core compatibility
 on:
   push:
     branches: [main, android-mobile-integration]
-    tags: ["v*"]
     paths:
       - "core/**"
       - "mobile/**"
@@ -20,6 +19,29 @@ on:
       - "Dockerfile"
       - ".github/workflows/android.yml"
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      release:
+        description: Build the release-signed APK for the complete platform release
+        type: boolean
+        default: false
+    secrets:
+      SLOP_ANDROID_KEYSTORE_BASE64:
+        required: true
+      SLOP_ANDROID_STORE_PASSWORD:
+        required: true
+      SLOP_ANDROID_KEY_ALIAS:
+        required: true
+      SLOP_ANDROID_KEY_PASSWORD:
+        required: true
+      SLOP_ANDROID_TEST_KEYSTORE_BASE64:
+        required: false
+      SLOP_ANDROID_TEST_STORE_PASSWORD:
+        required: false
+      SLOP_ANDROID_TEST_KEY_ALIAS:
+        required: false
+      SLOP_ANDROID_TEST_KEY_PASSWORD:
+        required: false
 
 permissions:
   contents: read
@@ -89,7 +111,7 @@ jobs:
             :app:testDebugUnitTest :accounts:testDebugUnitTest :core:testDebugUnitTest :app:lintDebug
   oauth-test-apk:
     needs: compatibility
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && !inputs.release
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -167,3 +189,65 @@ jobs:
         shell: bash
         run: |
           rm -f -- "$RUNNER_TEMP/slop-grenade-android-test.jks"
+  release-apk:
+    needs: compatibility
+    if: inputs.release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+      - name: Configure release artifact toolchains
+        run: |
+          set -euo pipefail
+          sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:?Android SDK is missing}}"
+          echo "ANDROID_SDK_ROOT=$sdk" >> "$GITHUB_ENV"
+          "$sdk/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-35" "build-tools;35.0.0" "ndk;27.3.13750724"
+          rustup target add aarch64-linux-android x86_64-linux-android
+          npm --prefix web ci
+          npm --prefix web run build
+      - name: Restore release signing keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.SLOP_ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          test -n "$KEYSTORE_BASE64" || { echo "Android release signing keystore is missing." >&2; exit 1; }
+          umask 077
+          keystore="$RUNNER_TEMP/slop-grenade-android-release.jks"
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$keystore"
+          chmod 600 "$keystore"
+          echo "SLOP_ANDROID_KEYSTORE=$keystore" >> "$GITHUB_ENV"
+      - name: Build and verify release-signed Android installer
+        env:
+          SLOP_ANDROID_STORE_PASSWORD: ${{ secrets.SLOP_ANDROID_STORE_PASSWORD }}
+          SLOP_ANDROID_KEY_ALIAS: ${{ secrets.SLOP_ANDROID_KEY_ALIAS }}
+          SLOP_ANDROID_KEY_PASSWORD: ${{ secrets.SLOP_ANDROID_KEY_PASSWORD }}
+        run: bash mobile/scripts/build-android.sh release
+      - name: Stage Android installer and checksum
+        run: |
+          set -euo pipefail
+          cp mobile/app/build/outputs/apk/release/app-release.apk slop-grenade-android.apk
+          bash mobile/scripts/artifact-checksum.sh slop-grenade-android.apk --write
+      - name: Upload verified Android installer
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: slop-grenade-android
+          path: |
+            slop-grenade-android.apk
+            slop-grenade-android.apk.sha256
+          if-no-files-found: error
+      - name: Remove temporary release signing keystore
+        if: always()
+        run: rm -f -- "$RUNNER_TEMP/slop-grenade-android-release.jks"

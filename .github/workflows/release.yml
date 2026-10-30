@@ -1,0 +1,69 @@
+name: Complete platform release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Require a version tag, including for manual runs
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          test "$REF_TYPE" = tag
+          python3 scripts/release.py validate-tag "$TAG"
+      - name: Release policy regression tests
+        run: python3 -m unittest discover -s scripts -p 'test_releases.py'
+
+  windows:
+    needs: validate
+    uses: ./.github/workflows/desktop.yml
+
+  macos:
+    needs: validate
+    uses: ./.github/workflows/macos.yml
+
+  android:
+    needs: validate
+    uses: ./.github/workflows/android.yml
+    with:
+      release: true
+    secrets:
+      SLOP_ANDROID_KEYSTORE_BASE64: ${{ secrets.SLOP_ANDROID_KEYSTORE_BASE64 }}
+      SLOP_ANDROID_STORE_PASSWORD: ${{ secrets.SLOP_ANDROID_STORE_PASSWORD }}
+      SLOP_ANDROID_KEY_ALIAS: ${{ secrets.SLOP_ANDROID_KEY_ALIAS }}
+      SLOP_ANDROID_KEY_PASSWORD: ${{ secrets.SLOP_ANDROID_KEY_PASSWORD }}
+
+  publish:
+    needs: [windows, macos, android]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          pattern: slop-grenade-*
+          merge-multiple: true
+          path: release-assets
+      - name: Verify all local and uploaded packages before publishing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: python3 scripts/release.py publish "$TAG" release-assets
