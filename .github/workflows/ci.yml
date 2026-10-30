@@ -73,4 +73,6 @@ jobs:
           npm run build --prefix web
 
       - name: Run infrastructure & supply-chain policy checks
-        run: python3 -m unittest discover -s infra -p 'test_*.py'
+        run: |
+          python3 -m unittest discover -s infra -p 'test_*.py'
+          python3 -m unittest discover -s scripts -p 'test_*.py'
