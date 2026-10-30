@@ -114,6 +114,7 @@ jobs:
           APP="$STAGE/Slop Grenade.app"
           mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/web"
           cp macos/Info.plist "$APP/Contents/Info.plist"
+          cp macos/SlopGrenade.icns "$APP/Contents/Resources/SlopGrenade.icns"
           VERSION="$(cat VERSION)"
           if [[ "$GITHUB_REF_TYPE" == tag ]]; then VERSION="${GITHUB_REF_NAME#v}"; fi
           if [[ -n "$RELEASE_TAG" ]]; then

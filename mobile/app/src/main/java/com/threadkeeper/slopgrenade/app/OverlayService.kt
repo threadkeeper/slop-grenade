@@ -23,6 +23,7 @@ import android.view.Gravity
 import android.view.WindowManager
 import android.webkit.WebView
 import androidx.webkit.WebViewCompat
+import com.threadkeeper.slopgrenade.R
 import org.json.JSONObject
 import java.util.concurrent.CompletableFuture
 
@@ -136,7 +137,7 @@ class OverlayService : Service() {
         val stop = PendingIntent.getService(this, 1,
             Intent(this, OverlayService::class.java).setAction(ACTION_STOP), immutable)
         val builder = Notification.Builder(this, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("Slop Grenade screen-edge effects")
             .setContentText("Effects remain on across apps. Connect Gmail or tap Stop.")
             .setContentIntent(open)

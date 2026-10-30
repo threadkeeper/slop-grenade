@@ -6,6 +6,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { runStage, type EffectTier, type Side, type SfxSink, type Stage, type StageCue } from '$lib/engine';
+  import { playBarrage, playSample } from '$lib/samplePlayback';
 
   let {
     sfx = null,
@@ -21,6 +22,9 @@
   let canvas: HTMLCanvasElement | undefined = $state();
   let stage: Stage | null = null;
   let side = $state<Side>('left');
+  let samplePlaying = $state(false);
+  let cancelSample: (() => void) | null = null;
+  let cancelBarrage: (() => void) | null = null;
   let lastSeq = -1;
   let lastResetEpoch = 0;
 
@@ -34,6 +38,8 @@
     ro.observe(canvas);
     return () => {
       ro.disconnect();
+      stopSample();
+      stopBarrage();
       stage?.stop();
       stage = null;
     };
@@ -49,36 +55,61 @@
     const c = cue;
     if (stage && epoch !== lastResetEpoch) {
       lastResetEpoch = epoch;
+      stopSample();
+      stopBarrage();
       stage.reset();
     }
     if (!c || !stage || c.seq === lastSeq) return;
     lastSeq = c.seq;
+    stopSample();
     if (c.squeegee) stage.world.squeegee(c.side);
     else if (c.tier) stage.world.trigger(c.tier, c.side);
   });
 
+  function trigger(tier: EffectTier, which: Side) {
+    stage?.world.trigger(tier, which);
+  }
+
+  function stopSample() {
+    cancelSample?.();
+    cancelSample = null;
+    samplePlaying = false;
+  }
+
+  function stopBarrage() {
+    cancelBarrage?.();
+    cancelBarrage = null;
+  }
+
+  function toggleSample() {
+    if (samplePlaying) {
+      stopSample();
+      return;
+    }
+    if (!stage) return;
+    stopBarrage();
+    samplePlaying = true;
+    cancelSample = playSample(trigger, () => {
+      cancelSample = null;
+      samplePlaying = false;
+    });
+  }
+
   function fire(tier: EffectTier) {
-    stage?.world.trigger(tier, side);
+    stopSample();
+    trigger(tier, side);
   }
 
   function wipe(which: Side) {
+    stopSample();
     stage?.world.squeegee(which);
   }
 
   function barrage() {
-    const w = stage?.world;
-    if (!w) return;
-    const plan: [number, EffectTier, Side][] = [
-      [0, 'peaceful_cloud', 'right'],
-      [250, 'slop_grenade', 'left'],
-      [900, 'slop_splat', 'right'],
-      [1500, 'human_sparkle', 'left'],
-      [3200, 'innocent_fruit', 'left'],
-      [3700, 'innocent_fruit', 'right'],
-      [4300, 'slop_grenade', 'right'],
-      [5200, 'innocent_fruit', 'left']
-    ];
-    for (const [ms, tier, s] of plan) w.triggerLater(ms / 1000, tier, s);
+    if (!stage) return;
+    stopSample();
+    stopBarrage();
+    cancelBarrage = playBarrage(trigger, () => (cancelBarrage = null));
   }
 </script>
 
@@ -91,14 +122,53 @@
   <div class="monitor">
     <div class="screen">
       <div class="desk" aria-hidden="true">
-        <div class="win w1"><i></i><i></i><i></i><i></i></div>
-        <div class="win w2"><i></i><i></i><i></i></div>
+        <div class="mail-window">
+          <div class="mail-title"><span>Example inbox - Mail</span><span>&#8722; &nbsp; &#9633; &nbsp; &#215;</span></div>
+          <div class="mail-body">
+            <div class="mail-nav">
+              <strong>Mail</strong>
+              <span class="selected">Inbox</span>
+              <span>Sent Items</span>
+              <span>Drafts</span>
+              <span>Archive</span>
+            </div>
+            <div class="mail-content">
+              <div class="mail-heading"><strong>Inbox</strong><span>Today</span></div>
+              <div class="mail-row selected">
+                <span class="avatar pink">A</span>
+                <div><strong>Alex</strong><span>Project update</span><small>Thanks, I'll take a look this afternoon.</small></div>
+                <time>9:41</time>
+              </div>
+              <div class="mail-row">
+                <span class="avatar blue">T</span>
+                <div><strong>Taylor</strong><span>Weekly check-in</span><small>Here are the notes from our meeting.</small></div>
+                <time>9:12</time>
+              </div>
+              <div class="mail-row">
+                <span class="avatar green">S</span>
+                <div><strong>Sam</strong><span>Re: Next steps</span><small>Sounds good to me.</small></div>
+                <time>8:56</time>
+              </div>
+              <div class="mail-row">
+                <span class="avatar gold">J</span>
+                <div><strong>Jamie</strong><span>Lunch plans</span><small>Are we still on for today?</small></div>
+                <time>8:30</time>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="taskbar">
+          <span class="task-icon blue"></span><span class="task-icon gold"></span>
+          <span class="task-icon green"></span><span class="task-icon pink"></span>
+          <span class="task-clock">9:41</span>
+        </div>
       </div>
       <canvas bind:this={canvas} aria-label="Effects preview"></canvas>
       <span class="edge-tag left">INCOMING</span>
       <span class="edge-tag right">OUTGOING</span>
     </div>
   </div>
+  <p class="range-note">Example inbox &middot; No real messages are shown. The sample spaces out effects; firing a test stops it.</p>
 
   <div class="range-controls">
     <div class="lever" role="radiogroup" aria-label="Edge to hit">
@@ -109,13 +179,16 @@
         Outgoing &#9654;
       </button>
     </div>
+    <button class="brass sample" aria-pressed={samplePlaying} onclick={toggleSample}>
+      {samplePlaying ? 'Stop sample' : 'Play sample'}
+    </button>
     <div class="arsenal">
       <button class="brass big" onclick={() => fire('slop_grenade')}>Slop Grenade!</button>
       <button class="brass" onclick={() => fire('slop_splat')}>AI Cannon</button>
       <button class="brass" onclick={() => fire('innocent_fruit')}>Toss Fruit</button>
       <button class="brass" onclick={() => fire('peaceful_cloud')}>Smoke</button>
       <button class="brass" onclick={() => fire('human_sparkle')}>Twinkle</button>
-      <button class="brass" onclick={barrage}>Barrage</button>
+      <button class="brass" title="Stress-test several effects at once" onclick={barrage}>Barrage</button>
     </div>
     <div class="squeegees">
       <button class="brass" onclick={() => wipe('left')}>&#9664; Squeegee</button>
@@ -147,13 +220,12 @@
 
   .screen {
     position: relative;
+    container-type: inline-size;
     aspect-ratio: 16 / 9;
     border: 3px solid var(--ink);
     border-radius: 6px;
     overflow: hidden;
-    background:
-      repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.03) 0 2px, transparent 2px 4px),
-      radial-gradient(ellipse at 60% 30%, #3b5f8a, #1d2f4a 70%, #121c2c);
+    background: linear-gradient(115deg, #263d63, #6388b2);
   }
 
   .desk {
@@ -161,42 +233,146 @@
     inset: 0;
   }
 
-  .win {
+  .mail-window {
     position: absolute;
-    background: #f4f1ea;
-    border: 2px solid #0e1622;
-    border-top-width: 14px;
-    border-radius: 3px;
-    padding: 10px 12px;
+    left: 19%;
+    top: 10%;
+    width: 62%;
+    height: 74%;
+    overflow: hidden;
+    border: 1px solid #aeb9c9;
+    border-radius: 5px;
+    background: #f8f9fb;
+    box-shadow: 0 5px 16px rgba(8, 24, 45, 0.35);
+    color: #293444;
+    font: clamp(6px, 1.05cqw, 11px)/1.2 'Segoe UI', sans-serif;
+  }
+
+  .mail-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 12%;
+    padding: 0 2.5%;
+    background: #edf1f7;
+    color: #576579;
+  }
+
+  .mail-body {
+    display: flex;
+    height: 88%;
+  }
+
+  .mail-nav {
     display: flex;
     flex-direction: column;
-    gap: 7px;
-    opacity: 0.92;
+    gap: 6%;
+    width: 23%;
+    padding: 3% 1.5%;
+    background: #f1f3f6;
   }
 
-  .win i {
-    display: block;
-    height: 6px;
-    border-radius: 3px;
-    background: #c9ced6;
+  .mail-nav span,
+  .mail-nav strong {
+    padding: 3% 5%;
+    white-space: nowrap;
   }
 
-  .win i:nth-child(2n) {
-    width: 70%;
+  .mail-nav .selected,
+  .mail-row.selected {
+    background: #e4edf9;
   }
 
-  .w1 {
-    left: 24%;
-    top: 14%;
-    width: 38%;
-    height: 52%;
+  .mail-content {
+    flex: 1;
+    min-width: 0;
+    padding: 1% 2%;
   }
 
-  .w2 {
-    left: 52%;
-    top: 40%;
-    width: 26%;
-    height: 34%;
+  .mail-heading {
+    display: flex;
+    justify-content: space-between;
+    padding: 2% 1%;
+    color: #53637a;
+  }
+
+  .mail-row {
+    display: flex;
+    align-items: center;
+    gap: 2%;
+    height: 19%;
+    padding: 1% 1.5%;
+    border-bottom: 1px solid #e4e7ec;
+  }
+
+  .mail-row div {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .mail-row span,
+  .mail-row small {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .mail-row div > span {
+    color: #315b91;
+  }
+
+  .mail-row small,
+  .mail-row time {
+    color: #798391;
+    font-size: 0.85em;
+  }
+
+  .avatar {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 2.5cqw;
+    height: 2.5cqw;
+    border-radius: 50%;
+    font-weight: 700;
+  }
+
+  .pink { background: #efd2df; }
+  .blue { background: #c9ddf1; }
+  .green { background: #d3e6dc; }
+  .gold { background: #f1dfbf; }
+
+  .taskbar {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1%;
+    height: 7%;
+    background: rgba(235, 239, 246, 0.9);
+  }
+
+  .task-icon {
+    width: 2.1cqw;
+    height: 2.1cqw;
+    border-radius: 25%;
+  }
+
+  .task-icon.blue { background: #3d74c7; }
+  .task-icon.gold { background: #dda037; }
+  .task-icon.green { background: #4a9d77; }
+  .task-icon.pink { background: #db5b8b; }
+
+  .task-clock {
+    position: absolute;
+    right: 3%;
+    font: clamp(6px, 0.9cqw, 10px) 'Segoe UI', sans-serif;
+    color: #46566b;
   }
 
   canvas {
@@ -205,11 +381,12 @@
     width: 100%;
     height: 100%;
     display: block;
+    pointer-events: none;
   }
 
   .edge-tag {
     position: absolute;
-    bottom: 6px;
+    bottom: 8.5%;
     font: 11px var(--comic);
     letter-spacing: 1.5px;
     color: rgba(255, 255, 255, 0.55);
@@ -229,7 +406,17 @@
     flex-wrap: wrap;
     align-items: center;
     gap: 10px 16px;
-    margin-top: 14px;
+    margin-top: 10px;
+  }
+
+  .range-note {
+    margin: 12px 2px 0;
+    color: #654623;
+    font-size: 12px;
+  }
+
+  .sample {
+    background: linear-gradient(#fff0b0, #e0b448 55%, #ae7824);
   }
 
   .arsenal,

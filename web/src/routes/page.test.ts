@@ -20,6 +20,7 @@ describe('shared dashboard UI', () => {
     expect(body).toContain('Effects test range');
     expect(body).toContain('Sound: Off');
     expect(body).toContain('Volume');
+    expect(body).toMatch(/class="version(?: [^"]*)?"[^>]*>v\d+\.\d+\.\d+/);
     expect(body).not.toContain('Authorize Gmail account');
     expect(body).toContain('Sign in to Microsoft 365');
     expect(body).toContain('Sign out of Microsoft 365');

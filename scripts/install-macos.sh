@@ -39,6 +39,7 @@ else
   rm -rf "$APP_BUNDLE"
   mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources/web"
   cp "$REPO_ROOT/macos/Info.plist" "$APP_BUNDLE/Contents/Info.plist"
+  cp "$REPO_ROOT/macos/SlopGrenade.icns" "$APP_BUNDLE/Contents/Resources/SlopGrenade.icns"
   cp "$REPO_ROOT/rust/target/release/slop-grenade" "$APP_BUNDLE/Contents/MacOS/slop-grenade"
   cp -R "$REPO_ROOT/web/build" "$APP_BUNDLE/Contents/Resources/web/build"
   swiftc -O "$REPO_ROOT/macos/SlopGrenadeOverlay.swift" \

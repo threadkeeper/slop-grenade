@@ -6,6 +6,8 @@
     <string>en</string>
     <key>CFBundleDisplayName</key>
     <string>Slop Grenade</string>
+    <key>CFBundleIconFile</key>
+    <string>SlopGrenade.icns</string>
     <key>CFBundleExecutable</key>
     <string>slop-grenade-overlay</string>
     <key>CFBundleIdentifier</key>

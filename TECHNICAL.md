@@ -192,7 +192,7 @@ npm --prefix web run test
 npm --prefix web run check
 npm --prefix web run build
 ```
-Unit tests: `web/src/lib/dashboard.test.ts` (time/direction filters, local timestamps, full-result sorting, 50-row pages, gauges and leaderboards), `web/src/lib/refresh.test.ts` (span-to-days mapping, legacy/Android compatibility, correlated live counters, non-overlap, disposal and visible failures), and `web/src/lib/engine.test.ts` (normal-speed grenade flight and edge splat, cannon side, fruit sticks only on slop, squeegee clears one side, flies arrive and leave, smoke and twinkles fade, 20 fruit models with no labels, sound bank levels).
+Unit tests: `web/src/lib/dashboard.test.ts` (time/direction filters, local timestamps, full-result sorting, 50-row pages, gauges and leaderboards), `web/src/lib/refresh.test.ts` (span-to-days mapping, legacy/Android compatibility, correlated live counters, non-overlap, disposal and visible failures), `web/src/lib/samplePlayback.test.ts` (paced, cancellable sample activity), and `web/src/lib/engine.test.ts` (normal-speed grenade flight and edge splat, cannon side, fruit sticks only on slop, squeegee clears one side, flies arrive and leave, smoke and twinkles fade, 20 fruit models with no labels, sound bank levels).
 
 ### Native Windows Desktop Overlay (`desktop/`)
 
@@ -206,6 +206,7 @@ The Windows desktop compatibility workflow runs the same tests and production co
 ```powershell
 & "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:winexe /optimize+ `
     /r:System.dll,System.Drawing.dll,System.Windows.Forms.dll,System.Web.Extensions.dll `
+    /win32icon:desktop\slop-grenade.ico `
     /out:desktop\slop-grenade-overlay.exe /recurse:desktop\*.cs
 ```
 

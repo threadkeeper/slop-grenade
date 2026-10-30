@@ -54,7 +54,7 @@ jobs:
       - name: Compile the production overlay
         shell: pwsh
         run: |
-          & 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe' /nologo /langversion:5 /target:winexe /optimize+ /r:System.dll,System.Drawing.dll,System.Windows.Forms.dll,System.Web.Extensions.dll /out:desktop\slop-grenade-overlay.exe '/recurse:desktop\*.cs'
+          & 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe' /nologo /langversion:5 /target:winexe /optimize+ /r:System.dll,System.Drawing.dll,System.Windows.Forms.dll,System.Web.Extensions.dll /win32icon:desktop\slop-grenade.ico /out:desktop\slop-grenade-overlay.exe '/recurse:desktop\*.cs'
           if ($LASTEXITCODE -ne 0) { throw 'Desktop compilation failed.' }
       - name: Build web assets and release Rust daemon
         shell: pwsh
@@ -74,6 +74,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path (Join-Path $stage 'bin'), (Join-Path $stage 'web') | Out-Null
           Copy-Item -Force 'rust\target\release\slop-grenade.exe' (Join-Path $stage 'bin\slop-grenade.exe')
           Copy-Item -Force 'desktop\slop-grenade-overlay.exe' (Join-Path $stage 'bin\slop-grenade-overlay.exe')
+          Copy-Item -Force 'desktop\slop-grenade.ico' (Join-Path $stage 'slop-grenade.ico')
           Copy-Item -Recurse -Force 'web\build' (Join-Path $stage 'web\build')
           Copy-Item -Force 'README.md' (Join-Path $stage 'README.md')
           Copy-Item -Force 'LICENSE' (Join-Path $stage 'LICENSE')

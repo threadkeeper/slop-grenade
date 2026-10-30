@@ -53,7 +53,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupMenuBar() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         if let button = item.button {
-            button.title = "💥"
+            if let url = Bundle.main.url(forResource: "SlopGrenade", withExtension: "icns"),
+               let icon = NSImage(contentsOf: url) {
+                icon.size = NSSize(width: 18, height: 18)
+                button.image = icon
+            } else {
+                button.title = "SG"
+                NSLog("Slop Grenade menu bar icon is missing from the app bundle.")
+            }
             button.toolTip = "Slop Grenade — M365 AI Slop Detector & Screen Overlay"
         }
 

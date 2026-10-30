@@ -15,6 +15,7 @@ $CscPath = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 $OverlayExe = "$RepoRoot\desktop\slop-grenade-overlay.exe"
 & $CscPath /nologo /target:winexe /optimize+ `
     /r:System.dll,System.Drawing.dll,System.Windows.Forms.dll,System.Web.Extensions.dll `
+    "/win32icon:$RepoRoot\desktop\slop-grenade.ico" `
     /out:$OverlayExe `
     "/recurse:$RepoRoot\desktop\*.cs"
 if ($LASTEXITCODE -ne 0) {

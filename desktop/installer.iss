@@ -23,6 +23,7 @@ MinVersion=10.0
 OutputDir={#OutputDir}
 OutputBaseFilename=slop-grenade-windows-x64-setup
 LicenseFile={#SourceDir}\LICENSE
+SetupIconFile={#SourceDir}\slop-grenade.ico
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern

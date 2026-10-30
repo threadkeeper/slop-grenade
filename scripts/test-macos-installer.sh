@@ -6,6 +6,11 @@ app="/Applications/Slop Grenade.app"
 test -x "$app/Contents/MacOS/slop-grenade-overlay"
 test -x "$app/Contents/MacOS/slop-grenade"
 test -s "$app/Contents/Resources/web/build/index.html"
+test -s "$app/Contents/Resources/web/build/favicon.png"
+icon="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$app/Contents/Info.plist")"
+test "$icon" = "SlopGrenade.icns"
+test -s "$app/Contents/Resources/$icon"
+sips -g pixelWidth "$app/Contents/Resources/$icon" >/dev/null
 codesign --verify --deep --strict "$app"
 for binary in slop-grenade slop-grenade-overlay; do
   lipo "$app/Contents/MacOS/$binary" -verify_arch arm64 x86_64

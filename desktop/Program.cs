@@ -12,7 +12,7 @@
 //
 // Build (C# 5 / .NET Framework 4, no extra packages):
 //   csc /target:winexe /optimize+ /r:System.dll,System.Drawing.dll,System.Windows.Forms.dll,System.Web.Extensions.dll
-//       /out:slop-grenade-overlay.exe /recurse:desktop\*.cs
+//       /win32icon:desktop\slop-grenade.ico /out:slop-grenade-overlay.exe /recurse:desktop\*.cs
 
 using System;
 using System.Collections.Generic;

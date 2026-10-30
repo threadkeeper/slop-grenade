@@ -3,12 +3,35 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Drawing
+
+function Assert-BrandedIcon([string]$path) {
+    $icon = [System.Drawing.Icon]::ExtractAssociatedIcon($path)
+    if ($null -eq $icon) { throw "No icon found in $path" }
+    $bitmap = $icon.ToBitmap()
+    try {
+        $pink = 0
+        for ($y = 0; $y -lt $bitmap.Height; $y++) {
+            for ($x = 0; $x -lt $bitmap.Width; $x++) {
+                $pixel = $bitmap.GetPixel($x, $y)
+                if ($pixel.R -gt 150 -and $pixel.B -gt 75 -and $pixel.G -lt 100) { $pink++ }
+            }
+        }
+        if ($pink -lt 5) { throw "The branded pink grenade icon is missing from $path" }
+    } finally {
+        $bitmap.Dispose()
+        $icon.Dispose()
+    }
+}
+
+Assert-BrandedIcon $Installer
 $install = Join-Path $env:LOCALAPPDATA 'SlopGrenade'
 $process = Start-Process -FilePath $Installer -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
 if ($process.ExitCode -ne 0) { throw "Installer failed: $($process.ExitCode)" }
-foreach ($file in @('bin\slop-grenade.exe', 'bin\slop-grenade-overlay.exe', 'web\build\index.html', 'unins000.exe')) {
+foreach ($file in @('bin\slop-grenade.exe', 'bin\slop-grenade-overlay.exe', 'web\build\index.html', 'web\build\favicon.png', 'unins000.exe')) {
     if (-not (Test-Path (Join-Path $install $file))) { throw "Installed file missing: $file" }
 }
+Assert-BrandedIcon (Join-Path $install 'bin\slop-grenade-overlay.exe')
 $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'Slop Grenade\Slop Grenade.lnk'
 if (-not (Test-Path $shortcut)) { throw 'Start Menu shortcut is missing.' }
 $env:HTTP_BIND = '127.0.0.1:18090'

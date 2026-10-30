@@ -78,4 +78,15 @@ assert keys=={"slopgrenade.sound","slopgrenade.volume"}, "Only UI sound/volume m
 print("PASS: ABI, JNI, locked-build and 16KB linker policy")
 ' "$mobile"
 
+manifest="$mobile/app/src/main/AndroidManifest.xml"
+launcher="$mobile/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml"
+grep -Fq 'android:icon="@mipmap/ic_launcher"' "$manifest"
+grep -Fq 'android:roundIcon="@mipmap/ic_launcher"' "$manifest"
+grep -Fq '<adaptive-icon' "$launcher"
+grep -Fq '@drawable/ic_launcher_foreground' "$launcher"
+test -s "$mobile/app/src/main/res/drawable-nodpi/ic_launcher_foreground.png"
+grep -Fq '.setSmallIcon(R.drawable.ic_notification)' "$mobile/app/src/main/java/com/threadkeeper/slopgrenade/app/OverlayService.kt"
+grep -Fq '#FFFFFFFF' "$mobile/app/src/main/res/drawable/ic_notification.xml"
+printf '%s\n' "PASS: branded launcher and monochrome notification icons"
+
 python -m unittest discover -s "$mobile/scripts" -p 'test_*.py'

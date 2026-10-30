@@ -373,7 +373,7 @@
         </svg>
         <div>
           <h1>Slop Grenade</h1>
-          <span class="sub">Communication habit monitor &middot; v{__APP_VERSION__}</span>
+          <span class="sub">Communication habit monitor <span class="version">v{__APP_VERSION__}</span></span>
         </div>
       </div>
 
@@ -804,6 +804,13 @@
     color: #4a2c0c;
   }
 
+  .version {
+    margin-left: 0.35em;
+    font: 500 8px/1 ui-monospace, 'Cascadia Mono', Consolas, monospace;
+    letter-spacing: 0.02em;
+    text-transform: none;
+  }
+
   .header-tools {
     display: flex;
     align-items: center;
@@ -898,7 +905,7 @@
 
   .range-dialog {
     position: relative;
-    width: min(960px, 100%);
+    width: min(960px, 100%, max(280px, calc(160vh - 390px)));
     max-height: calc(100vh - 40px);
     overflow: auto;
   }
