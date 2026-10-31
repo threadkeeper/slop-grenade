@@ -30,20 +30,20 @@ Slop Grenade operates strictly as a **read-only** observer on your own device:
 ## 3. Data Accessed, Processed, and Stored
 
 ### 3.1 What Data Is Accessed
-- **Gmail Profile Verification**: `GET https://gmail.googleapis.com/gmail/v1/users/me/profile` is used solely to confirm connection health and determine whether a message was sent or received by the connected account.
+- **Gmail Profile Verification**: `GET https://gmail.googleapis.com/gmail/v1/users/me/profile` confirms the selected account's identity and connection health. Gmail's message labels determine whether mail was sent or received.
 - **Recent Message Content (Bounded 7-Day Window)**: Recent messages from Inbox, archived received mail, and Sent mail within a rolling 7-day window (excluding Drafts, Spam, and Trash) are fetched directly to your local device for writing-style evaluation. Attachments are never downloaded.
 
 ### 3.2 How Data Is Used (Ephemeral On-Device Scoring)
 - Message text (`text/plain` or sanitized text extracted from `text/html`) is evaluated locally on your device by the 4-signal linguistic detector (Lexical, Structural, Burstiness, and Handoff heuristics) to compute an AI-writing score (`0`–`100`) and trigger local screen-edge animations.
-- Raw message bodies, unredacted email addresses, and raw headers are **immediately discarded** after scoring.
+- Raw message bodies and headers used for scoring are discarded afterward. While the Android dashboard is visible, it can separately fetch sender and recipient addresses, subjects, and short Gmail snippets for the current view; these details are discarded when the view changes, the app is backgrounded, or communication data is wiped.
 - Google user data is **never** used for advertising, profiling, creditworthiness, or training generalized AI/ML models, and is never read by humans.
 
 ### 3.3 How Data Is Stored & Retained
 - **No Cloud Database or Remote Storage**: Slop Grenade has no central backend server that collects or stores your emails, chats, or credentials.
-- **Ephemeral In-Memory Ledger**: Only sanitized, redacted score summaries and coaching insights are held in local memory to render your personal dashboard gauges and ledger.
+- **Ephemeral In-Memory Ledger**: Only sanitized, redacted score summaries and coaching insights are retained in the ledger. Android's separately fetched display details are transient, never added to the ledger or event stream, logged, or saved to disk.
 - **In-Memory OAuth Tokens**:
   - **Desktop (Windows & macOS)**: Google OAuth 2.0 access and refresh tokens live exclusively in local daemon process memory (`127.0.0.1`) and are **never written to disk**. Restarting the local daemon clears all tokens and requires re-authorization.
-  - **Android**: OAuth state is stored strictly on-device using hardware-backed Android Keystore encryption (`EncryptedSharedPreferences`) and is never backed up (`allowBackup="false"`).
+  - **Android**: Account labels and synchronization checkpoints are encrypted with an Android Keystore-backed key and excluded from backup (`allowBackup="false"`). Access tokens are not stored.
 
 ### 3.4 Data Sharing & Third-Party Transfers
 - Slop Grenade **does not sell, rent, license, or share** Google user data or Microsoft 365 data with any third party.
@@ -56,10 +56,7 @@ Slop Grenade operates strictly as a **read-only** observer on your own device:
 
 You are in full control of your connected accounts at all times:
 
-1. **In-App Sign-Out & Data Wipe**: Clicking **Sign out of Gmail** (or **Sign out of Microsoft 365**) in the Slop Grenade dashboard or system tray immediately:
-   - Revokes the active OAuth token grant with Google (`https://oauth2.googleapis.com/revoke`) when reachable.
-   - Zeroes and erases all in-memory account state and tokens.
-   - Wipes all communication-derived ledger history, statistics, and active screen effects from local memory.
+1. **In-App Sign-Out & Data Wipe**: Clicking **Sign out of Gmail** or **Sign out of Microsoft 365** removes the selected local connection and wipes communication-derived ledger history, statistics, transient display details, and active screen effects. Other connected accounts remain authorized and can repopulate history. Desktop Gmail also attempts token revocation when Google is reachable; on Android, revoke the grant through the Google Account Permissions page if desired.
 2. **Google Account Permissions Page**: You may also revoke Slop Grenade's access at any time directly from your Google Account at [https://myaccount.google.com/permissions](https://myaccount.google.com/permissions).
 3. **Daemon Restart**: Stopping or restarting the desktop daemon immediately clears all in-memory OAuth tokens and ledger data.
 

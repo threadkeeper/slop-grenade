@@ -146,6 +146,15 @@ describe('native mailbox controller', () => {
     expect(fetcher.mock.calls.filter(([path]) => path === '/api/v1/accounts/add')).toHaveLength(2);
   });
 
+  it('explains when the account chooser returned an already-connected account', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(async (path) =>
+      path === '/api/v1/accounts' ? json(status) : json({ ok: true, alreadyConnected: true }));
+    const { controller, state } = setup(fetcher);
+    await controller.add();
+    expect(state().notice).toContain('already connected');
+    expect(state().notice).toContain('different account');
+  });
+
   it('uses the reconnect, disconnect and overlay permission operations without payloads', async () => {
     const fetcher = vi.fn<typeof fetch>().mockImplementation(async (path) =>
       path === '/api/v1/accounts' ? json(status) : json({ ok: true }));

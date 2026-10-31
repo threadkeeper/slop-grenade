@@ -183,6 +183,39 @@ public final class GmailClient {
             }
         }
     }
+    /** Fetch only the headers and short snippet needed by a visible ledger entry. */
+    public JSONObject details(String messageId) throws Failure, InterruptedException {
+        if (!messageId.matches("[A-Za-z0-9_-]{1,128}")) throw new Failure(400,0);
+        if (Thread.currentThread().isInterrupted()) throw new InterruptedException();
+        String fields=encode("id,snippet,payload(headers(name,value))");
+        JSONObject message=transport.get("/messages/"+encode(messageId)+"?format=full&fields="+fields);
+        if (!messageId.equals(message.optString("id",""))) throw new Failure(502,0);
+        String sender="", recipient="", cc="", bcc="", subject="";
+        JSONObject payload=message.optJSONObject("payload");
+        JSONArray headers=payload == null ? null : payload.optJSONArray("headers");
+        if (headers != null) for (int i=0;i<headers.length();i++) {
+            JSONObject header=headers.optJSONObject(i);
+            if (header == null || !(header.opt("name") instanceof String) || !(header.opt("value") instanceof String))
+                continue;
+            String name=header.optString("name");
+            String value=clip(header.optString("value"),1024);
+            if ("from".equalsIgnoreCase(name)) sender=value;
+            else if ("to".equalsIgnoreCase(name)) recipient=value;
+            else if ("cc".equalsIgnoreCase(name)) cc=value;
+            else if ("bcc".equalsIgnoreCase(name)) bcc=value;
+            else if ("subject".equalsIgnoreCase(name)) subject=value;
+        }
+        if (!cc.isEmpty()) recipient+=(recipient.isEmpty() ? "" : "; ")+"Cc: "+cc;
+        if (!bcc.isEmpty()) recipient+=(recipient.isEmpty() ? "" : "; ")+"Bcc: "+bcc;
+        Object snippet=message.opt("snippet");
+        return new JSONObject().put("sender",sender).put("recipient",clip(recipient,1024))
+            .put("subject",subject).put("excerpt",clip(snippet instanceof String ? (String)snippet : "",160));
+    }
+    private static String clip(String value, int limit) {
+        String text=value.replaceAll("[\\p{Cntrl}]+"," ").replaceAll("\\s+"," ").trim();
+        if (text.codePointCount(0,text.length()) <= limit) return text;
+        return text.substring(0,text.offsetByCodePoints(0,limit-3))+"...";
+    }
     public static JSONObject sample(String accountId, JSONObject message) throws Failure {
         JSONObject payload = message.optJSONObject("payload");
         String text = payload == null ? "" : mimeText(payload);

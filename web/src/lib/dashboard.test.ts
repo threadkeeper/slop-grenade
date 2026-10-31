@@ -301,6 +301,13 @@ describe('Slop Grenade dashboard', () => {
     expect(paginateLedger(rows, 99)).toMatchObject({ pageCount: count / 50, pageIndex: count / 50 - 1, end: count });
   });
 
+  it('supports smaller Android pages without changing the desktop default', () => {
+    const rows = Array.from({ length: 21 }, (_, index) => report('Fixture', 40, { messageId: `${index}` }));
+    expect(paginateLedger(rows, 1, 10)).toMatchObject({ pageCount: 3, pageIndex: 1, start: 11, end: 20 });
+    expect(paginateLedger(rows, 0).rows).toHaveLength(21);
+    expect(() => paginateLedger(rows, 0, 0)).toThrow('Page size must be a positive integer');
+  });
+
   it.each([-1, 0.5, Number.NaN])('rejects an invalid page index %s', (index) => {
     expect(() => paginateLedger([], index)).toThrow('Page must be a nonnegative integer');
   });

@@ -351,20 +351,23 @@ export function rankGridReports(
     });
 }
 
-/** Clamp the current page after data changes and retain every record across 50-row pages. */
-export function paginateLedger(rows: SlopReport[], pageIndex: number) {
+/** Clamp the current page after data changes without dropping records. */
+export function paginateLedger(rows: SlopReport[], pageIndex: number, pageSize = LEDGER_PAGE_SIZE) {
   if (!Number.isSafeInteger(pageIndex) || pageIndex < 0) {
     throw new RangeError('Page must be a nonnegative integer.');
   }
-  const pageCount = Math.max(1, Math.ceil(rows.length / LEDGER_PAGE_SIZE));
+  if (!Number.isSafeInteger(pageSize) || pageSize < 1) {
+    throw new RangeError('Page size must be a positive integer.');
+  }
+  const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
   const current = Math.min(pageIndex, pageCount - 1);
-  const offset = current * LEDGER_PAGE_SIZE;
+  const offset = current * pageSize;
   return {
-    rows: rows.slice(offset, offset + LEDGER_PAGE_SIZE),
+    rows: rows.slice(offset, offset + pageSize),
     pageIndex: current,
     pageCount,
     totalRows: rows.length,
     start: rows.length ? offset + 1 : 0,
-    end: Math.min(offset + LEDGER_PAGE_SIZE, rows.length)
+    end: Math.min(offset + pageSize, rows.length)
   };
 }

@@ -41,6 +41,32 @@ public class GmailClientTest {
             return (JSONObject)value;
         }
     }
+    @Test public void visibleDetailsRequestOnlyHeadersAndSnippet() throws Exception {
+        String path="/messages/message-1?format=full&fields=id%2Csnippet%2Cpayload%28headers%28name%2Cvalue%29%29";
+        JSONObject message=json("{\"id\":\"message-1\",\"snippet\":\"A short synthetic excerpt.\","
+            +"\"payload\":{\"headers\":[{\"name\":\"From\",\"value\":\"Alice <alice@example.invalid>\"},"
+            +"{\"name\":\"To\",\"value\":\"bob@example.invalid\"},{\"name\":\"Subject\",\"value\":\"Synthetic subject\"}],"
+            +"\"body\":{\"data\":\"PRIVATE_BODY_MUST_NOT_BE_RETURNED\"}}}");
+        Fake f=new Fake().at(path,message);
+        JSONObject details=new GmailClient(f).details("message-1");
+        assertEquals("Alice <alice@example.invalid>",details.getString("sender"));
+        assertEquals("bob@example.invalid",details.getString("recipient"));
+        assertEquals("Synthetic subject",details.getString("subject"));
+        assertEquals("A short synthetic excerpt.",details.getString("excerpt"));
+        assertFalse(details.toString().contains("PRIVATE_BODY_MUST_NOT_BE_RETURNED"));
+        assertEquals(List.of(path),f.calls);
+    }
+    @Test public void visibleDetailsBoundTextAndRejectInvalidIdsOrMismatchedResponses() throws Exception {
+        String path="/messages/a?format=full&fields=id%2Csnippet%2Cpayload%28headers%28name%2Cvalue%29%29";
+        Fake f=new Fake().at(path,json("{\"id\":\"a\",\"snippet\":\""+"x".repeat(300)+"\",\"payload\":{\"headers\":[]}}"));
+        JSONObject details=new GmailClient(f).details("a");
+        assertTrue(details.getString("excerpt").length() <= 161);
+        try { new GmailClient(f).details("../bad"); fail(); }
+        catch (GmailClient.Failure e) { assertEquals(400,e.status); }
+        Fake mismatch=new Fake().at(path,json("{\"id\":\"different\"}"));
+        try { new GmailClient(mismatch).details("a"); fail(); }
+        catch (GmailClient.Failure e) { assertEquals(502,e.status); }
+    }
     @Test public void fullCapturesWatermarkBeforePagingAndDeduplicates() throws Exception {
         Fake f = new Fake().at("/profile", json("{\"historyId\":\"10\"}"))
             .at(GmailClient.FULL, json("{\"messages\":[{\"id\":\"a\"}],\"nextPageToken\":\"p\"}"))

@@ -1,6 +1,7 @@
 package com.threadkeeper.slopgrenade.app
 
 import android.content.Context
+import com.threadkeeper.slopgrenade.accounts.AccountState
 import com.threadkeeper.slopgrenade.accounts.GoogleAccounts
 import com.threadkeeper.slopgrenade.accounts.SecureAccounts
 import com.threadkeeper.slopgrenade.core.CoreApi
@@ -16,14 +17,19 @@ class MobileRuntime private constructor(context: Context) {
     val core = CoreApi()
     val manual = ManualAnalysis(core)
     val io = Executors.newFixedThreadPool(3)
+    val detailsDispatcher = GmailDetailsDispatcher()
     val consentActive = AtomicBoolean(false)
-    val engine = ScanEngine(accounts, core, { account ->
+    private val accountToken: (AccountState) -> String = { account ->
         try { google.token(account.label) }
         catch (_: GoogleAccounts.Transient) { throw GmailClient.Failure(503, 0) }
-    }, { account, token, checkpoint ->
+    }
+    val engine = ScanEngine(accounts, core, accountToken, { account, token, checkpoint ->
         // NativeCore scores transient original metadata, then sanitizes reports before storage, events, or output.
         GmailClient(GmailClient.https(token)).scan(account.id, checkpoint)
     })
+    val details = GmailDetails(accounts, core, accountToken, { token, id ->
+        GmailClient(GmailClient.https(token)).details(id)
+    }, { MainActivity.visible }, { MainActivity.visibilityGeneration })
 
     companion object {
         @Volatile private var instance: MobileRuntime? = null

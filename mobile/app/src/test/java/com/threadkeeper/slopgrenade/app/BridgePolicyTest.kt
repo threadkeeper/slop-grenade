@@ -16,6 +16,7 @@ class BridgePolicyTest {
         assertTrue(BridgePolicy.nativeAllowed("GET", "/internal/session"))
         assertTrue(BridgePolicy.nativeAllowed("POST", "/api/v1/analyze"))
         assertFalse(BridgePolicy.nativeAllowed("POST", "/internal/ingest"))
+        assertFalse(BridgePolicy.nativeAllowed("POST", "/api/v1/gmail/details"))
         assertFalse(BridgePolicy.nativeAllowed("GET", "https://evil.invalid"))
         assertFalse(BridgePolicy.nativeAllowed("DELETE", "/api/v1/ledger"))
         assertFalse(BridgePolicy.nativeAllowed("GET", "/api/v1/events?after=-1"))

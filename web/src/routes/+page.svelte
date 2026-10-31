@@ -4,6 +4,7 @@
     computeBarChartBuckets,
     computeInOutGauges,
     computeTopFiveLists,
+    LEDGER_PAGE_SIZE,
     filterReports,
     formatLedgerTimestamp,
     gaugeWhiteToPurpleColor,
@@ -23,11 +24,13 @@
   } from '$lib/refresh';
   import { isNativeMobile, subscribeAnimations } from '$lib/transport';
   import { createLedger } from '$lib/ledger';
+  import { createGmailDetails, isGmailMessageId, type GmailDetailsState } from '$lib/gmailDetails';
   import Mailbox from '$lib/components/Mailbox.svelte';
   import M365Account from '$lib/components/M365Account.svelte';
   import BrassGauge from '$lib/components/BrassGauge.svelte';
   import ProvingGrounds from '$lib/components/ProvingGrounds.svelte';
   import OverlayStage from '$lib/components/OverlayStage.svelte';
+  import MobileLedger from '$lib/components/MobileLedger.svelte';
 
   /** `/?mode=overlay` shows only the transparent effects layer. */
   const overlayMode = new URLSearchParams(window.location.search).get('mode') === 'overlay';
@@ -58,6 +61,8 @@
   let progressWatcher: ReturnType<typeof createRefreshProgress> | undefined;
   let ledgerError = $state<string | null>(null);
   let ledger: ReturnType<typeof createLedger> | undefined;
+  let gmailDetails = $state<GmailDetailsState>({});
+  let gmailDetailsLoader = $state<ReturnType<typeof createGmailDetails> | null>(null);
   let ledgerSort = $state<LedgerSort>({ column: 'slop', direction: 'desc' });
   let ledgerPageIndex = $state(0);
   let referenceNow = $state(new Date().toISOString());
@@ -122,10 +127,39 @@
     '7d': 'Last 7 days'
   };
   const gridRows = $derived(rankGridReports(filteredReports, selectedBucket, selectedPerson, filters.timeSpan, ledgerSort));
-  const ledgerPage = $derived(paginateLedger(gridRows, ledgerPageIndex));
+  const ledgerPageSize = mobile ? 10 : LEDGER_PAGE_SIZE;
+  const ledgerPage = $derived(paginateLedger(gridRows, ledgerPageIndex, ledgerPageSize));
+  const detailIds = $derived.by(() => {
+    if (!mobile) return [];
+    const ids = new Set<string>();
+    for (const row of ledgerPage.rows) {
+      if (row.app === 'gmail' && isGmailMessageId(row.messageId)) ids.add(row.messageId);
+    }
+    const names = new Set([...leaderboards.topSloppers, ...leaderboards.topPDoomers].map((person) => person.name));
+    for (const row of filteredReports) {
+      const name = row.sender.trim();
+      if (names.has(name) && row.app === 'gmail' && isGmailMessageId(row.messageId)) {
+        ids.add(row.messageId);
+        names.delete(name);
+      }
+    }
+    return [...ids];
+  });
+  const senderLabels = $derived.by(() => {
+    const labels = new Map<string, string>();
+    for (const row of filteredReports) {
+      const detail = gmailDetails[row.messageId];
+      if (detail?.status === 'ready' && detail.sender) labels.set(row.sender.trim(), detail.sender);
+    }
+    return labels;
+  });
 
   $effect(() => {
     if (ledgerPageIndex !== ledgerPage.pageIndex) ledgerPageIndex = ledgerPage.pageIndex;
+  });
+
+  $effect(() => {
+    gmailDetailsLoader?.setIds(detailIds);
   });
 
   function resetLedgerPage() {
@@ -157,6 +191,7 @@
 
   function clearCommunicationView() {
     ++communicationEpoch;
+    gmailDetailsLoader?.reset();
     cue = null;
     sfx.stopAll();
     clearCrossFilters();
@@ -243,6 +278,10 @@
     return `${words.slice(0, maxWords).join(' ')}…`;
   }
 
+  function personLabel(name: string): string {
+    return mobile ? senderLabels.get(name) ?? name : name;
+  }
+
   function toggleTier(tier: AnimationTier) {
     filters.tiers[tier] = !filters.tiers[tier];
     resetLedgerPage();
@@ -316,6 +355,21 @@
     const arm = () => sfx.setEnabled(soundOn);
     window.addEventListener('pointerdown', arm, { once: true });
 
+    if (mobile) gmailDetailsLoader = createGmailDetails((details) => { gmailDetails = details; });
+    const hideDetails = () => gmailDetailsLoader?.suspend();
+    const showDetails = () => {
+      if (document.visibilityState !== 'hidden') gmailDetailsLoader?.resume();
+    };
+    const onVisibility = () => document.visibilityState === 'hidden' ? hideDetails() : showDetails();
+    if (mobile) {
+      document.addEventListener('visibilitychange', onVisibility);
+      window.addEventListener('slop-native-hidden', hideDetails);
+      window.addEventListener('slop-native-visible', showDetails);
+      window.addEventListener('pagehide', hideDetails);
+      window.addEventListener('pageshow', showDetails);
+      onVisibility();
+    }
+
     ledger = createLedger(
       (snapshot) => { referenceNow = new Date().toISOString(); scorecard = snapshot; },
       (error) => { ledgerError = error; },
@@ -345,11 +399,29 @@
       stopEvents();
       clearInterval(clock);
       ledger?.dispose();
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('slop-native-hidden', hideDetails);
+      window.removeEventListener('slop-native-visible', showDetails);
+      window.removeEventListener('pagehide', hideDetails);
+      window.removeEventListener('pageshow', showDetails);
+      gmailDetailsLoader?.dispose();
       progressWatcher?.dispose();
       sfx.setEnabled(false);
     };
   });
 </script>
+
+{#snippet soundControls()}
+  <div class="sound-box" role="group" aria-label="Sound effects">
+    <button class="brass small" class:active={soundOn} aria-pressed={soundOn} onclick={toggleSound}>
+      {soundOn ? 'Sound: On' : 'Sound: Off'}
+    </button>
+    <label class="volume" class:muted={!soundOn}>
+      <span>Vol</span>
+      <input type="range" min="0" max="100" step="5" bind:value={volume} aria-label="Volume" />
+    </label>
+  </div>
+{/snippet}
 
 {#if overlayMode}
   <OverlayStage />
@@ -403,15 +475,11 @@
             <path d="M12 1.5v5M12 17.5v5M1.5 12h5M17.5 12h5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" />
           </svg>
         </button>
-        <div class="sound-box" role="group" aria-label="Sound effects">
-          <button class="brass small" class:active={soundOn} aria-pressed={soundOn} onclick={toggleSound}>
-            {soundOn ? 'Sound: On' : 'Sound: Off'}
-          </button>
-          <label class="volume" class:muted={!soundOn}>
-            <span>Vol</span>
-            <input type="range" min="0" max="100" step="5" bind:value={volume} aria-label="Volume" />
-          </label>
-        </div>
+        {#if mobile}
+          <a class="brass small settings-link" href="#effects-settings">Effects settings</a>
+        {:else}
+          {@render soundControls()}
+        {/if}
       </div>
     </header>
 
@@ -421,7 +489,7 @@
     {/if}
     <Mailbox native={mobile}
       focusGmail={!mobile && new URLSearchParams(window.location.search).has('gmail')}
-      onAccountsChanged={() => { void loadLedger(); }} onDataWiped={dataWiped} />
+      onAccountsChanged={() => { void loadLedger(); }} onDataWiped={dataWiped} {soundControls} />
 
     {#if refreshError || ledgerError}
       <p class="refresh-feedback error" role="alert">Refresh unavailable: {refreshError ?? ledgerError}</p>
@@ -603,7 +671,7 @@
                 {#each leaderboards.topSloppers as p, i}
                   <tr class="clickable-row" class:selected-row={selectedPerson === p.name} onclick={() => togglePersonSelection(p.name)}>
                     <td><span class="coin">{i + 1}</span></td>
-                    <td class="name">{p.name}</td>
+                    <td class="name">{personLabel(p.name)}</td>
                     <td class="num">{p.messageCount}</td>
                     <td class="num score-high">{p.aiSharePercent}%</td>
                   </tr>
@@ -634,7 +702,7 @@
                 {#each leaderboards.topPDoomers as p, i}
                   <tr class="clickable-row" class:selected-row={selectedPerson === p.name} onclick={() => togglePersonSelection(p.name)}>
                     <td><span class="coin">{i + 1}</span></td>
-                    <td class="name">{p.name}</td>
+                    <td class="name">{personLabel(p.name)}</td>
                     <td class="num">{p.messageCount}</td>
                     <td class="num score-low">{p.aiSharePercent}%</td>
                   </tr>
@@ -654,7 +722,7 @@
             <span class="meta">
               Filtered by:
               {#if selectedBucket}<strong>{selectedBucket}</strong>{/if}
-              {#if selectedPerson}<strong>{selectedPerson}</strong>{/if}
+              {#if selectedPerson}<strong>{personLabel(selectedPerson)}</strong>{/if}
             </span>
             <button class="brass small" onclick={clearCrossFilters}>Clear</button>
           {:else}
@@ -663,6 +731,17 @@
         </div>
       </div>
 
+      {#if mobile}
+        <p class="meta">Gmail addresses, subjects and excerpts load while this view is open and are not saved.</p>
+        {#if Object.values(gmailDetails).some((detail) => detail.status === 'error')}
+          <button class="brass small" onclick={() => gmailDetailsLoader?.retry()}>Retry Gmail details</button>
+        {/if}
+        <div class="mobile-sort" role="group" aria-label="Sort ledger">
+          <button class="brass small" onclick={() => sortLedger('slop')}>Sort by slop %</button>
+          <button class="brass small" onclick={() => sortLedger('timestamp')}>Sort by date</button>
+        </div>
+        <MobileLedger rows={ledgerPage.rows} details={gmailDetails} tierColors={TIER_COLOR} />
+      {:else}
       <div class="grid-scroll">
         <table class="data-grid">
           <thead>
@@ -706,8 +785,9 @@
           </tbody>
         </table>
       </div>
+      {/if}
       <nav class="ledger-pagination" aria-label="Ledger pages">
-        <span class="meta">{ledgerPage.start}–{ledgerPage.end} of {ledgerPage.totalRows} messages &middot; 50 per page</span>
+        <span class="meta">{ledgerPage.start}–{ledgerPage.end} of {ledgerPage.totalRows} messages &middot; {ledgerPageSize} per page</span>
         <div class="page-controls">
           <button class="brass small" aria-label="Previous ledger page" disabled={ledgerPage.pageIndex === 0} onclick={() => (ledgerPageIndex = ledgerPage.pageIndex - 1)}>&lt;&lt;</button>
           <span class="meta">Page {ledgerPage.pageIndex + 1} of {ledgerPage.pageCount}</span>
@@ -891,6 +971,11 @@
   .icon-btn svg {
     width: 24px;
     height: 24px;
+  }
+
+  .settings-link {
+    display: inline-block;
+    text-decoration: none;
   }
 
   .range-backdrop {
@@ -1167,6 +1252,13 @@
     border: 2px solid var(--ink);
     border-radius: 6px;
     background: rgba(255, 252, 240, 0.6);
+  }
+
+  .mobile-sort {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 10px 0;
   }
 
   .ledger-pagination,

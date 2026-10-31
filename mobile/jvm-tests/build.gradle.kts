@@ -5,7 +5,8 @@ kotlin {
         main {
             kotlin.srcDirs("../accounts/src/main/java", "../core/src/main/java", "../app/src/main/java")
             kotlin.include("**/AccountState.kt", "**/AccountRepository.kt", "**/CoreApi.kt",
-                "**/NativeCore.kt", "**/ScanEngine.kt", "**/BridgePolicy.kt",
+                "**/NativeCore.kt", "**/ScanEngine.kt", "**/BridgePolicy.kt", "**/GmailDetails.kt",
+                "**/GmailDetailsDispatcher.kt",
                 "**/LunaClient.kt", "**/ManualAnalysis.kt", "**/AuthorizationRequired.kt",
                 "**/GoogleAuthorizationError.kt", "**/GoogleAuthorizationFailure.kt", "**/AuthorizationErrorResponse.kt",
                 "**/ContentSecurityPolicy.kt", "**/OverlaySoundPreferences.kt")

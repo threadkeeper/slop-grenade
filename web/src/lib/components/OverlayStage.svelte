@@ -6,7 +6,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { runStage, WebAudioSfx, type Stage } from '$lib/engine';
+  import { stageQuality } from '$lib/engine/quality';
   import { connectOverlay } from '$lib/overlay';
+  import { isNativeMobile } from '$lib/transport';
   import type { SlopReport } from '$lib/types';
   import { overlaySourceEnabled } from '$lib/overlaySources';
 
@@ -23,8 +25,9 @@
       sfx.setVolume(Number(params.get('volume') ?? '70') / 100);
       sfx.setEnabled(true);
     }
-    // full-screen layer: render at CSS pixels to keep it light
-    const stage: Stage = runStage(canvas, { flyDelay: Number(params.get('flies') ?? '45'), sfx }, 1);
+    const quality = stageQuality(isNativeMobile(), 1);
+    const stage: Stage = runStage(canvas, { flyDelay: Number(params.get('flies') ?? '45'), sfx },
+      quality.maxDpr, quality.maxPixels);
     const hostWindow = window as unknown as { __slopGrenadeStage?: Stage };
     hostWindow.__slopGrenadeStage = stage;
     const onResize = () => stage.resize();

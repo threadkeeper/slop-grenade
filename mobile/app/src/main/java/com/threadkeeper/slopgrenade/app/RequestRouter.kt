@@ -6,8 +6,10 @@ import android.provider.Settings
 import com.threadkeeper.slopgrenade.accounts.AccountState
 import com.threadkeeper.slopgrenade.gmail.GmailClient
 import org.json.JSONArray
+import org.json.JSONException
 import org.json.JSONObject
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.RejectedExecutionException
 
 /** Android account routes are explicit; only a small native API allowlist reaches JNI. */
 class RequestRouter(private val activity: MainActivity, private val runtime: MobileRuntime) {
@@ -40,10 +42,12 @@ class RequestRouter(private val activity: MainActivity, private val runtime: Mob
                 val profile = GmailClient.https(token).get("/profile")
                 val email = profile.getString("emailAddress")
                 require(AccountState.identity(selected) == AccountState.identity(email))
+                val alreadyConnected = id == null && runtime.accounts.all().any { it.id == AccountState.identity(email) }
                 val account = runtime.engine.connect(email, id)
                 GmailWorker.schedule(activity.applicationContext)
                 runtime.io.execute { try { runtime.engine.scanAll() } catch (_: Exception) { /* Worker retries. */ } }
-                response(200, JSONObject().put("ok", true).put("account", accountJson(account)))
+                response(200, JSONObject().put("ok", true).put("alreadyConnected", alreadyConnected)
+                    .put("account", accountJson(account)))
             }, runtime.io).handle { value, failure ->
                 runtime.consentActive.set(false)
                 value ?: AuthorizationErrorResponse.from(failure)
@@ -54,6 +58,25 @@ class RequestRouter(private val activity: MainActivity, private val runtime: Mob
         }
         if (method == "POST" && path == "/api/v1/overlay/stop") {
             return onMain { response(200, activity.stopOverlay()) }
+        }
+        if (method == "POST" && path == "/api/v1/gmail/details") {
+            return try {
+                runtime.detailsDispatcher.submit {
+                    try {
+                        response(200, runtime.details.load(body))
+                    } catch (_: GmailDetails.InvalidRequest) {
+                        error(400, "Invalid Gmail detail request")
+                    } catch (_: GmailDetails.Stale) {
+                        error(409, "Gmail details are no longer available")
+                    } catch (_: IllegalStateException) {
+                        error(503, "Gmail details unavailable")
+                    } catch (_: JSONException) {
+                        error(503, "Gmail details unavailable")
+                    }
+                }
+            } catch (_: RejectedExecutionException) {
+                CompletableFuture.completedFuture(error(503, "Gmail details busy; try again"))
+            }
         }
         return CompletableFuture.supplyAsync({
             when {

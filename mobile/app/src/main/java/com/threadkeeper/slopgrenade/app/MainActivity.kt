@@ -46,7 +46,9 @@ class MainActivity : Activity() {
     }
     override fun onResume() {
         super.onResume()
+        visibilityGeneration++
         visible = true
+        dashboard?.evaluateJavascript("window.dispatchEvent(new Event('slop-native-visible'))", null)
         startPendingGmailAuthorization()
         if (pendingOverlay && awaitingOverlaySettings) {
             awaitingOverlaySettings = false
@@ -78,7 +80,9 @@ class MainActivity : Activity() {
         router.dispatch("POST", "/api/v1/accounts/add", JSONObject())
     }
     override fun onStop() {
+        visibilityGeneration++
         visible = false
+        dashboard?.evaluateJavascript("window.dispatchEvent(new Event('slop-native-hidden'))", null)
         super.onStop()
     }
     fun authorize(email: String?): CompletableFuture<Pair<String, String>> = runtime.google.connect(this, email)
@@ -192,6 +196,8 @@ class MainActivity : Activity() {
         const val ACTION_CONNECT_GMAIL = "com.threadkeeper.slopgrenade.accounts.CONNECT_GMAIL"
         private const val NOTIFICATION_PERMISSION = 401
         @Volatile var visible = false
+            private set
+        @Volatile var visibilityGeneration = 0L
             private set
     }
 }

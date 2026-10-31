@@ -19,11 +19,13 @@ bash "$mobile/scripts/build-native.sh"
 apk="$mobile/app/build/outputs/apk/$mode/app-$mode.apk"
 sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
 tools="$sdk/build-tools/${ANDROID_BUILD_TOOLS_VERSION:-35.0.0}"
-[[ -x "$tools/zipalign" && -x "$tools/apksigner" ]] || {
+[[ -x "$tools/zipalign" && -x "$tools/apksigner" && -x "$tools/aapt2" ]] || {
   printf '%s\n' "Install build-tools 35.0.0 or set ANDROID_BUILD_TOOLS_VERSION." >&2; exit 1;
 }
 "$tools/zipalign" -c -P 16 4 "$apk"
 "$tools/apksigner" verify "$apk"
+bash "$mobile/scripts/verify-apk-icon.sh" "$apk" "$tools/aapt2" \
+  "$mobile/app/src/main/res/drawable-nodpi/ic_launcher_foreground.png"
 python -c '
 import sys,zipfile
 with zipfile.ZipFile(sys.argv[1]) as apk:

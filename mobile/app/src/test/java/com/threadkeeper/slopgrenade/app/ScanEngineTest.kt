@@ -60,6 +60,20 @@ class ScanEngineTest {
         assertTrue(store.all().first { it.id == "one" }.reconnectRequired)
         assertEquals("10", store.all().first { it.id == "two" }.checkpoint)
     }
+    @Test fun distinctAccountsCanBeAddedAndScannedIndependently() {
+        val store = Store()
+        val scanned = mutableListOf<String>()
+        val engine = ScanEngine(store, api(mutableListOf()), { "ephemeral" }, { current, _, _ ->
+            scanned.add(current.label)
+            GmailClient.Batch(JSONArray(), "10", true)
+        })
+        engine.connect("first@example.invalid")
+        engine.connect("second@example.invalid")
+        engine.connect(" FIRST@example.invalid ")
+        assertEquals(2, store.all().size)
+        assertFalse(engine.scanAll())
+        assertEquals(setOf("first@example.invalid", "second@example.invalid"), scanned.toSet())
+    }
     @Test fun disconnectWaitsForInFlightIngestThenRemovesConnectionWithoutResurrection() {
         val entered = CountDownLatch(1)
         val release = CountDownLatch(1)

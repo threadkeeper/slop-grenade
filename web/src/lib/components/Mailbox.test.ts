@@ -78,12 +78,23 @@ describe('desktop Mailbox panel', () => {
 });
 
 describe('native Mailbox panel', () => {
+  it('offers the initial authorization action when no accounts are connected', () => {
+    desktopState = { accounts: [] };
+    const { body } = render(Mailbox, { props: { native: true } });
+    expect(body).toContain('Authorize Gmail account');
+    expect(body).not.toContain('Add another Gmail account');
+  });
+
   it('renders the account controls, connection status, last scan, and overlay permission', () => {
     const { body } = render(Mailbox, { props: { native: true } });
     for (const text of [
-      'Authorize Gmail account', 'Connect Gmail', 'notification-tray icon', 'Test mailbox', 'Disconnected', 'Reconnect required',
+      'Add another Gmail account', 'Connect Gmail', 'notification-tray icon', 'Test mailbox', 'Disconnected', 'Reconnect required',
       '2026-10-24T06:00:00Z', 'Reconnect', 'Sign out of Gmail', 'Allow overlay', 'Waiting for Android'
     ]) expect(body).toContain(text);
+    expect(body).toContain('Effects settings');
+    expect(body).toContain('Squeegee incoming');
+    expect(body).toContain('Squeegee outgoing');
+    expect(body).toMatch(/<button[^>]*disabled[^>]*>\s*Squeegee incoming/);
     expect(body).not.toContain('Outlook');
     expect(body).not.toContain('Teams');
   });
@@ -103,6 +114,7 @@ describe('native Mailbox panel', () => {
     expect(body).toContain('Running');
     expect(body).toContain('notification');
     expect(body).not.toContain('Start effects');
+    expect(body).not.toMatch(/<button[^>]*disabled[^>]*>\s*Squeegee incoming/);
   });
 
   it('explains how to restore a blocked effects notification channel', () => {

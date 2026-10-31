@@ -1,5 +1,6 @@
 /** Local-only API transport: desktop HTTP/SSE or the restricted Android message bridge. */
 import type { AnimationEvent } from './types';
+import { isGmailMessageId } from './gmailMessageId';
 
 /** WebViewCompat injects this object only into the trusted app-assets origin. */
 export interface AndroidBridge {
@@ -82,11 +83,21 @@ function nativeBody(path: string, init: RequestInit): unknown {
       /^\/api\/v1\/events\?after=\d+$/.test(path)
     )) ||
     (method === 'POST' && (
-      ['/api/v1/accounts/add', '/api/v1/overlay/permission', '/api/v1/overlay/stop', '/api/v1/scan/now', ...manualRoutes].includes(path) ||
+      ['/api/v1/accounts/add', '/api/v1/overlay/permission', '/api/v1/overlay/stop', '/api/v1/scan/now',
+        '/api/v1/gmail/details', ...manualRoutes].includes(path) ||
       /^\/api\/v1\/accounts\/[A-Za-z0-9_~%.-]+\/reconnect$/.test(path)
     )) ||
     (method === 'DELETE' && /^\/api\/v1\/accounts\/[A-Za-z0-9_~%.-]+$/.test(path));
   if (!allowed) throw new Error('Unsupported native API operation.');
+  if (path === '/api/v1/gmail/details') {
+    const body = parseNativePayload(init.body);
+    if (!onlyKeys(body, ['messageIds']) || !Array.isArray(body.messageIds) ||
+        body.messageIds.length < 1 || body.messageIds.length > 10 ||
+        !body.messageIds.every(isGmailMessageId) || new Set(body.messageIds).size !== body.messageIds.length) {
+      throw new Error('Invalid native Gmail detail request.');
+    }
+    return body;
+  }
   if (manualRoutes.includes(path)) {
     const body = parseNativePayload(init.body);
     if (!manualPayload(path, body)) throw new Error('Invalid native request payload.');

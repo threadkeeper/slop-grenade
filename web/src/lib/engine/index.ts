@@ -29,7 +29,10 @@ export interface Stage {
  * Drive a World on a canvas with requestAnimationFrame. The loop idles
  * (no drawing) when nothing on screen is moving.
  */
-export function runStage(canvas: HTMLCanvasElement, opts: WorldOptions = {}, maxDpr = 2): Stage {
+export function runStage(canvas: HTMLCanvasElement, opts: WorldOptions = {}, maxDpr = 2, maxPixels = Infinity): Stage {
+  if (maxPixels !== Infinity && (!Number.isSafeInteger(maxPixels) || maxPixels < 4096)) {
+    throw new RangeError('maxPixels must be at least 4096 or Infinity.');
+  }
   const make = (w: number, h: number): HTMLCanvasElement => {
     const c = document.createElement('canvas');
     c.width = w;
@@ -37,9 +40,21 @@ export function runStage(canvas: HTMLCanvasElement, opts: WorldOptions = {}, max
     return c;
   };
   const size = (): [number, number] => {
-    const dpr = Math.min(maxDpr, window.devicePixelRatio || 1);
     const r = canvas.getBoundingClientRect();
-    return [Math.max(64, Math.round(r.width * dpr)), Math.max(64, Math.round(r.height * dpr))];
+    const area = Math.max(1, r.width) * Math.max(1, r.height);
+    const dpr = Math.min(maxDpr, window.devicePixelRatio || 1, Math.sqrt(maxPixels / area));
+    let width = Math.max(64, Math.round(r.width * dpr));
+    let height = Math.max(64, Math.round(r.height * dpr));
+    if (width * height > maxPixels) {
+      const factor = Math.sqrt(maxPixels / (width * height));
+      width = Math.max(64, Math.floor(width * factor));
+      height = Math.max(64, Math.floor(height * factor));
+      if (width * height > maxPixels) {
+        if (width > height) width = Math.max(64, Math.floor(maxPixels / height));
+        else height = Math.max(64, Math.floor(maxPixels / width));
+      }
+    }
+    return [width, height];
   };
   let [w, h] = size();
   canvas.width = w;
@@ -55,7 +70,8 @@ export function runStage(canvas: HTMLCanvasElement, opts: WorldOptions = {}, max
       const [nw, nh] = size();
       // small layout shifts just stretch the canvas; only a real size change
       // rebuilds the world (which clears what is on screen)
-      if (Math.abs(nw - w) < w * 0.25 && Math.abs(nh - h) < h * 0.25) return;
+      const aspectChanged = Number.isFinite(maxPixels) && Math.abs(nw / nh - w / h) > (w / h) * 0.01;
+      if (!aspectChanged && Math.abs(nw - w) < w * 0.25 && Math.abs(nh - h) < h * 0.25) return;
       w = nw;
       h = nh;
       canvas.width = w;

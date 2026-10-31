@@ -141,7 +141,7 @@ function createNativeMailbox(
 
   const change = async (path: string, method: 'POST' | 'DELETE', body?: string) => {
     if (disposed || state.busy) return;
-    publish({ busy: true, error: null });
+    publish({ busy: true, error: null, notice: null });
     let failureMessage = 'Mailbox operation failed.';
     try {
       const response = await fetcher(path, { method, signal: abort.signal, ...(body ? { body } : {}) });
@@ -154,6 +154,9 @@ function createNativeMailbox(
         if (!disposed && method === 'DELETE' && record(value) && value.dataWiped === true)
           onDataWiped(resetGeneration(value));
         if (record(value) && value.ok === false) throw new Error('Mailbox operation failed.');
+        if (path === '/api/v1/accounts/add' && record(value) && value.alreadyConnected === true) {
+          publish({ notice: 'That Gmail account is already connected. Choose a different account to add another.' });
+        }
       }
       if (!disposed) {
         // Reload history as soon as the native operation completes, even if

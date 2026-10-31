@@ -88,5 +88,6 @@ test -s "$mobile/app/src/main/res/drawable-nodpi/ic_launcher_foreground.png"
 grep -Fq '.setSmallIcon(R.drawable.ic_notification)' "$mobile/app/src/main/java/com/threadkeeper/slopgrenade/app/OverlayService.kt"
 grep -Fq '#FFFFFFFF' "$mobile/app/src/main/res/drawable/ic_notification.xml"
 printf '%s\n' "PASS: branded launcher and monochrome notification icons"
+bash "$mobile/scripts/test-apk-icon.sh"
 
 python -m unittest discover -s "$mobile/scripts" -p 'test_*.py'

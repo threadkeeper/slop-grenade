@@ -6,7 +6,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { runStage, type EffectTier, type Side, type SfxSink, type Stage, type StageCue } from '$lib/engine';
+  import { stageQuality } from '$lib/engine/quality';
   import { playBarrage, playSample } from '$lib/samplePlayback';
+  import { isNativeMobile } from '$lib/transport';
 
   let {
     sfx = null,
@@ -33,7 +35,8 @@
     lastSeq = cue?.seq ?? -1;
     lastResetEpoch = resetEpoch;
     if (!canvas) return;
-    stage = runStage(canvas, { flyDelay: 20, sfx });
+    const quality = stageQuality(isNativeMobile(), 2);
+    stage = runStage(canvas, { flyDelay: 20, sfx }, quality.maxDpr, quality.maxPixels);
     const ro = new ResizeObserver(() => stage?.resize());
     ro.observe(canvas);
     return () => {

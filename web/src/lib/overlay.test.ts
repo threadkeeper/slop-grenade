@@ -25,6 +25,18 @@ function setup(fetcher: typeof fetch) {
 }
 
 describe('shared browser/macOS overlay reset boundary', () => {
+  it('routes live squeegee events to the requested edge', async () => {
+    const { world, connection, send } = setup(vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(JSON.stringify({ resetGeneration: 0, recentReports: [] }))
+    ));
+    await connection.initial;
+    const wipe = vi.spyOn(world, 'squeegee');
+    send({ sequence: 1, resetGeneration: 0, squeegeeSide: 'left' });
+    send({ sequence: 2, resetGeneration: 0, squeegeeSide: 'right' });
+    expect(wipe.mock.calls).toEqual([['left'], ['right']]);
+    connection.dispose();
+  });
+
   it.each([undefined, 0])('discards a pre-wipe delayed ledger HTTP response (legacy generation %s)', async (resetGeneration) => {
     let finish!: (response: Response) => void;
     const fetcher = vi.fn<typeof fetch>()

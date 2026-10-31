@@ -87,6 +87,28 @@ describe('local API transport', () => {
     await expect(pending).resolves.toEqual({ fetchedCount: 8, newMessagesAnalyzed: 3, grenadesTriggered: 1 });
   });
 
+  it('forwards only bounded account-scoped IDs for transient Gmail details', async () => {
+    const messageId = `${'a'.repeat(64)}:message-1`;
+    const pending = requestApi('/api/v1/gmail/details', {
+      method: 'POST', body: JSON.stringify({ messageIds: [messageId] })
+    });
+    expect(sent()).toMatchObject({ method: 'POST', path: '/api/v1/gmail/details', body: { messageIds: [messageId] } });
+    reply(sent().id, { entries: [] });
+    expect((await pending).ok).toBe(true);
+  });
+
+  it.each([
+    { messageIds: [] },
+    { messageIds: ['manual-1'] },
+    { messageIds: [`${'a'.repeat(64)}:../message`] },
+    { messageIds: Array.from({ length: 11 }, (_, i) => `${'a'.repeat(64)}:id-${i}`) },
+    { messageIds: [`${'a'.repeat(64)}:id`, `${'a'.repeat(64)}:id`] },
+    { messageIds: [`${'a'.repeat(64)}:id`], token: 'synthetic-token' }
+  ])('rejects invalid Gmail detail requests before the bridge', async (body) => {
+    await expect(requestApi('/api/v1/gmail/details', { method: 'POST', body: JSON.stringify(body) })).rejects.toThrow();
+    expect(host.SlopAndroid.postMessage).not.toHaveBeenCalled();
+  });
+
   const validManualCases: [string, unknown][] = [
     ['/api/v1/auth/github-token', { token: 'synthetic-unit-test-token', enabled: true }],
     ['/api/v1/auth/github-token', { token: null, enabled: false }],
