@@ -21,7 +21,7 @@ base64 = "0.22"
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 futures = { version = "0.3", default-features = false, features = ["std"] }
 getrandom = "0.3"
-html2text = "0.15"
+html2text = "0.17"
 encoding_rs = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1.0", features = ["derive"] }
