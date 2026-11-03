@@ -1228,7 +1228,7 @@ name = "slop-grenade"
 version = "0.2.1"
 dependencies = [
  "axum",
- "base64 0.22.1",
+ "base64 0.23.1",
  "chrono",
  "encoding_rs",
  "futures",
