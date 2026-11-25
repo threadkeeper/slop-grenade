@@ -1,5 +1,5 @@
 # Stage 1: Build static Svelte 5 + TypeScript web assets
-FROM node:22-bookworm-slim AS web-builder
+FROM node:26-bookworm-slim AS web-builder
 WORKDIR /workspace
 COPY VERSION ./VERSION
 COPY web/package.json web/package-lock.json ./web/
