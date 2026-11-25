@@ -6,7 +6,9 @@
 [advisories]
 # Fail on any crate with a known security vulnerability or yanked release.
 yanked = "deny"
-ignore = []
+ignore = [
+    { id = "RUSTSEC-2026-0543", reason = "chrono 0.4.45 is widely used by the workspace and RustSec reports no safe replacement; migration to time/jiff will be tracked separately." },
+]
 
 [licenses]
 # Only allow well-known, permissive open-source licenses.
