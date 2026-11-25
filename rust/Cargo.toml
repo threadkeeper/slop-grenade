@@ -17,7 +17,7 @@ path = "src/main.rs"
 [dependencies]
 slop-grenade-core = { path = "../core" }
 axum = "0.8"
-base64 = "0.22"
+base64 = "0.23"
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 futures = { version = "0.3", default-features = false, features = ["std"] }
 getrandom = "0.3"
